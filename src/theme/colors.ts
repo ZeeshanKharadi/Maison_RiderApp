@@ -1,0 +1,10 @@
+export const BRAND_RED = '#C41E1E';
+export const BRAND_RED_DARK = '#A52A2A';
+export const ACCEPT_GREEN = '#2E7D32';
+export const BACKGROUND = '#F5F5F5';
+export const CARD_WHITE = '#FFFFFF';
+export const TEXT_PRIMARY = '#1A1A1A';
+export const TEXT_SECONDARY = '#666666';
+export const TEXT_MUTED = '#999999';
+export const BORDER_LIGHT = '#E8E8E8';
+export const BORDER_INPUT = '#F0D0D0';
