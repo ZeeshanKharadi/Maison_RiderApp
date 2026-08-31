@@ -35,6 +35,7 @@ import { jobProgress } from '../delivery/types';
 import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
+import * as ordersRepository from '../repositories/ordersRepository';
 import {
   colors,
   elevation,
@@ -160,7 +161,7 @@ export default function DashboardScreen() {
         <View style={styles.greetingCenter}>
           <Text style={styles.greetingEyebrow}>{greeting}</Text>
           <Text style={styles.greetingName} numberOfLines={1}>
-            {profile.fullName || user?.name || 'Rider'}
+            {user?.name || profile.fullName || 'Rider'}
           </Text>
           <Text style={styles.greetingDate}>{dateLabel}</Text>
         </View>
@@ -372,7 +373,7 @@ export default function DashboardScreen() {
         ) : (
           orderPreviews.map(order => (
             <Pressable
-              key={order.id}
+              key={ordersRepository.orderListKey(order)}
               style={({ pressed }) => [
                 styles.orderPreview,
                 pressed && styles.pressed,

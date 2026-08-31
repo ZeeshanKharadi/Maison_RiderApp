@@ -31,6 +31,7 @@ import {
   OrderFilters,
   RejectReason,
 } from '../data/orders';
+import * as ordersRepository from '../repositories/ordersRepository';
 import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 
 /**
@@ -130,7 +131,10 @@ export default function OrdersScreen() {
     [goDetails, handleAccept, handleRejectPress],
   );
 
-  const keyExtractor = useCallback((item: AvailableOrder) => item.id, []);
+  const keyExtractor = useCallback(
+    (item: AvailableOrder) => ordersRepository.orderListKey(item),
+    [],
+  );
 
   const activeFilterCount = useMemo(() => {
     let n = 0;

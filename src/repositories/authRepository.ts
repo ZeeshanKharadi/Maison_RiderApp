@@ -8,18 +8,31 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  phone?: string;
+};
+
+type ApiUserData = {
+  id?: string;
+  employeeId?: string;
+  name?: string;
+  email?: string;
+  phoneNumber?: string;
 };
 
 type LoginUserData = {
-  userData?: {
-    id?: string;
-    employeeId?: string;
-    name?: string;
-    email?: string;
-  };
+  userData?: ApiUserData;
   token?: string;
   refreshToken?: string;
 };
+
+function mapApiUser(dto: ApiUserData | undefined, fallbackId: string): AuthUser {
+  return {
+    id: dto?.employeeId || dto?.id || fallbackId,
+    name: dto?.name?.trim() || 'Rider',
+    email: dto?.email?.trim() || '',
+    phone: dto?.phoneNumber?.trim() || '',
+  };
+}
 
 /**
  * ESS-compatible login → persists JWT for Order/Available and other secured APIs.
@@ -48,12 +61,7 @@ export async function login(
 
     await saveTokens(envelope.Data.token, envelope.Data.refreshToken);
 
-    const user = envelope.Data.userData;
-    return ok({
-      id: user?.employeeId || user?.id || id,
-      name: user?.name || 'Rider',
-      email: user?.email || '',
-    });
+    return ok(mapApiUser(envelope.Data.userData, id));
   } catch (err) {
     if (err instanceof HttpError) {
       return fail(err.code, err.message);
@@ -67,14 +75,38 @@ export async function login(
   }
 }
 
+/** Loads latest user row from DB (name/email/phone). */
+export async function fetchCurrentUser(): Promise<ApiResult<AuthUser>> {
+  try {
+    const envelope = await apiEnvelope<ApiUserData>(API_PATHS.currentUser, {
+      auth: true,
+    });
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'USER_LOAD_FAILED',
+        envelope.message || 'Could not load user profile',
+      );
+    }
+
+    return ok(mapApiUser(envelope.Data, envelope.Data.employeeId || ''));
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return fail(err.code, err.message);
+    }
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach user API',
+    );
+  }
+}
+
 export async function requestOtp(
   employeeId: string,
 ): Promise<ApiResult<{ employeeId: string }>> {
   if (!employeeId.trim()) {
     return fail('INVALID_INPUT', 'Please enter your Employee ID');
   }
-  // Registration / OTP still wired through backend in a later pass.
-  // Keep local success so existing create-account flow is not blocked.
   return ok({ employeeId: employeeId.trim() });
 }
 

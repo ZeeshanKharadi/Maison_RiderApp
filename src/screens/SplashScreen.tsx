@@ -9,6 +9,10 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../services/AuthContext';
+import {
+  APP_BRAND_HEADER,
+  APP_TAGLINE,
+} from '../constants/app';
 import { BRAND_RED } from '../theme/colors';
 
 const { width } = Dimensions.get('window');
@@ -46,8 +50,8 @@ export default function SplashScreen() {
           <View style={styles.logoBox}>
             <Icon name="moped" size={48} color={BRAND_RED} />
           </View>
-          <Text style={styles.title}>RAPIDDELIVERY</Text>
-          <Text style={styles.subtitle}>RIDER PORTAL</Text>
+          <Text style={styles.title}>{APP_BRAND_HEADER}</Text>
+          <Text style={styles.subtitle}>{APP_TAGLINE}</Text>
         </View>
 
         <View style={styles.bottomSection}>

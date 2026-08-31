@@ -17,6 +17,7 @@ import {
   SectionHeader,
 } from '../components/ui';
 import { MainStackParamList } from '../navigation/MainNavigator';
+import { APP_NAME_SHORT, APP_SUPPORT_EMAIL } from '../constants/app';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
@@ -171,7 +172,7 @@ export default function HelpScreen() {
           <View style={styles.block}>
             <Text style={styles.body}>
               Support hours: 8:00 AM – 10:00 PM. Reach us at
-              support@rapiddelivery.com or start an in-app chat.
+              {APP_SUPPORT_EMAIL} or start an in-app chat.
             </Text>
             <AppButton
               label="Start chat"
@@ -224,7 +225,7 @@ export default function HelpScreen() {
         {active === 'terms' ? (
           <View style={styles.block}>
             <Text style={styles.body}>
-              RapidDelivery Rider Terms: Follow delivery guidelines, handle COD
+              {APP_NAME_SHORT} Terms: Follow delivery guidelines, handle COD
               carefully, and treat customers respectfully. Complete legal terms
               will be provided before public launch.
             </Text>

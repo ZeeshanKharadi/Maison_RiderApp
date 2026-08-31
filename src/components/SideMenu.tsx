@@ -122,7 +122,7 @@ export default function SideMenu() {
               <Icon name="account" size={36} color={colors.primaryDark} />
             </View>
             <Text style={styles.userName}>
-              {profile.fullName || user?.name || 'Rider'}
+              {user?.name || profile.fullName || 'Rider'}
             </Text>
             <Text style={styles.userId}>#{user?.id || 'RD-9921'}</Text>
             <View style={styles.statusRow}>

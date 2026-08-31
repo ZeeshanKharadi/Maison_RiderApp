@@ -62,13 +62,13 @@ export const APPEARANCE_LABELS: Record<AppearanceMode, string> = {
 };
 
 export const DEFAULT_PROFILE: RiderProfile = {
-  fullName: 'Alex Rivera',
-  phone: '+1 (555) 201-8841',
-  email: 'alex.rider@rapiddelivery.com',
+  fullName: '',
+  phone: '',
+  email: '',
   vehicle: 'Scooter · Honda Activa',
-  vehicleNumber: 'RD-9921-MX',
-  licenseNumber: 'DL-9921-XX',
-  emergencyContact: '+1 (555) 900-1122',
+  vehicleNumber: '',
+  licenseNumber: '',
+  emergencyContact: '',
   language: 'en',
 };
 
@@ -110,7 +110,7 @@ export const MOCK_APP_NOTIFICATIONS: AppNotification[] = [
     id: 'n1',
     category: 'orders',
     title: 'New order nearby',
-    description: 'Burger House · 0.8 mi · $12.50',
+    description: 'Burger House · 0.8 mi · Rs 12.50',
     timestamp: new Date(Date.now() - 2 * 60000).toISOString(),
     read: false,
     priority: 'high',
@@ -120,7 +120,7 @@ export const MOCK_APP_NOTIFICATIONS: AppNotification[] = [
     id: 'n2',
     category: 'payments',
     title: 'Wallet credited',
-    description: 'Delivery #ORD-2841 · +$12.25',
+    description: 'Delivery #ORD-2841 · +Rs 12.25',
     timestamp: new Date(Date.now() - 60 * 60000).toISOString(),
     read: false,
     priority: 'normal',
@@ -140,7 +140,7 @@ export const MOCK_APP_NOTIFICATIONS: AppNotification[] = [
     id: 'n4',
     category: 'bonuses',
     title: 'Bonus earned',
-    description: 'Peak-hour bonus · +$8.00',
+    description: 'Peak-hour bonus · +Rs 8.00',
     timestamp: new Date(Date.now() - 86400000).toISOString(),
     read: true,
     priority: 'normal',

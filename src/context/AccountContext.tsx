@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import * as accountRepository from '../repositories/accountRepository';
+import { useAuth } from '../services/AuthContext';
 import {
   AppNotification,
   AppSettings,
@@ -18,6 +19,20 @@ import {
   RiderDocument,
   RiderProfile,
 } from '../data/account';
+import type { User } from '../services/AuthContext';
+
+function profileFromAuthUser(
+  profile: RiderProfile,
+  authUser: User | null,
+): RiderProfile {
+  if (!authUser) return profile;
+  return {
+    ...profile,
+    fullName: authUser.name || profile.fullName,
+    email: authUser.email || profile.email,
+    phone: authUser.phone || profile.phone,
+  };
+}
 
 type AccountContextValue = {
   profile: RiderProfile;
@@ -41,6 +56,7 @@ type AccountContextValue = {
 const AccountContext = createContext<AccountContextValue | null>(null);
 
 export function AccountProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [profile, setProfile] = useState<RiderProfile>(DEFAULT_PROFILE);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notifications, setNotifications] = useState<AppNotification[]>(
@@ -67,6 +83,23 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
     };
   }, []);
+
+  // Keep local profile in sync with backend auth user (login / CurrentUser).
+  useEffect(() => {
+    if (!user?.name && !user?.email) return;
+    setProfile(prev => {
+      const next = profileFromAuthUser(prev, user);
+      if (
+        next.fullName === prev.fullName &&
+        next.email === prev.email &&
+        next.phone === prev.phone
+      ) {
+        return prev;
+      }
+      void accountRepository.saveProfile(next);
+      return next;
+    });
+  }, [user?.name, user?.email, user?.phone]);
 
   const updateProfile = useCallback(
     async (patch: Partial<RiderProfile>) => {

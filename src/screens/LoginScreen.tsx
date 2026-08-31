@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../services/AuthContext';
+import { APP_BRAND_HEADER } from '../constants/app';
 import Loader from '../components/Loader';
 import {
   BACKGROUND,
@@ -86,7 +87,7 @@ export default function LoginScreen() {
       <ScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled">
-        <Text style={styles.brandHeader}>RAPIDDELIVERY</Text>
+        <Text style={styles.brandHeader}>{APP_BRAND_HEADER}</Text>
 
         <View style={styles.card}>
           <Text style={styles.welcome}>Welcome Back</Text>

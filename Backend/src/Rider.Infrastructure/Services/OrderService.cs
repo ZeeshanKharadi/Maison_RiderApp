@@ -173,7 +173,12 @@ namespace Rider.Infrastructure.Services
         public async Task<ApiResponse<List<AvailableOrderDto>>> GetAvailableOrdersAsync()
         {
             var orders = await _unitOfWork.AssignedOrderRepository.GetAvailableWithItemsAsync();
-            var list = orders.Select(MapOrder).ToList();
+            var list = orders
+                .GroupBy(o => o.OrderId.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(o => o.CreatedAt).First())
+                .OrderByDescending(o => o.CreatedAt)
+                .Select(MapOrder)
+                .ToList();
             return new ApiResponse<List<AvailableOrderDto>>(true, "Available orders", list);
         }
 

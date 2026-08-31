@@ -23,7 +23,7 @@ import {
   AppLanguage,
   LANGUAGE_LABELS,
 } from '../data/account';
-import { APP_NAME, APP_VERSION } from '../constants/app';
+import { APP_NAME, APP_NAME_SHORT, APP_VERSION } from '../constants/app';
 import { navigate } from '../navigation/RootNavigation';
 import { colors, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
@@ -192,7 +192,7 @@ export default function SettingsScreen() {
             onPress={() =>
               Alert.alert(
                 APP_NAME,
-                `Version ${APP_VERSION}\nRapidDelivery Rider.`,
+                `Version ${APP_VERSION}\n${APP_NAME_SHORT}.`,
               )
             }
           />

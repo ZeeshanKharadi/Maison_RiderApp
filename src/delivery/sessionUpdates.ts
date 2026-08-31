@@ -1,6 +1,7 @@
 import {
   DeliveryHistoryItem,
 } from '../data/deliveryHistory';
+import { formatMoneyPlain } from '../utils/format';
 import { ActiveDeliveryJob, estimateDurationMin } from './types';
 import { DeliveryTimelineStep } from './types';
 
@@ -182,10 +183,6 @@ export function applyWithdrawal(
     lastUpdated: now,
     transactions: [tx, ...wallet.transactions],
   };
-}
-
-function formatMoneyPlain(n: number) {
-  return `$${n.toFixed(2)}`;
 }
 
 export function applyCompletionToStats(

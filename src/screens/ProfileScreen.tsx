@@ -70,7 +70,7 @@ export default function ProfileScreen() {
   });
   const [saving, setSaving] = useState(false);
 
-  const displayName = profile.fullName || user?.name || 'Rider';
+  const displayName = user?.name || profile.fullName || 'Rider';
   const shiftLabel = activeJob
     ? 'On delivery'
     : isOnline

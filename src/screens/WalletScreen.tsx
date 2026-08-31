@@ -16,9 +16,10 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSideMenu } from '../context/SideMenuContext';
 import { useRiderSession } from '../context/RiderSessionContext';
 import { navigate } from '../navigation/RootNavigation';
+import { APP_NAME_SHORT } from '../constants/app';
 import {
-  AppHeader,
   Badge,
+  AppHeader,
   EmptyState,
   SearchBar,
   SectionHeader,
@@ -140,7 +141,7 @@ export default function WalletScreen() {
         onPress: () =>
           showInfo(
             'Payment details',
-            'Bank · ****4412 · RapidDelivery Payouts.',
+            'Bank · ****4412 · Maison Delivery Payouts.',
           ),
       },
       {

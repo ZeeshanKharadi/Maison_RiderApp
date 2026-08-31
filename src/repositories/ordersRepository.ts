@@ -7,6 +7,33 @@ import {
 } from '../api/mappers/orderMapper';
 import { ApiResult, fail, ok } from './types';
 
+/** One card per external order id — keep the newest backend row. */
+function dedupeAvailableOrders(orders: AvailableOrder[]): AvailableOrder[] {
+  const byRef = new Map<string, AvailableOrder>();
+
+  for (const order of orders) {
+    const ref = order.id.trim().toLowerCase();
+    const existing = byRef.get(ref);
+    if (!existing) {
+      byRef.set(ref, order);
+      continue;
+    }
+
+    const existingTime = new Date(existing.postedAt).getTime();
+    const nextTime = new Date(order.postedAt).getTime();
+    const existingPk = existing.backendId ?? 0;
+    const nextPk = order.backendId ?? 0;
+
+    if (nextPk > existingPk || nextTime > existingTime) {
+      byRef.set(ref, order);
+    }
+  }
+
+  return [...byRef.values()].sort(
+    (a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime(),
+  );
+}
+
 /**
  * Loads available offers created only via AssignOrder (backend Status = Available).
  */
@@ -24,7 +51,7 @@ export async function fetchAvailableOrders(): Promise<
     }
 
     const rows = Array.isArray(envelope.Data) ? envelope.Data : [];
-    return ok(rows.map(mapApiOrderToAvailable));
+    return ok(dedupeAvailableOrders(rows.map(mapApiOrderToAvailable)));
   } catch (err) {
     if (err instanceof HttpError) {
       return fail(err.code, err.message);
@@ -64,4 +91,8 @@ export async function fetchOrderById(
 /** No local seed — list comes from AssignOrder only. */
 export function getSeedOrders(): AvailableOrder[] {
   return [];
+}
+
+export function orderListKey(order: AvailableOrder): string {
+  return order.backendId != null ? String(order.backendId) : order.id;
 }

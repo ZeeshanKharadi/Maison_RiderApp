@@ -17,6 +17,7 @@ import {
   StatusPill,
 } from '../components/ui';
 import { useRiderSession } from '../context/RiderSessionContext';
+import { MONEY_GOAL_UNIT } from '../constants/app';
 import {
   buildAchievements,
   buildGoals,
@@ -209,7 +210,7 @@ export default function PerformanceScreen() {
           {goals.map(goal => {
             const pct = Math.min(100, (goal.current / goal.target) * 100);
             const displayCurrent =
-              goal.unit === '$'
+              goal.unit === MONEY_GOAL_UNIT
                 ? formatMoneyShort(goal.current)
                 : goal.unit === '%'
                   ? `${Math.round(goal.current)}%`
@@ -217,7 +218,7 @@ export default function PerformanceScreen() {
                     ? goal.current.toFixed(1)
                     : String(Math.round(goal.current));
             const displayTarget =
-              goal.unit === '$'
+              goal.unit === MONEY_GOAL_UNIT
                 ? formatMoneyShort(goal.target)
                 : goal.unit === '%'
                   ? `${goal.target}%`

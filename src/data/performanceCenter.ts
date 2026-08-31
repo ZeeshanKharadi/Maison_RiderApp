@@ -3,6 +3,7 @@
  */
 
 import { DeliveryHistoryItem } from './deliveryHistory';
+import { MONEY_GOAL_UNIT } from '../constants/app';
 import { SessionStats } from '../delivery/sessionUpdates';
 import { startOfDay } from '../utils/format';
 
@@ -80,10 +81,10 @@ export function buildGoals(stats: SessionStats): PerformanceGoal[] {
     },
     {
       id: 'earn',
-      title: 'Earn $10,000 this month',
+      title: 'Earn Rs 10,000 this month',
       current: stats.monthlyEarnings,
       target: 10000,
-      unit: '$',
+      unit: MONEY_GOAL_UNIT,
     },
     {
       id: 'rating',
