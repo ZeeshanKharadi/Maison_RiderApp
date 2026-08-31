@@ -12,6 +12,10 @@ namespace Rider.Persistence.Contexts
         public DbSet<AppUser> Users { get; set; }
         public DbSet<OtpCode> Otps { get; set; }
         public DbSet<UserRefreshToken> UserRefreshTokens { get; set; }
+        public DbSet<Role> Roles { get; set; }
+        public DbSet<UserRole> UserRoles { get; set; }
+        public DbSet<Store> Stores { get; set; }
+        public DbSet<AppSetting> AppSettings { get; set; }
         public DbSet<AssignedOrderBatch> AssignedOrderBatches { get; set; }
         public DbSet<AssignedOrder> AssignedOrders { get; set; }
         public DbSet<AssignedOrderItem> AssignedOrderItems { get; set; }
@@ -25,10 +29,12 @@ namespace Rider.Persistence.Contexts
                 entity.HasIndex(e => e.ThirdPartyEmployeeId);
                 entity.Property(e => e.PasswordEncrypted).HasColumnName("passwordencrypted");
                 entity.Property(e => e.ThirdPartyEmployeeId).HasColumnName("ThirdPartyEmployeeId");
+                entity.Property(e => e.UserName).HasColumnName("Username");
                 entity.Property(e => e.Cnic).HasColumnName("cnic");
                 entity.Property(e => e.PhoneNumber).HasColumnName("phoneNumber");
                 entity.Property(e => e.Department).HasColumnName("department");
                 entity.Property(e => e.CostCenter).HasColumnName("costCenter");
+                entity.Property(e => e.StoreId).HasMaxLength(50);
             });
 
             modelBuilder.Entity<OtpCode>(entity =>
@@ -49,6 +55,41 @@ namespace Rider.Persistence.Contexts
                 entity.HasOne(e => e.User)
                     .WithMany(u => u.RefreshTokens)
                     .HasForeignKey(e => e.UserId);
+            });
+
+            modelBuilder.Entity<Role>(entity =>
+            {
+                entity.ToTable("Roles");
+                entity.HasKey(e => e.RoleId);
+                entity.Property(e => e.RoleName).HasMaxLength(100).IsRequired();
+            });
+
+            modelBuilder.Entity<UserRole>(entity =>
+            {
+                entity.ToTable("UserRoles");
+                entity.HasKey(e => e.UserRoleId);
+                entity.HasOne(e => e.User)
+                    .WithMany(u => u.UserRoles)
+                    .HasForeignKey(e => e.UserId);
+                entity.HasOne(e => e.Role)
+                    .WithMany(r => r.UserRoles)
+                    .HasForeignKey(e => e.RoleId);
+            });
+
+            modelBuilder.Entity<Store>(entity =>
+            {
+                entity.ToTable("Stores");
+                entity.HasKey(e => e.StoreId);
+                entity.Property(e => e.StoreId).HasMaxLength(50);
+                entity.Property(e => e.Name).HasMaxLength(200);
+            });
+
+            modelBuilder.Entity<AppSetting>(entity =>
+            {
+                entity.ToTable("AppSettings");
+                entity.HasKey(e => e.SettingKey);
+                entity.Property(e => e.SettingKey).HasMaxLength(100);
+                entity.Property(e => e.SettingValue).HasMaxLength(500).IsRequired();
             });
 
             modelBuilder.Entity<AssignedOrderBatch>(entity =>
@@ -85,9 +126,14 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.OrderTotal).HasColumnType("decimal(18,2)");
                 entity.Property(e => e.PaymentMethod).HasMaxLength(20);
                 entity.Property(e => e.Cash).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.CashCollected).HasColumnType("decimal(18,2)");
                 entity.Property(e => e.OrderTime).HasMaxLength(50);
                 entity.Property(e => e.Status).HasMaxLength(30).HasDefaultValue("Available");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.HasOne(e => e.AcceptedByUser)
+                    .WithMany()
+                    .HasForeignKey(e => e.AcceptedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
                 entity.HasMany(e => e.Items)
                     .WithOne(i => i.Order)
                     .HasForeignKey(i => i.AssignedOrderId)

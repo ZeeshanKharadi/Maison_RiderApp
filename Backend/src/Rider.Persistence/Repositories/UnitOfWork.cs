@@ -13,6 +13,10 @@ namespace Rider.Persistence.Repositories
         private IAssignedOrderBatchRepository _assignedOrderBatchRepository;
         private IAssignedOrderRepository _assignedOrderRepository;
         private IAssignedOrderItemRepository _assignedOrderItemRepository;
+        private IRoleRepository _roleRepository;
+        private IUserRoleRepository _userRoleRepository;
+        private IStoreRepository _storeRepository;
+        private IAppSettingRepository _appSettingRepository;
 
         public UnitOfWork(ApplicationDbContext context)
         {
@@ -38,6 +42,18 @@ namespace Rider.Persistence.Repositories
 
         public IAssignedOrderItemRepository AssignedOrderItemRepository
             => _assignedOrderItemRepository ??= new AssignedOrderItemRepository(_dbContext);
+
+        public IRoleRepository RoleRepository
+            => _roleRepository ??= new RoleRepository(_dbContext);
+
+        public IUserRoleRepository UserRoleRepository
+            => _userRoleRepository ??= new UserRoleRepository(_dbContext);
+
+        public IStoreRepository StoreRepository
+            => _storeRepository ??= new StoreRepository(_dbContext);
+
+        public IAppSettingRepository AppSettingRepository
+            => _appSettingRepository ??= new AppSettingRepository(_dbContext);
 
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
             => _dbContext.SaveChangesAsync(cancellationToken);

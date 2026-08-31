@@ -1,4 +1,20 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Maison Rider
+
+React Native rider app, .NET 8 **Rider.WebAPI**, and a **head-office admin portal**.
+
+| Piece | Where | Who |
+|-------|--------|-----|
+| Rider mobile | this repo (React Native) | Riders (`RD-9921`, …) |
+| API | `Backend/` | KDS + mobile + portal |
+| Admin portal | `AdminPortal/` | Head office / store managers only |
+
+**KDS:** FOH bump of a DELIVERY order → `POST /api/Order/AssignOrder` (anonymous). Do not use this portal as a kitchen UI.
+
+**Admin login (after `Backend/scripts/003_AdminPortal.sql`):** worker ID `HO-ADMIN`, password `Admin@Maison1`. See `AdminPortal/README.md` and `Backend/README.md`.
+
+---
+
+This is a [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started
 
@@ -66,7 +82,7 @@ This is one way to run your app — you can also build it directly from Android 
 
 Now that you have successfully run the app, let's make changes!
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
 
 When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
 

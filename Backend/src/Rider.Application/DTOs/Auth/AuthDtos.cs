@@ -67,6 +67,7 @@ namespace Rider.Application.DTOs.Auth
         public string profilePicture { get; set; }
         public bool isActive { get; set; }
         public bool isVerified { get; set; }
+        public string storeId { get; set; }
         public List<string> roles { get; set; } = new();
         public List<string> permissions { get; set; } = new();
     }

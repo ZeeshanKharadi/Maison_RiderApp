@@ -10,3 +10,15 @@ C:\Maison_RiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.dll
 C:\Maison_RiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\refint\Rider.Domain.dll
 C:\Maison_RiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.pdb
 C:\Maison_RiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\ref\Rider.Domain.dll
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\bin\Debug\net8.0\Rider.Domain.deps.json
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\bin\Debug\net8.0\Rider.Domain.dll
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\bin\Debug\net8.0\Rider.Domain.pdb
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.GeneratedMSBuildEditorConfig.editorconfig
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.AssemblyInfoInputs.cache
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.AssemblyInfo.cs
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.csproj.CoreCompileInputs.cache
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.sourcelink.json
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.dll
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\refint\Rider.Domain.dll
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\Rider.Domain.pdb
+C:\MaisonProjects\Maison\MaisonRiderApp\Backend\src\Rider.Domain\obj\Debug\net8.0\ref\Rider.Domain.dll

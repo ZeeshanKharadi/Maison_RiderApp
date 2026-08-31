@@ -55,6 +55,21 @@ namespace Rider.Application.DTOs.Orders
         public List<string> orderIds { get; set; } = new();
     }
 
+    /// <summary>Same payload as AssignOrder, plus the rider to dispatch to.</summary>
+    public class AssignOrderToRiderRequest : AssignOrderRequest
+    {
+        /// <summary>Rider worker id (e.g. RD-9921).</summary>
+        [Required]
+        public string workerId { get; set; }
+    }
+
+    public class AssignOrderToRiderResultDto : AssignOrderResultDto
+    {
+        public string workerId { get; set; }
+        public Guid assignedToUserId { get; set; }
+        public string riderName { get; set; }
+    }
+
     public class AvailableOrderDto
     {
         public long id { get; set; }
@@ -81,6 +96,20 @@ namespace Rider.Application.DTOs.Orders
         public string orderTime { get; set; }
         public string batchTime { get; set; }
         public DateTime createdAt { get; set; }
+        public DateTime? acceptedAt { get; set; }
+        public DateTime? pickedUpAt { get; set; }
+        public DateTime? completedAt { get; set; }
+        public decimal? cashCollected { get; set; }
+        public Guid? acceptedByUserId { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
+    }
+
+    public class UpdateOrderStatusRequest
+    {
+        /// <summary>Accepted | InProgress | Completed</summary>
+        [Required]
+        public string status { get; set; }
+
+        public decimal? cashCollected { get; set; }
     }
 }

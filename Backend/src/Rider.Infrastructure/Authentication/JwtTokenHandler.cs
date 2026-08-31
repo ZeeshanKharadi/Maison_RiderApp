@@ -29,12 +29,19 @@ namespace Rider.Infrastructure.Authentication
             if (key.Length < 32)
                 Array.Resize(ref key, 32);
 
-            var claims = new[]
+            var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.id),
                 new Claim("employeeId", user.employeeId ?? ""),
+                new Claim("storeId", user.storeId ?? ""),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
+
+            foreach (var role in user.roles ?? Enumerable.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(role))
+                    claims.Add(new Claim(ClaimTypes.Role, role));
+            }
 
             var hours = int.TryParse(_configuration["Jwt:ExpiryHours"], out var h) ? h : 2;
 
