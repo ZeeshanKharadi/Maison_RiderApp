@@ -53,7 +53,8 @@ namespace Rider.Persistence.Extensions
                     ValidateAudience = true,
                     ValidAudience = configuration["Jwt:Audience"],
                     ValidateLifetime = true,
-                    ClockSkew = TimeSpan.FromMinutes(2)
+                    ClockSkew = TimeSpan.FromMinutes(2),
+                    RoleClaimType = System.Security.Claims.ClaimTypes.Role
                 };
                 options.Events = new JwtBearerEvents
                 {
@@ -81,6 +82,10 @@ namespace Rider.Persistence.Extensions
             services.AddScoped<IAssignedOrderBatchRepository, AssignedOrderBatchRepository>();
             services.AddScoped<IAssignedOrderRepository, AssignedOrderRepository>();
             services.AddScoped<IAssignedOrderItemRepository, AssignedOrderItemRepository>();
+            services.AddScoped<IRoleRepository, RoleRepository>();
+            services.AddScoped<IUserRoleRepository, UserRoleRepository>();
+            services.AddScoped<IStoreRepository, StoreRepository>();
+            services.AddScoped<IAppSettingRepository, AppSettingRepository>();
             services.AddScoped<IUnitOfWork, UnitOfWork>();
         }
     }

@@ -592,4 +592,5 @@ ORDER BY r.RoleName, p.PermissionName;
 GO
 
 PRINT 'RiderManagement auth script completed.';
+PRINT 'Next: run 003_AdminPortal.sql for the admin portal (roles, timestamps, HO-ADMIN).';
 GO

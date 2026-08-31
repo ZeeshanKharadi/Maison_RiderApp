@@ -17,6 +17,7 @@ namespace Rider.Infrastructure.Extensions
             services.AddScoped<IOtpNotifier, OtpNotifier>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IOrderService, OrderService>();
+            services.AddScoped<IAdminService, AdminService>();
         }
     }
 }

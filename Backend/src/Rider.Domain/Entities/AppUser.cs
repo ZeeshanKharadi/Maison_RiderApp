@@ -55,7 +55,14 @@ namespace Rider.Domain.Entities
         [MaxLength(500)]
         public string? ProfileImageUrl { get; set; }
 
+        /// <summary>Store assignment. Null for head-office admins.</summary>
+        [MaxLength(50)]
+        public string? StoreId { get; set; }
+
+        public DateTime? LastSeenAt { get; set; }
+
         public ICollection<OtpCode>? Otps { get; set; }
         public ICollection<UserRefreshToken>? RefreshTokens { get; set; }
+        public ICollection<UserRole>? UserRoles { get; set; }
     }
 }

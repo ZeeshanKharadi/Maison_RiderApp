@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Rider.Domain")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4b077308ba7eb25df25fb9344bd4171113c29b47")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4a0c218a647fea1075d7f14b3cec8fcd69d12c2c")]
 [assembly: System.Reflection.AssemblyProductAttribute("Rider.Domain")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Rider.Domain")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

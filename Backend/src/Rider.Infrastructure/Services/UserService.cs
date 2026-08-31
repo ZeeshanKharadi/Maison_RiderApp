@@ -64,6 +64,9 @@ namespace Rider.Infrastructure.Services
             var accessToken = _jwtTokenHandler.GenerateAccessToken(dto);
             var refreshToken = _jwtTokenHandler.GenerateRefreshToken();
 
+            user.LastSeenAt = DateTime.UtcNow;
+            await _unitOfWork.UserRepository.UpdateAsync(user);
+
             var refreshDays = int.TryParse(_configuration["Jwt:RefreshExpiryDays"], out var d) ? d : 7;
             await _unitOfWork.UserRefreshTokenRepository.AddAsync(new UserRefreshToken
             {
@@ -115,6 +118,18 @@ namespace Rider.Infrastructure.Services
             };
 
             await _unitOfWork.UserRepository.AddAsync(user);
+
+            var riderRole = await _unitOfWork.RoleRepository.GetByNameAsync(RoleNames.Rider);
+            if (riderRole != null)
+            {
+                await _unitOfWork.UserRoleRepository.AddAsync(new UserRole
+                {
+                    UserId = user.UserId,
+                    RoleId = riderRole.RoleId,
+                    AssignedAt = DateTime.UtcNow
+                });
+            }
+
             await _unitOfWork.SaveChangesAsync();
 
             await AddOtpAsync(user);
@@ -335,25 +350,54 @@ namespace Rider.Infrastructure.Services
             _logger.LogInformation("OTP generated for user {UserId}", user.UserId);
         }
 
-        private static GetUserResponse MapUser(AppUser user) => new()
+        private static GetUserResponse MapUser(AppUser user)
         {
-            id = user.UserId.ToString(),
-            employeeId = user.ThirdPartyEmployeeId,
-            name = user.UserName,
-            email = user.Email,
-            phoneNumber = user.PhoneNumber,
-            department = user.Department,
-            position = user.Position,
-            costCenter = user.CostCenter,
-            grade = user.Grade,
-            payGroup = user.PayGroup,
-            dateOfBirth = user.DateOfBirth?.ToString("yyyy-MM-dd"),
-            CNIC = user.Cnic,
-            profilePicture = user.ProfileImageUrl,
-            isActive = user.IsActive,
-            isVerified = user.IsVerified,
-            roles = new List<string> { "Rider" },
-            permissions = new List<string> { "orders.view", "orders.accept", "wallet.view", "profile.edit" }
-        };
+            var roles = user.UserRoles?
+                .Where(ur => ur.Role != null && ur.Role.IsActive)
+                .Select(ur => ur.Role.RoleName)
+                .Distinct()
+                .ToList() ?? new List<string>();
+
+            if (roles.Count == 0)
+                roles.Add(RoleNames.Rider);
+
+            var isAdminPortal = roles.Contains(RoleNames.Administrator) || roles.Contains(RoleNames.Manager);
+
+            return new GetUserResponse
+            {
+                id = user.UserId.ToString(),
+                employeeId = user.ThirdPartyEmployeeId,
+                name = user.UserName,
+                email = user.Email,
+                phoneNumber = user.PhoneNumber,
+                department = user.Department,
+                position = user.Position,
+                costCenter = user.CostCenter,
+                grade = user.Grade,
+                payGroup = user.PayGroup,
+                dateOfBirth = user.DateOfBirth?.ToString("yyyy-MM-dd"),
+                CNIC = user.Cnic,
+                profilePicture = user.ProfileImageUrl,
+                isActive = user.IsActive,
+                isVerified = user.IsVerified,
+                storeId = user.StoreId,
+                roles = roles,
+                permissions = isAdminPortal
+                    ? BuildAdminPermissions(roles)
+                    : new List<string> { "orders.view", "orders.accept", "wallet.view", "profile.edit" }
+            };
+        }
+
+        private static List<string> BuildAdminPermissions(List<string> roles)
+        {
+            var list = new List<string>
+            {
+                "admin.portal", "admin.riders", "admin.operations",
+                "admin.payments", "admin.reports", "user_management"
+            };
+            if (roles.Contains(RoleNames.Administrator))
+                list.Add("admin.settings");
+            return list;
+        }
     }
 }

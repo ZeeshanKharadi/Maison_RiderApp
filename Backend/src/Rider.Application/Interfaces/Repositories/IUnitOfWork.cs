@@ -11,6 +11,10 @@ namespace Rider.Application.Interfaces.Repositories
         IAssignedOrderBatchRepository AssignedOrderBatchRepository { get; }
         IAssignedOrderRepository AssignedOrderRepository { get; }
         IAssignedOrderItemRepository AssignedOrderItemRepository { get; }
+        IRoleRepository RoleRepository { get; }
+        IUserRoleRepository UserRoleRepository { get; }
+        IStoreRepository StoreRepository { get; }
+        IAppSettingRepository AppSettingRepository { get; }
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }
 }

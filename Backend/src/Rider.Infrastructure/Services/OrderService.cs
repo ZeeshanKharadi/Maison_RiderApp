@@ -15,13 +15,55 @@ namespace Rider.Infrastructure.Services
             _unitOfWork = unitOfWork;
         }
 
-        public async Task<ApiResponse<AssignOrderResultDto>> AssignOrderAsync(AssignOrderRequest request)
+        public Task<ApiResponse<AssignOrderResultDto>> AssignOrderAsync(AssignOrderRequest request)
+            => PersistAssignedOrdersAsync(request, assignToUserId: null);
+
+        public async Task<ApiResponse<AssignOrderToRiderResultDto>> AssignOrderToRiderAsync(AssignOrderToRiderRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.workerId))
+                return new ApiResponse<AssignOrderToRiderResultDto>(false, "workerId is required", null);
+
+            var rider = await _unitOfWork.UserRepository.GetByEmployeeIdAsync(request.workerId.Trim());
+            if (rider == null || rider.DeletedAt != null)
+                return new ApiResponse<AssignOrderToRiderResultDto>(false, "Rider not found", null);
+
+            if (!rider.IsActive)
+                return new ApiResponse<AssignOrderToRiderResultDto>(false, "Rider account is inactive", null);
+
+            var persist = await PersistAssignedOrdersAsync(request, rider.UserId);
+            if (!persist.status || persist.Data == null)
+                return new ApiResponse<AssignOrderToRiderResultDto>(false, persist.message, null);
+
+            return new ApiResponse<AssignOrderToRiderResultDto>(true, $"Orders assigned to {rider.ThirdPartyEmployeeId}", new AssignOrderToRiderResultDto
+            {
+                batchId = persist.Data.batchId,
+                storeId = persist.Data.storeId,
+                ordersSaved = persist.Data.ordersSaved,
+                itemsSaved = persist.Data.itemsSaved,
+                orderIds = persist.Data.orderIds,
+                workerId = rider.ThirdPartyEmployeeId,
+                assignedToUserId = rider.UserId,
+                riderName = rider.UserName
+            });
+        }
+
+        private async Task<ApiResponse<AssignOrderResultDto>> PersistAssignedOrdersAsync(
+            AssignOrderRequest request, Guid? assignToUserId)
         {
             if (request == null)
                 return new ApiResponse<AssignOrderResultDto>(false, "Request body is required", null);
 
             if (string.IsNullOrWhiteSpace(request.storeId))
                 return new ApiResponse<AssignOrderResultDto>(false, "storeId is required", null);
+
+            try
+            {
+                await _unitOfWork.StoreRepository.EnsureExistsAsync(request.storeId.Trim(), request.storeId.Trim());
+            }
+            catch
+            {
+                // Stores table is added by 003_AdminPortal.sql — AssignOrder must not depend on it.
+            }
 
             if (request.orders == null || request.orders.Count == 0)
                 return new ApiResponse<AssignOrderResultDto>(false, "At least one order is required", null);
@@ -71,6 +113,8 @@ namespace Rider.Infrastructure.Services
                     existing.Cash = dto.cash;
                     existing.OrderTime = dto.orderTime;
                     existing.UpdatedAt = DateTime.UtcNow;
+                    if (assignToUserId.HasValue)
+                        existing.AcceptedByUserId = assignToUserId;
 
                     if (existing.Items != null)
                     {
@@ -102,7 +146,12 @@ namespace Rider.Infrastructure.Services
 
                 if (existing != null)
                 {
-                    // Already accepted/in progress — skip duplicate assign
+                    if (assignToUserId.HasValue && existing.AcceptedByUserId != assignToUserId)
+                        return new ApiResponse<AssignOrderResultDto>(
+                            false,
+                            $"Order {existing.OrderId} is already {existing.Status} and assigned to another rider",
+                            null);
+
                     savedOrderIds.Add(existing.OrderId);
                     continue;
                 }
@@ -129,6 +178,7 @@ namespace Rider.Infrastructure.Services
                     Cash = dto.cash,
                     OrderTime = dto.orderTime,
                     Status = "Available",
+                    AcceptedByUserId = assignToUserId,
                     CreatedAt = DateTime.UtcNow,
                     Items = new List<AssignedOrderItem>()
                 };
@@ -170,9 +220,74 @@ namespace Rider.Infrastructure.Services
             });
         }
 
-        public async Task<ApiResponse<List<AvailableOrderDto>>> GetAvailableOrdersAsync()
+        public async Task TouchLastSeenAsync(Guid userId)
         {
-            var orders = await _unitOfWork.AssignedOrderRepository.GetAvailableWithItemsAsync();
+            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(userId);
+            if (user == null)
+                return;
+
+            user.LastSeenAt = DateTime.UtcNow;
+            await _unitOfWork.UserRepository.UpdateAsync(user);
+            await _unitOfWork.SaveChangesAsync();
+        }
+
+        public async Task<ApiResponse<AvailableOrderDto>> UpdateRiderStatusAsync(
+            long id, Guid riderUserId, UpdateOrderStatusRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.status))
+                return new ApiResponse<AvailableOrderDto>(false, "status is required", null);
+
+            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+            if (order == null)
+                return new ApiResponse<AvailableOrderDto>(false, "Order not found", null);
+
+            var next = request.status.Trim();
+            var now = DateTime.UtcNow;
+
+            switch (next)
+            {
+                case "Accepted":
+                    if (order.Status != "Available")
+                        return new ApiResponse<AvailableOrderDto>(false, "Only Available orders can be accepted", null);
+                    if (order.AcceptedByUserId.HasValue && order.AcceptedByUserId != riderUserId)
+                        return new ApiResponse<AvailableOrderDto>(false, "This order is assigned to another rider", null);
+                    order.Status = "Accepted";
+                    order.AcceptedByUserId = riderUserId;
+                    order.AcceptedAt ??= now;
+                    break;
+                case "InProgress":
+                    if (order.Status != "Accepted" && order.Status != "InProgress")
+                        return new ApiResponse<AvailableOrderDto>(false, "Order must be Accepted first", null);
+                    if (order.AcceptedByUserId != riderUserId)
+                        return new ApiResponse<AvailableOrderDto>(false, "This order is assigned to another rider", null);
+                    order.Status = "InProgress";
+                    order.PickedUpAt ??= now;
+                    break;
+                case "Completed":
+                    if (order.Status != "InProgress" && order.Status != "Accepted")
+                        return new ApiResponse<AvailableOrderDto>(false, "Order is not in a completable state", null);
+                    if (order.AcceptedByUserId != riderUserId)
+                        return new ApiResponse<AvailableOrderDto>(false, "This order is assigned to another rider", null);
+                    order.Status = "Completed";
+                    order.CompletedAt ??= now;
+                    if (request.cashCollected.HasValue)
+                        order.CashCollected = request.cashCollected;
+                    break;
+                default:
+                    return new ApiResponse<AvailableOrderDto>(false, "Unsupported status. Use Accepted, InProgress, or Completed", null);
+            }
+
+            order.UpdatedAt = now;
+            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+            await _unitOfWork.SaveChangesAsync();
+
+            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+            return new ApiResponse<AvailableOrderDto>(true, "Status updated", MapOrder(fresh));
+        }
+
+        public async Task<ApiResponse<List<AvailableOrderDto>>> GetAvailableOrdersAsync(Guid riderUserId)
+        {
+            var orders = await _unitOfWork.AssignedOrderRepository.GetAvailableWithItemsAsync(riderUserId);
             var list = orders.Select(MapOrder).ToList();
             return new ApiResponse<List<AvailableOrderDto>>(true, "Available orders", list);
         }
@@ -246,6 +361,11 @@ namespace Rider.Infrastructure.Services
             orderTime = o.OrderTime,
             batchTime = o.Batch?.Time,
             createdAt = o.CreatedAt,
+            acceptedAt = o.AcceptedAt,
+            pickedUpAt = o.PickedUpAt,
+            completedAt = o.CompletedAt,
+            cashCollected = o.CashCollected,
+            acceptedByUserId = o.AcceptedByUserId,
             items = (o.Items ?? Enumerable.Empty<AssignedOrderItem>())
                 .Select(i => new AssignOrderItemDto
                 {

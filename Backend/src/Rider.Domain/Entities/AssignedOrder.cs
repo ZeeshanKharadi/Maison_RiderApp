@@ -77,8 +77,19 @@ namespace Rider.Domain.Entities
 
         public DateTime? UpdatedAt { get; set; }
 
+        public DateTime? AcceptedAt { get; set; }
+
+        public DateTime? PickedUpAt { get; set; }
+
+        public DateTime? CompletedAt { get; set; }
+
+        public decimal? CashCollected { get; set; }
+
         [ForeignKey(nameof(BatchId))]
         public AssignedOrderBatch Batch { get; set; }
+
+        [ForeignKey(nameof(AcceptedByUserId))]
+        public AppUser AcceptedByUser { get; set; }
 
         public ICollection<AssignedOrderItem> Items { get; set; }
     }

@@ -66,23 +66,30 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// Ensure demo rider has an AES password (seed script leaves passwordencrypted NULL).
+// Ensure demo rider + head-office admin have AES passwords (seed script leaves passwordencrypted NULL).
 using (var scope = app.Services.CreateScope())
 {
     try
     {
         var unitOfWork = scope.ServiceProvider.GetRequiredService<Rider.Application.Interfaces.Repositories.IUnitOfWork>();
         var crypto = scope.ServiceProvider.GetRequiredService<Rider.Application.Helpers.IPasswordCrypto>();
-        var demo = await unitOfWork.UserRepository.GetByEmployeeIdAsync("RD-9921");
-        if (demo != null && (demo.PasswordEncrypted == null || demo.PasswordEncrypted.Length == 0))
+
+        async Task SeedPassword(string workerId, string password, string label)
         {
-            demo.PasswordEncrypted = crypto.Encrypt("RD-9921");
-            demo.IsActive = true;
-            demo.IsVerified = true;
-            await unitOfWork.UserRepository.UpdateAsync(demo);
-            await unitOfWork.SaveChangesAsync();
-            Log.Information("Seeded AES password for demo rider RD-9921");
+            var user = await unitOfWork.UserRepository.GetByEmployeeIdAsync(workerId);
+            if (user != null && (user.PasswordEncrypted == null || user.PasswordEncrypted.Length == 0))
+            {
+                user.PasswordEncrypted = crypto.Encrypt(password);
+                user.IsActive = true;
+                user.IsVerified = true;
+                await unitOfWork.UserRepository.UpdateAsync(user);
+                await unitOfWork.SaveChangesAsync();
+                Log.Information("Seeded AES password for {Label} {WorkerId}", label, workerId);
+            }
         }
+
+        await SeedPassword("RD-9921", "RD-9921", "demo rider");
+        await SeedPassword("HO-ADMIN", "Admin@Maison1", "head-office admin");
     }
     catch (Exception ex)
     {
