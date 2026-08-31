@@ -43,13 +43,12 @@ export default function LoginScreen() {
     try {
       const saved = await AsyncStorage.getItem('rememberedCredentials');
       if (saved) {
-        const { employeeId: id, password: pass } = JSON.parse(saved);
-        setEmployeeId(id);
-        setPassword(pass);
+        const parsed = JSON.parse(saved);
+        setEmployeeId(parsed.employeeId || '');
         setRememberMe(true);
       }
-    } catch (error) {
-      console.error('Error loading credentials:', error);
+    } catch {
+      // Ignore corrupt remember-me payload
     }
   };
 
@@ -65,7 +64,7 @@ export default function LoginScreen() {
         if (rememberMe) {
           await AsyncStorage.setItem(
             'rememberedCredentials',
-            JSON.stringify({ employeeId: employeeId.trim(), password }),
+            JSON.stringify({ employeeId: employeeId.trim() }),
           );
         } else {
           await AsyncStorage.removeItem('rememberedCredentials');
@@ -105,13 +104,16 @@ export default function LoginScreen() {
               value={employeeId}
               onChangeText={setEmployeeId}
               autoCapitalize="characters"
+              accessibilityLabel="Employee ID"
             />
           </View>
 
           <View style={styles.passwordRow}>
             <Text style={styles.label}>Password</Text>
             <TouchableOpacity
-              onPress={() => navigation.navigate('ForgetPassword' as never)}>
+              onPress={() => navigation.navigate('ForgetPassword' as never)}
+              accessibilityRole="button"
+              accessibilityLabel="Forgot password">
               <Text style={styles.forgotLink}>Forgot Password?</Text>
             </TouchableOpacity>
           </View>
@@ -124,8 +126,14 @@ export default function LoginScreen() {
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
+              accessibilityLabel="Password"
             />
-            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+            <TouchableOpacity
+              onPress={() => setShowPassword(!showPassword)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                showPassword ? 'Hide password' : 'Show password'
+              }>
               <Icon
                 name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                 size={20}
@@ -140,11 +148,16 @@ export default function LoginScreen() {
               onValueChange={setRememberMe}
               trackColor={{ false: '#E0E0E0', true: '#F5B0B0' }}
               thumbColor={rememberMe ? BRAND_RED : '#F4F4F4'}
+              accessibilityLabel="Remember employee ID"
             />
             <Text style={styles.rememberText}>Remember Me</Text>
           </View>
 
-          <TouchableOpacity style={styles.loginBtn} onPress={handleLogin}>
+          <TouchableOpacity
+            style={styles.loginBtn}
+            onPress={handleLogin}
+            accessibilityRole="button"
+            accessibilityLabel="Login">
             <Text style={styles.loginBtnText}>Login</Text>
           </TouchableOpacity>
 
@@ -266,7 +279,9 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_RED_DARK,
     borderRadius: 10,
     paddingVertical: 15,
+    minHeight: 48,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   loginBtnText: {
     color: '#FFFFFF',

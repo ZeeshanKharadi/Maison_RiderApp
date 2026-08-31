@@ -6,6 +6,7 @@ import DashboardScreen from '../screens/DashboardScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import WalletScreen from '../screens/WalletScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import { colors } from '../theme';
 import { BRAND_RED_DARK, TEXT_MUTED } from '../theme/colors';
 
 const Tab = createBottomTabNavigator();
@@ -22,7 +23,7 @@ function TabIcon({
   if (focused) {
     return (
       <View style={styles.activePill}>
-        <Icon name={name} size={20} color="#FFFFFF" />
+        <Icon name={name} size={20} color={colors.textOnPrimary} />
         <Text style={styles.activeLabel}>{label}</Text>
       </View>
     );
@@ -38,7 +39,7 @@ function TabIcon({
 export default function TabNavigator() {
   return (
     <Tab.Navigator
-      initialRouteName="Orders"
+      initialRouteName="Dashboard"
       screenOptions={{
         headerShown: false,
         tabBarStyle: styles.tabBar,
@@ -86,9 +87,9 @@ export default function TabNavigator() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: colors.background,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: colors.border,
     height: 64,
     paddingBottom: 8,
     paddingTop: 8,
@@ -103,7 +104,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   activeLabel: {
-    color: '#FFFFFF',
+    color: colors.textOnPrimary,
     fontSize: 12,
     fontWeight: '700',
   },

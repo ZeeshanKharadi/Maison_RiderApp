@@ -13,14 +13,14 @@ import ForgetPasswordScreen from './src/screens/ForgetPasswordScreen';
 import VerifyOTPScreen from './src/screens/VerifyOTPScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import AuthenticatedApp from './src/navigation/MainNavigator';
-import { BRAND_RED } from './src/theme/colors';
+import { colors, BRAND_RED } from './src/theme/colors';
 
 const Stack = createStackNavigator();
 
 const STACK_SCREEN_OPTIONS = {
   headerShown: false,
   animation: 'fade' as const,
-  cardStyle: { backgroundColor: '#FFFFFF' },
+  cardStyle: { backgroundColor: colors.surface },
 };
 
 function MainNavigator() {

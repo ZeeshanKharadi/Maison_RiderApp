@@ -1,6 +1,4 @@
-const DEMO_OTP = '123456';
-const DEMO_EMPLOYEE_ID = 'RD-9921';
-const DEMO_PASSWORD = 'password123';
+import * as authRepository from '../repositories/authRepository';
 
 export interface AuthResult {
   status: boolean;
@@ -8,46 +6,27 @@ export interface AuthResult {
   data?: string;
 }
 
+/** Thin adapter — screens keep AuthResult shape; swap authRepository for API. */
 export async function loginUser(
   employeeId: string,
   password: string,
 ): Promise<AuthResult> {
-  await delay(800);
-  if (
-    employeeId.trim().toLowerCase() === DEMO_EMPLOYEE_ID.toLowerCase() &&
-    password === DEMO_PASSWORD
-  ) {
-    return {
-      status: true,
-      data: JSON.stringify({
-        id: DEMO_EMPLOYEE_ID,
-        name: 'Alex Rider',
-        email: 'alex.rider@rapiddelivery.com',
-      }),
-    };
+  const result = await authRepository.login(employeeId, password);
+  if (!result.ok) {
+    return { status: false, message: result.error.message };
   }
-  if (employeeId.trim() && password.trim()) {
-    return {
-      status: true,
-      data: JSON.stringify({
-        id: employeeId.trim(),
-        name: 'Alex Rider',
-        email: 'rider@rapiddelivery.com',
-      }),
-    };
-  }
-  return { status: false, message: 'Invalid Employee ID or Password' };
+  return { status: true, data: JSON.stringify(result.data) };
 }
 
 export async function sendOtp(employeeId: string): Promise<AuthResult> {
-  await delay(600);
-  if (!employeeId.trim()) {
-    return { status: false, message: 'Please enter your Employee ID' };
+  const result = await authRepository.requestOtp(employeeId);
+  if (!result.ok) {
+    return { status: false, message: result.error.message };
   }
   return {
     status: true,
     message: 'A verification code has been sent to your registered phone!',
-    data: employeeId.trim(),
+    data: result.data.employeeId,
   };
 }
 
@@ -55,31 +34,24 @@ export async function verifyOtp(
   employeeId: string,
   otp: string,
 ): Promise<AuthResult> {
-  await delay(600);
-  if (otp === DEMO_OTP) {
-    return { status: true, message: 'OTP verified successfully!' };
+  const result = await authRepository.confirmOtp(employeeId, otp);
+  if (!result.ok) {
+    return { status: false, message: result.error.message };
   }
-  return { status: false, message: 'Invalid OTP. Use 123456 for demo.' };
+  return { status: true, message: 'OTP verified successfully!' };
 }
 
 export async function updatePassword(
   employeeId: string,
   newPassword: string,
 ): Promise<AuthResult> {
-  await delay(600);
-  if (!newPassword || newPassword.length < 6) {
-    return {
-      status: false,
-      message: 'Password must be at least 6 characters',
-    };
+  const result = await authRepository.resetPassword(employeeId, newPassword);
+  if (!result.ok) {
+    return { status: false, message: result.error.message };
   }
   return {
     status: true,
     message: 'Password updated successfully!',
-    data: employeeId,
+    data: result.data.employeeId,
   };
-}
-
-function delay(ms: number) {
-  return new Promise<void>(resolve => setTimeout(resolve, ms));
 }

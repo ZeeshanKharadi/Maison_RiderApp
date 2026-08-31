@@ -1,4 +1,10 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from 'react';
 
 interface SideMenuContextType {
   isOpen: boolean;
@@ -7,7 +13,9 @@ interface SideMenuContextType {
   toggleMenu: () => void;
 }
 
-const SideMenuContext = createContext<SideMenuContextType | undefined>(undefined);
+const SideMenuContext = createContext<SideMenuContextType | undefined>(
+  undefined,
+);
 
 export function SideMenuProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -16,10 +24,13 @@ export function SideMenuProvider({ children }: { children: React.ReactNode }) {
   const closeMenu = useCallback(() => setIsOpen(false), []);
   const toggleMenu = useCallback(() => setIsOpen(prev => !prev), []);
 
+  const value = useMemo(
+    () => ({ isOpen, openMenu, closeMenu, toggleMenu }),
+    [isOpen, openMenu, closeMenu, toggleMenu],
+  );
+
   return (
-    <SideMenuContext.Provider value={{ isOpen, openMenu, closeMenu, toggleMenu }}>
-      {children}
-    </SideMenuContext.Provider>
+    <SideMenuContext.Provider value={value}>{children}</SideMenuContext.Provider>
   );
 }
 

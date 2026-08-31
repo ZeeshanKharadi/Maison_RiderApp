@@ -3,11 +3,12 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clearTokens, getAccessToken } from '../api/tokenStorage';
 import { loginUser } from './UserService';
-import { resetNavigation } from '../navigation/RootNavigation';
 
 export interface User {
   id: string;
@@ -37,12 +38,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const init = async () => {
       try {
-        const stored = await AsyncStorage.getItem('user');
-        if (stored) {
+        const [stored, token] = await Promise.all([
+          AsyncStorage.getItem('user'),
+          getAccessToken(),
+        ]);
+        if (stored && token) {
           setUser(JSON.parse(stored));
+        } else {
+          // Stale mock session without JWT — force fresh login
+          await AsyncStorage.removeItem('user');
+          await clearTokens();
         }
-      } catch (error) {
-        console.error('Auth init error:', error);
+      } catch {
+        // Keep session empty on corrupt storage
       } finally {
         setIsLoading(false);
       }
@@ -54,9 +62,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await loginUser(employeeId, password);
     if (result.status && result.data) {
       const userData: User = JSON.parse(result.data);
-      setUser(userData);
       await AsyncStorage.setItem('user', result.data);
-      resetNavigation('MainDrawer');
+      setUser(userData);
+      // App.tsx remounts the authenticated stack when `user` is set.
+      // Do not resetNavigation here — MainDrawer is not on the login stack yet.
       return { status: true };
     }
     return { status: false, message: result.message };
@@ -65,21 +74,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     setUser(null);
     await AsyncStorage.removeItem('user');
-    resetNavigation('login');
+    await clearTokens();
   }, []);
 
+  const value = useMemo(
+    () => ({
+      user,
+      isLoading,
+      splashDone,
+      setSplashDone,
+      login,
+      logout,
+    }),
+    [user, isLoading, splashDone, login, logout],
+  );
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isLoading,
-        splashDone,
-        setSplashDone,
-        login,
-        logout,
-      }}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
   );
 }
 

@@ -1,119 +1,264 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  Alert,
-  ScrollView,
+  FlatList,
+  ListRenderItem,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useNavigation } from '@react-navigation/native';
 import { useSideMenu } from '../context/SideMenuContext';
+import { useAvailableOrders } from '../context/AvailableOrdersContext';
+import { useRiderSession } from '../context/RiderSessionContext';
+import { navigate } from '../navigation/RootNavigation';
 import OrderCard from '../components/OrderCard';
-import { MOCK_ORDERS, Order } from '../data/orders';
 import {
-  BACKGROUND,
-  BRAND_RED_DARK,
-  TEXT_MUTED,
-  TEXT_PRIMARY,
-  TEXT_SECONDARY,
-} from '../theme/colors';
+  AppHeader,
+  EmptyState,
+  SearchBar,
+  confirmDialog,
+} from '../components/ui';
+import {
+  OrderFilterSheet,
+  RejectReasonSheet,
+} from '../components/ui/OrderSheets';
+import {
+  AvailableOrder,
+  DEFAULT_ORDER_FILTERS,
+  filterAndSortOrders,
+  OrderFilters,
+  RejectReason,
+} from '../data/orders';
+import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 
+/**
+ * Available offers list — accept sets active delivery and returns to Dashboard.
+ */
 export default function OrdersScreen() {
+  const navigation = useNavigation();
   const { openMenu } = useSideMenu();
-  const [orders, setOrders] = useState(MOCK_ORDERS);
+  const { orders, loading, error, acceptOrder, rejectOrder, refreshOrders } =
+    useAvailableOrders();
+  const { activeJob } = useRiderSession();
 
-  const handleAccept = (order: Order) => {
-    Alert.alert('Order Accepted', `You accepted order from ${order.restaurant}`);
-    setOrders(prev => prev.filter(o => o.id !== order.id));
-  };
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<OrderFilters>(DEFAULT_ORDER_FILTERS);
+  const [draftFilters, setDraftFilters] =
+    useState<OrderFilters>(DEFAULT_ORDER_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<AvailableOrder | null>(null);
 
-  const handleReject = (order: Order) => {
-    setOrders(prev => prev.filter(o => o.id !== order.id));
-  };
+  const visibleOrders = useMemo(
+    () => filterAndSortOrders(orders, query, filters),
+    [orders, query, filters],
+  );
+
+  const goDetails = useCallback(
+    (order: AvailableOrder) => {
+      navigate('MainDrawer', {
+        screen: 'OrderDetails',
+        params: { orderId: order.id },
+      });
+    },
+    [],
+  );
+
+  const goDashboard = useCallback(() => {
+    navigation.navigate('Dashboard' as never);
+  }, [navigation]);
+
+  const handleAccept = useCallback(
+    (order: AvailableOrder) => {
+      if (activeJob) {
+        confirmDialog({
+          title: 'Replace active delivery?',
+          message: `You already have ${activeJob.id} in progress. Accepting ${order.id} will replace it.`,
+          confirmLabel: 'Accept anyway',
+          destructive: true,
+          onConfirm: () => {
+            acceptOrder(order);
+            goDashboard();
+          },
+        });
+        return;
+      }
+      acceptOrder(order);
+      goDashboard();
+    },
+    [activeJob, acceptOrder, goDashboard],
+  );
+
+  const handleRejectPress = useCallback((order: AvailableOrder) => {
+    setRejectTarget(order);
+  }, []);
+
+  const handleRejectConfirm = useCallback(
+    async (reason: RejectReason) => {
+      if (!rejectTarget) return;
+      const target = rejectTarget;
+      setRejectTarget(null);
+      await rejectOrder(target, reason);
+    },
+    [rejectTarget, rejectOrder],
+  );
+
+  const openFilters = useCallback(() => {
+    setDraftFilters(filters);
+    setFilterOpen(true);
+  }, [filters]);
+
+  const applyFilters = useCallback(() => {
+    setFilters(draftFilters);
+    setFilterOpen(false);
+  }, [draftFilters]);
+
+  const resetFilters = useCallback(() => {
+    setDraftFilters(DEFAULT_ORDER_FILTERS);
+  }, []);
+
+  const renderItem: ListRenderItem<AvailableOrder> = useCallback(
+    ({ item }) => (
+      <OrderCard
+        order={item}
+        onPress={goDetails}
+        onAccept={handleAccept}
+        onReject={handleRejectPress}
+      />
+    ),
+    [goDetails, handleAccept, handleRejectPress],
+  );
+
+  const keyExtractor = useCallback((item: AvailableOrder) => item.id, []);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.maxDistance != null) n += 1;
+    if (filters.paymentMethod !== 'all') n += 1;
+    if (filters.codOnly) n += 1;
+    if (filters.priorityOnly) n += 1;
+    if (filters.expressOnly) n += 1;
+    if (filters.fragileOnly) n += 1;
+    if (filters.sort !== 'latest') n += 1;
+    return n;
+  }, [filters]);
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={openMenu}>
-          <Icon name="menu" size={26} color={BRAND_RED_DARK} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>RapidDelivery</Text>
-        <TouchableOpacity>
-          <View>
-            <Icon name="bell-outline" size={24} color={BRAND_RED_DARK} />
-            <View style={styles.notifDot} />
-          </View>
+      <AppHeader
+        title="Orders"
+        showMenu
+        onMenuPress={openMenu}
+        rightIcon="bell-outline"
+        rightBadge
+        onRightPress={() =>
+          navigate('MainDrawer', { screen: 'Notifications' })
+        }
+      />
+
+      <View style={styles.toolbar}>
+        <SearchBar
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search ID, customer, address…"
+          style={styles.search}
+        />
+        <TouchableOpacity
+          style={styles.filterBtn}
+          onPress={openFilters}
+          accessibilityRole="button"
+          accessibilityLabel="Open filters">
+          <Icon name="filter-variant" size={22} color={colors.primaryDark} />
+          {activeFilterCount > 0 ? (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}>
-        <Text style={styles.pageTitle}>Available Orders</Text>
-        <Text style={styles.pageSubtitle}>
-          {orders.length} delivery opportunities nearby
-        </Text>
+      <Text style={styles.count} accessibilityLiveRegion="polite">
+        {visibleOrders.length} available
+        {query || activeFilterCount > 0 ? ' · filtered' : ''}
+      </Text>
 
-        <View style={styles.filterRow}>
-          <TouchableOpacity style={styles.filterBtn}>
-            <Icon name="filter-variant" size={16} color={TEXT_PRIMARY} />
-            <Text style={styles.filterText}>Filter</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.filterBtn}>
-            <Icon name="swap-vertical" size={16} color={TEXT_PRIMARY} />
-            <Text style={styles.filterText}>Sort</Text>
-          </TouchableOpacity>
-        </View>
+      <FlatList
+        data={visibleOrders}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={6}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+        ListEmptyComponent={
+          loading ? (
+            <EmptyState
+              variant="loading"
+              title="Loading orders"
+              message="Fetching nearby deliveries…"
+            />
+          ) : error ? (
+            <EmptyState
+              variant="error"
+              title="Couldn’t load orders"
+              message={error}
+              actionLabel="Try again"
+              onAction={() => void refreshOrders()}
+            />
+          ) : (
+            <EmptyState
+              variant={
+                query || activeFilterCount > 0 ? 'search' : 'empty'
+              }
+              icon={
+                query || activeFilterCount > 0
+                  ? undefined
+                  : 'truck-delivery-outline'
+              }
+              title={
+                query || activeFilterCount > 0
+                  ? 'No matching orders'
+                  : 'No orders right now'
+              }
+              message={
+                query || activeFilterCount > 0
+                  ? 'Try clearing search or filters.'
+                  : 'New deliveries in your zone will appear here.'
+              }
+              actionLabel={
+                query || activeFilterCount > 0 ? 'Clear filters' : 'Refresh'
+              }
+              onAction={() => {
+                if (query || activeFilterCount > 0) {
+                  setQuery('');
+                  setFilters(DEFAULT_ORDER_FILTERS);
+                } else {
+                  void refreshOrders();
+                }
+              }}
+            />
+          )
+        }
+      />
 
-        <View style={styles.mapPreview}>
-          <View style={styles.mapGrid}>
-            {[...Array(12)].map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.mapDot,
-                  {
-                    top: `${10 + (i % 4) * 22}%` as any,
-                    left: `${8 + (i % 3) * 30}%` as any,
-                    backgroundColor: i === 5 ? '#2196F3' : BRAND_RED_DARK,
-                    width: i === 5 ? 14 : 8,
-                    height: i === 5 ? 14 : 8,
-                    borderRadius: i === 5 ? 7 : 4,
-                  },
-                ]}
-              />
-            ))}
-          </View>
-          <View style={styles.trafficPill}>
-            <View style={styles.trafficDot} />
-            <Text style={styles.trafficText}>Live Traffic: Moderate</Text>
-          </View>
-          <View style={styles.mapSidebar}>
-            {orders.slice(0, 3).map(o => (
-              <Text key={o.id} style={styles.sidebarItem} numberOfLines={1}>
-                #{o.id} - {o.restaurant.split(' ')[0]}, {o.earnings}
-              </Text>
-            ))}
-          </View>
-        </View>
+      <OrderFilterSheet
+        visible={filterOpen}
+        draft={draftFilters}
+        onChangeDraft={setDraftFilters}
+        onClose={() => setFilterOpen(false)}
+        onApply={applyFilters}
+        onReset={resetFilters}
+      />
 
-        {orders.map(order => (
-          <OrderCard
-            key={order.id}
-            order={order}
-            onAccept={handleAccept}
-            onReject={handleReject}
-          />
-        ))}
-
-        {orders.length > 0 && (
-          <TouchableOpacity style={styles.viewMore}>
-            <Text style={styles.viewMoreText}>View more orders</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
+      <RejectReasonSheet
+        visible={!!rejectTarget}
+        restaurant={rejectTarget?.restaurant}
+        onClose={() => setRejectTarget(null)}
+        onConfirm={handleRejectConfirm}
+      />
     </View>
   );
 }
@@ -121,124 +266,53 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BACKGROUND,
+    backgroundColor: colors.background,
   },
-  header: {
+  toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: BRAND_RED_DARK,
-  },
-  notifDot: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: BRAND_RED_DARK,
-  },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 24 },
-  pageTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: TEXT_PRIMARY,
-    marginBottom: 4,
-  },
-  pageSubtitle: {
-    fontSize: 14,
-    color: TEXT_SECONDARY,
-    marginBottom: 16,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
+  search: {
+    flex: 1,
   },
   filterBtn: {
-    flexDirection: 'row',
+    width: TOUCH_TARGET,
+    height: TOUCH_TARGET,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
-    backgroundColor: '#EBEBEB',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 6,
-  },
-  filterText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: TEXT_PRIMARY,
-  },
-  mapPreview: {
-    height: 160,
-    backgroundColor: '#E8E4DC',
-    borderRadius: 12,
-    marginBottom: 20,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  mapGrid: {
-    flex: 1,
-    position: 'relative',
-  },
-  mapDot: {
-    position: 'absolute',
-  },
-  trafficPill: {
-    position: 'absolute',
-    bottom: 10,
-    left: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    gap: 6,
-  },
-  trafficDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: BRAND_RED_DARK,
-  },
-  trafficText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: TEXT_PRIMARY,
-  },
-  mapSidebar: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: '38%',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    padding: 8,
     justifyContent: 'center',
-    gap: 6,
   },
-  sidebarItem: {
-    fontSize: 10,
-    color: TEXT_SECONDARY,
-  },
-  viewMore: {
+  filterBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'center',
+    paddingHorizontal: 3,
   },
-  viewMoreText: {
-    color: BRAND_RED_DARK,
-    fontWeight: '600',
-    fontSize: 14,
+  filterBadgeText: {
+    color: colors.textOnPrimary,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  count: {
+    ...typography.caption,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  listContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xxl,
+    flexGrow: 1,
   },
 });

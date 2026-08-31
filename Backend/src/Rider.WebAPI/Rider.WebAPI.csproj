@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rider.Application\Rider.Application.csproj" />
+    <ProjectReference Include="..\Rider.Domain\Rider.Domain.csproj" />
+    <ProjectReference Include="..\Rider.Persistence\Rider.Persistence.csproj" />
+    <ProjectReference Include="..\Rider.Infrastructure\Rider.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

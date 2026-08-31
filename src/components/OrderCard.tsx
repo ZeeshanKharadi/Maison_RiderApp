@@ -1,210 +1,279 @@
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import {
+  Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { Order } from '../data/orders';
 import {
-  ACCEPT_GREEN,
-  BRAND_RED_DARK,
-  TEXT_MUTED,
-  TEXT_PRIMARY,
-  TEXT_SECONDARY,
-} from '../theme/colors';
+  AvailableOrder,
+  formatPostedAgo,
+  paymentLabel,
+} from '../data/orders';
+import { Badge, AppButton } from './ui';
+import { formatMoney } from '../utils/format';
+import {
+  colors,
+  elevation,
+  radius,
+  spacing,
+  typography,
+} from '../theme';
 
-interface OrderCardProps {
-  order: Order;
-  onAccept?: (order: Order) => void;
-  onReject?: (order: Order) => void;
-}
+type Props = {
+  order: AvailableOrder;
+  onPress: (order: AvailableOrder) => void;
+  onAccept: (order: AvailableOrder) => void;
+  onReject: (order: AvailableOrder) => void;
+};
 
-export default function OrderCard({ order, onAccept, onReject }: OrderCardProps) {
+function OrderCardComponent({ order, onPress, onAccept, onReject }: Props) {
+  const handleAccept = useCallback(() => {
+    onAccept(order);
+  }, [onAccept, order]);
+
+  const handleReject = useCallback(() => {
+    onReject(order);
+  }, [onReject, order]);
+
   return (
-    <View style={styles.card}>
-      <View style={styles.redAccent} />
-      <View style={styles.content}>
+    <Pressable
+      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      onPress={() => onPress(order)}
+      accessibilityRole="button"
+      accessibilityLabel={`Order ${order.id} for ${order.customerName}. Fee ${formatMoney(order.deliveryFee)}. Double tap for details.`}>
+      <View style={styles.accent} />
+      <View style={styles.body}>
         <View style={styles.topRow}>
-          <View
-            style={[styles.thumbnail, { backgroundColor: order.imageColor }]}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.orderId}>{order.id}</Text>
+            <Text style={styles.customer} numberOfLines={1}>
+              {order.customerName} · {order.restaurant}
+            </Text>
+          </View>
+          <View style={styles.feeCol}>
+            <Text style={styles.fee}>{formatMoney(order.deliveryFee)}</Text>
+            <Text style={styles.feeLabel}>Delivery fee</Text>
+          </View>
+        </View>
+
+        <View style={styles.route}>
+          <View style={styles.routeRail}>
+            <View style={styles.dotPickup} />
+            <View style={styles.rail} />
+            <View style={styles.dotDrop} />
+          </View>
+          <View style={styles.routeText}>
+            <Text style={styles.addr} numberOfLines={1}>
+              {order.pickupAddress}
+            </Text>
+            <Text style={[styles.addr, styles.addrDrop]} numberOfLines={1}>
+              {order.dropoffAddress}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.metaRow}>
+          <Meta icon="map-marker-distance" text={`${order.distanceMiles} mi`} />
+          <Meta icon="clock-outline" text={`${order.etaMinutes} min`} />
+          <Meta icon="cash" text={formatMoney(order.orderAmount)} />
+          <Meta
+            icon="credit-card-outline"
+            text={paymentLabel(order.paymentMethod)}
           />
-          <View style={styles.info}>
-            <Text style={styles.restaurant}>{order.restaurant}</Text>
-            <View style={styles.distanceRow}>
-              <Icon name="map-marker" size={14} color={TEXT_MUTED} />
-              <Text style={styles.distance}>{order.distance}</Text>
-            </View>
-          </View>
-          <View style={styles.earningsCol}>
-            <Text style={styles.earnings}>{order.earnings}</Text>
-            <Text style={styles.earningsLabel}>Est. Earnings</Text>
-          </View>
         </View>
 
-        <View style={styles.tagsRow}>
-          <View style={styles.tag}>
-            <Icon name="shopping-outline" size={13} color={TEXT_SECONDARY} />
-            <Text style={styles.tagText}>{order.items} items</Text>
-          </View>
-          <View style={styles.tag}>
-            <Icon name="clock-outline" size={13} color={TEXT_SECONDARY} />
-            <Text style={styles.tagText}>{order.estTime}</Text>
-          </View>
-          {order.hot && (
-            <View style={styles.hotTag}>
-              <Icon name="fire" size={13} color="#FFFFFF" />
-              <Text style={styles.hotTagText}>Hot</Text>
-            </View>
-          )}
+        <View style={styles.badges}>
+          {order.isCod ? <Badge label="COD" tone="warning" icon="cash" /> : null}
+          {order.priority !== 'normal' ? (
+            <Badge
+              label={order.priority === 'urgent' ? 'Urgent' : 'Priority'}
+              tone="error"
+              icon="flag"
+            />
+          ) : null}
+          {order.express ? (
+            <Badge label="Express" tone="info" icon="lightning-bolt" />
+          ) : null}
+          {order.fragile ? (
+            <Badge label="Fragile" tone="star" icon="glass-fragile" />
+          ) : null}
         </View>
 
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
+        {order.specialInstructions ? (
+          <Text style={styles.instructions} numberOfLines={1}>
+            Note: {order.specialInstructions}
+          </Text>
+        ) : null}
+
+        <Text style={styles.posted}>{formatPostedAgo(order.postedAt)}</Text>
+
+        <View style={styles.actions}>
+          <AppButton
+            label="Accept"
+            icon="check"
+            variant="secondary"
+            onPress={handleAccept}
             style={styles.acceptBtn}
-            onPress={() => onAccept?.(order)}>
-            <Icon name="check" size={18} color="#FFFFFF" />
-            <Text style={styles.acceptText}>Accept</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+            accessibilityLabel={`Accept order ${order.id}`}
+          />
+          <AppButton
+            label="Reject"
+            variant="outline"
+            onPress={handleReject}
             style={styles.rejectBtn}
-            onPress={() => onReject?.(order)}>
-            <Text style={styles.rejectText}>Reject</Text>
-          </TouchableOpacity>
+            accessibilityLabel={`Reject order ${order.id}`}
+          />
         </View>
       </View>
+    </Pressable>
+  );
+}
+
+function Meta({ icon, text }: { icon: string; text: string }) {
+  return (
+    <View style={styles.meta}>
+      <Icon name={icon} size={13} color={colors.textMuted} />
+      <Text style={styles.metaText}>{text}</Text>
     </View>
   );
 }
 
+const OrderCard = memo(OrderCardComponent);
+export default OrderCard;
+
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    marginBottom: spacing.sm,
     flexDirection: 'row',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
     overflow: 'hidden',
+    ...elevation.medium,
   },
-  redAccent: {
+  pressed: {
+    opacity: 0.96,
+  },
+  accent: {
     width: 4,
-    backgroundColor: BRAND_RED_DARK,
+    backgroundColor: colors.primaryDark,
   },
-  content: {
+  body: {
     flex: 1,
-    padding: 14,
+    padding: spacing.md,
   },
   topRow: {
     flexDirection: 'row',
-    marginBottom: 12,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
-  thumbnail: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  info: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  restaurant: {
-    fontSize: 16,
+  orderId: {
+    ...typography.caption,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
-    marginBottom: 4,
+    color: colors.primaryDark,
   },
-  distanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  distance: {
-    fontSize: 12,
-    color: TEXT_MUTED,
-  },
-  earningsCol: {
-    alignItems: 'flex-end',
-  },
-  earnings: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: BRAND_RED_DARK,
-  },
-  earningsLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: ACCEPT_GREEN,
+  customer: {
+    ...typography.bodyStrong,
     marginTop: 2,
   },
-  tagsRow: {
+  feeCol: {
+    alignItems: 'flex-end',
+  },
+  fee: {
+    ...typography.title,
+    color: colors.success,
+    fontSize: 18,
+  },
+  feeLabel: {
+    ...typography.caption,
+    fontWeight: '600',
+    color: colors.success,
+  },
+  route: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
+    marginBottom: spacing.sm,
+  },
+  routeRail: {
+    width: 12,
+    alignItems: 'center',
+    marginRight: spacing.xs,
+    paddingTop: 4,
+  },
+  dotPickup: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primaryDark,
+  },
+  rail: {
+    width: 2,
+    flex: 1,
+    minHeight: 16,
+    backgroundColor: colors.border,
+    marginVertical: 3,
+  },
+  dotDrop: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+  },
+  routeText: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  addr: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '500',
+  },
+  addrDrop: {
+    color: colors.textSecondary,
+  },
+  metaRow: {
+    flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
   },
-  tag: {
+  meta: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F0F0',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    gap: 4,
+    gap: 3,
+    backgroundColor: colors.background,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 4,
   },
-  tagText: {
-    fontSize: 12,
-    color: TEXT_SECONDARY,
-  },
-  hotTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: BRAND_RED_DARK,
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    gap: 4,
-  },
-  hotTagText: {
-    fontSize: 12,
-    color: '#FFFFFF',
+  metaText: {
+    ...typography.caption,
     fontWeight: '600',
   },
-  actionsRow: {
+  badges: {
     flexDirection: 'row',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: spacing.xxs,
+    marginBottom: spacing.xs,
+  },
+  instructions: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    marginBottom: spacing.xxs,
+  },
+  posted: {
+    ...typography.caption,
+    marginBottom: spacing.sm,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   acceptBtn: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: ACCEPT_GREEN,
-    borderRadius: 8,
-    paddingVertical: 11,
-    gap: 6,
-  },
-  acceptText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
   },
   rejectBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 11,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BRAND_RED_DARK,
-    justifyContent: 'center',
-  },
-  rejectText: {
-    color: BRAND_RED_DARK,
-    fontWeight: '600',
-    fontSize: 14,
+    minWidth: 96,
   },
 });

@@ -1,0 +1,2 @@
+-- Do not run this file.
+-- Open and Execute:  Backend\scripts\scripts.sql

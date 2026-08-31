@@ -100,8 +100,8 @@ export default function VerifyOTPScreen() {
             </View>
             <Text style={styles.title}>Verify OTP</Text>
             <Text style={styles.subtitle}>
-              Enter the 6-digit code sent to your registered phone.{'\n'}
-              Demo OTP: 123456
+              Enter the 6-digit code sent to your registered phone.
+              {'\n'}Test code: 123456
             </Text>
           </View>
 
