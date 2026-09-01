@@ -3,6 +3,7 @@ import {
   Alert,
   Animated,
   Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -129,11 +130,16 @@ export default function ActiveDeliveryScreen() {
 
     try {
       const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        Alert.alert('Unable to open maps', 'Google Maps is not available on this device.');
+      if (supported) {
+        await Linking.openURL(url);
         return;
       }
-      await Linking.openURL(url);
+      // Android 11+ may report false negatives without manifest queries — try anyway.
+      if (Platform.OS === 'android') {
+        await Linking.openURL(url);
+        return;
+      }
+      Alert.alert('Unable to open maps', 'Google Maps is not available on this device.');
     } catch {
       Alert.alert('Unable to open maps', 'Could not launch Google Maps.');
     }

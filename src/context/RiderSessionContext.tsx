@@ -137,14 +137,12 @@ export function RiderSessionProvider({
       setActiveJobs(prev => {
         const existing = prev.find(j => j.id === order.id);
         if (existing && isActiveJob(existing)) {
-          setSelectedJobId(order.id);
           return prev;
         }
         const withoutCompleted = prev.filter(j => j.id !== order.id);
-        const next = [...withoutCompleted, createJobFromOrder(order)];
-        setSelectedJobId(order.id);
-        return next;
+        return [...withoutCompleted, createJobFromOrder(order)];
       });
+      setSelectedJobId(order.id);
       setOnline(true);
     },
     [setOnline],

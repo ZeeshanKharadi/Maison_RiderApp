@@ -9,6 +9,7 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { ActiveDeliveryJob } from '../../delivery/types';
 import { mapDestinationKind, resolveMapTarget } from '../../delivery/mapTargets';
+import { hasGoogleMapsApiKey } from '../../config/env';
 import {
   LatLng,
   regionForPoints,
@@ -50,7 +51,7 @@ export default function DeliveryMapPanel({
   }, [riderLocation, target.coordinate]);
 
   useEffect(() => {
-    if (mapPoints.length === 0) return;
+    if (!hasGoogleMapsApiKey || mapPoints.length === 0) return;
     mapRef.current?.animateToRegion(region, 450);
   }, [job.id, job.state, region, mapPoints.length]);
 
@@ -60,38 +61,50 @@ export default function DeliveryMapPanel({
       ? `En route to store · ${target.label}`
       : `En route to customer · ${target.label}`;
 
+  const mapAvailable = hasGoogleMapsApiKey;
+
   return (
     <View style={styles.wrap}>
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-        initialRegion={region}
-        showsUserLocation={false}
-        showsMyLocationButton={false}>
-        {riderLocation ? (
-          <Marker
-            coordinate={riderLocation}
-            title="You"
-            pinColor={colors.info}
-          />
-        ) : null}
-        {target.coordinate ? (
-          <Marker
-            coordinate={target.coordinate}
-            title={target.label}
-            description={destKind === 'store' ? 'Pickup' : 'Drop-off'}
-            pinColor={destKind === 'store' ? colors.warning : colors.success}
-          />
-        ) : null}
-        {routeLine.length > 1 ? (
-          <Polyline
-            coordinates={routeLine}
-            strokeColor={colors.primaryDark}
-            strokeWidth={3}
-          />
-        ) : null}
-      </MapView>
+      {mapAvailable ? (
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+          initialRegion={region}
+          showsUserLocation={false}
+          showsMyLocationButton={false}>
+          {riderLocation ? (
+            <Marker
+              coordinate={riderLocation}
+              title="You"
+              pinColor={colors.info}
+            />
+          ) : null}
+          {target.coordinate ? (
+            <Marker
+              coordinate={target.coordinate}
+              title={target.label}
+              description={destKind === 'store' ? 'Pickup' : 'Drop-off'}
+              pinColor={destKind === 'store' ? colors.warning : colors.success}
+            />
+          ) : null}
+          {routeLine.length > 1 ? (
+            <Polyline
+              coordinates={routeLine}
+              strokeColor={colors.primaryDark}
+              strokeWidth={3}
+            />
+          ) : null}
+        </MapView>
+      ) : (
+        <View style={styles.mapFallback}>
+          <Text style={styles.mapFallbackTitle}>Map unavailable</Text>
+          <Text style={styles.mapFallbackBody}>
+            Set GOOGLE_MAPS_API_KEY in .env and rebuild the app to show the
+            delivery map.
+          </Text>
+        </View>
+      )}
 
       <View style={styles.overlay}>
         <Text style={styles.overlayTitle} numberOfLines={1}>
@@ -139,6 +152,23 @@ const styles = StyleSheet.create({
   },
   map: {
     ...StyleSheet.absoluteFill,
+  },
+  mapFallback: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.surface,
+  },
+  mapFallbackTitle: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    marginBottom: spacing.xxs,
+  },
+  mapFallbackBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
   overlay: {
     position: 'absolute',
