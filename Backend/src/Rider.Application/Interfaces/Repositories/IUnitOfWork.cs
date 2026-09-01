@@ -15,6 +15,8 @@ namespace Rider.Application.Interfaces.Repositories
         IUserRoleRepository UserRoleRepository { get; }
         IStoreRepository StoreRepository { get; }
         IAppSettingRepository AppSettingRepository { get; }
+        IRiderNotificationRepository RiderNotificationRepository { get; }
+        IUserDeviceTokenRepository UserDeviceTokenRepository { get; }
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }
 }

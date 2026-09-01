@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Rider.Application.DTOs.Auth;
+using Rider.Application.DTOs.Notifications;
 using Rider.Application.Interfaces;
 using Rider.Domain.Common;
 
@@ -15,11 +16,19 @@ namespace Rider.WebAPI.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
+        private readonly IRiderNotificationService _notifications;
+        private readonly IUserDeviceTokenService _deviceTokens;
         private readonly ILogger<UserController> _logger;
 
-        public UserController(IUserService userService, ILogger<UserController> logger)
+        public UserController(
+            IUserService userService,
+            IRiderNotificationService notifications,
+            IUserDeviceTokenService deviceTokens,
+            ILogger<UserController> logger)
         {
             _userService = userService;
+            _notifications = notifications;
+            _deviceTokens = deviceTokens;
             _logger = logger;
         }
 
@@ -157,6 +166,67 @@ namespace Rider.WebAPI.Controllers
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var result = await _userService.ValidateToken(userIdClaim);
+            return Ok(result);
+        }
+
+        [HttpGet("Notifications")]
+        [Authorize]
+        public async Task<IActionResult> Notifications([FromQuery] int take = 50)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.ListForUserAsync(uid, take);
+            return Ok(result);
+        }
+
+        [HttpPost("Notifications/{id:long}/read")]
+        [Authorize]
+        public async Task<IActionResult> MarkNotificationRead(long id)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.MarkReadAsync(uid, id);
+            if (!result.status)
+                return NotFound(result);
+            return Ok(result);
+        }
+
+        [HttpPost("Notifications/read-all")]
+        [Authorize]
+        public async Task<IActionResult> MarkAllNotificationsRead()
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.MarkAllReadAsync(uid);
+            return Ok(result);
+        }
+
+        [HttpPost("device-token")]
+        [Authorize]
+        public async Task<IActionResult> RegisterDeviceToken([FromBody] RegisterDeviceTokenRequest request)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _deviceTokens.RegisterAsync(uid, request);
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
+        [HttpDelete("device-token")]
+        [Authorize]
+        public async Task<IActionResult> RemoveDeviceToken([FromQuery] string token)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _deviceTokens.RemoveAsync(uid, token);
+            if (!result.status)
+                return BadRequest(result);
             return Ok(result);
         }
     }

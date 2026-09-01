@@ -7,6 +7,7 @@ namespace Rider.Application.Interfaces.Repositories
         Task<AppUser> GetByEmployeeIdAsync(string employeeId);
         Task<AppUser> GetByUserIdAsync(Guid userId);
         Task<List<AppUser>> ListRidersAsync(string storeId);
+        Task<List<AppUser>> ListActiveRidersForStoreAsync(string storeId);
     }
 
     public interface IRoleRepository : IRepository<Role>

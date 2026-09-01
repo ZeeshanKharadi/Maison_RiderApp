@@ -86,6 +86,8 @@ namespace Rider.Persistence.Extensions
             services.AddScoped<IUserRoleRepository, UserRoleRepository>();
             services.AddScoped<IStoreRepository, StoreRepository>();
             services.AddScoped<IAppSettingRepository, AppSettingRepository>();
+            services.AddScoped<IRiderNotificationRepository, RiderNotificationRepository>();
+            services.AddScoped<IUserDeviceTokenRepository, UserDeviceTokenRepository>();
             services.AddScoped<IUnitOfWork, UnitOfWork>();
         }
     }

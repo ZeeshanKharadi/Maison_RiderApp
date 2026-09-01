@@ -39,6 +39,16 @@ BEGIN
 END
 GO
 
+F COL_LENGTH('dbo.Stores', 'Latitude') IS NULL
+    ALTER TABLE dbo.Stores ADD Latitude FLOAT NULL;
+GO
+
+IF COL_LENGTH('dbo.Stores', 'Longitude') IS NULL
+    ALTER TABLE dbo.Stores ADD Longitude FLOAT NULL;
+GO
+
+
+
 -- Copy any store ids already seen on AssignOrder batches
 INSERT INTO dbo.Stores (StoreId, Name, IsActive, CreatedAt)
 SELECT DISTINCT b.StoreId, b.StoreId, 1, SYSUTCDATETIME()
@@ -48,12 +58,10 @@ WHERE b.StoreId IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM dbo.Stores s WHERE s.StoreId = b.StoreId);
 GO
 
-IF NOT EXISTS (SELECT 1 FROM dbo.Stores)
-BEGIN
-    INSERT INTO dbo.Stores (StoreId, Name, IsActive, CreatedAt)
-    VALUES (N'ST-001', N'Store 001', 1, SYSUTCDATETIME());
-END
-GO
+
+
+UPDATE dbo.Stores SET Latitude = 24.8607, Longitude = 67.0011 WHERE StoreId = N'10006';
+UPDATE dbo.Stores SET Latitude = 24.8650, Longitude = 67.0050 WHERE StoreId = N'10008';
 
 -- -----------------------------------------------------------------------------
 -- 3) ASSIGNED ORDERS — timestamps + cash collected

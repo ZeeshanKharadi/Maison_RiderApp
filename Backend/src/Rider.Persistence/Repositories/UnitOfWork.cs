@@ -17,6 +17,8 @@ namespace Rider.Persistence.Repositories
         private IUserRoleRepository _userRoleRepository;
         private IStoreRepository _storeRepository;
         private IAppSettingRepository _appSettingRepository;
+        private IRiderNotificationRepository _riderNotificationRepository;
+        private IUserDeviceTokenRepository _userDeviceTokenRepository;
 
         public UnitOfWork(ApplicationDbContext context)
         {
@@ -54,6 +56,12 @@ namespace Rider.Persistence.Repositories
 
         public IAppSettingRepository AppSettingRepository
             => _appSettingRepository ??= new AppSettingRepository(_dbContext);
+
+        public IRiderNotificationRepository RiderNotificationRepository
+            => _riderNotificationRepository ??= new RiderNotificationRepository(_dbContext);
+
+        public IUserDeviceTokenRepository UserDeviceTokenRepository
+            => _userDeviceTokenRepository ??= new UserDeviceTokenRepository(_dbContext);
 
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
             => _dbContext.SaveChangesAsync(cancellationToken);

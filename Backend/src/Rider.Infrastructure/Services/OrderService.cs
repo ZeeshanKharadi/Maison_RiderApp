@@ -9,10 +9,12 @@ namespace Rider.Infrastructure.Services
     public class OrderService : IOrderService
     {
         private readonly IUnitOfWork _unitOfWork;
+        private readonly IRiderNotificationService _notifications;
 
-        public OrderService(IUnitOfWork unitOfWork)
+        public OrderService(IUnitOfWork unitOfWork, IRiderNotificationService notifications)
         {
             _unitOfWork = unitOfWork;
+            _notifications = notifications;
         }
 
         public Task<ApiResponse<AssignOrderResultDto>> AssignOrderAsync(AssignOrderRequest request)
@@ -82,6 +84,7 @@ namespace Rider.Infrastructure.Services
 
             var savedOrderIds = new List<string>();
             var itemsSaved = 0;
+            var pendingNotifications = new List<(bool direct, Guid? riderUserId, string orderId, decimal total)>();
 
             foreach (var dto in request.orders)
             {
@@ -141,6 +144,14 @@ namespace Rider.Infrastructure.Services
 
                     await _unitOfWork.AssignedOrderRepository.UpdateAsync(existing);
                     savedOrderIds.Add(existing.OrderId);
+                    if (assignToUserId.HasValue)
+                    {
+                        pendingNotifications.Add((
+                            true,
+                            assignToUserId.Value,
+                            existing.OrderId,
+                            dto.orderTotal));
+                    }
                     continue;
                 }
 
@@ -200,6 +211,11 @@ namespace Rider.Infrastructure.Services
 
                 batch.Orders.Add(order);
                 savedOrderIds.Add(order.OrderId);
+                pendingNotifications.Add((
+                    assignToUserId.HasValue,
+                    assignToUserId,
+                    order.OrderId,
+                    dto.orderTotal));
             }
 
             if (savedOrderIds.Count == 0)
@@ -209,6 +225,31 @@ namespace Rider.Infrastructure.Services
                 await _unitOfWork.AssignedOrderBatchRepository.AddAsync(batch);
 
             await _unitOfWork.SaveChangesAsync();
+
+            foreach (var pending in pendingNotifications)
+            {
+                var saved = await _unitOfWork.AssignedOrderRepository
+                    .GetByExternalOrderIdAsync(pending.orderId);
+                if (saved == null) continue;
+
+                if (pending.direct && pending.riderUserId.HasValue)
+                {
+                    await _notifications.NotifyDirectAssignmentAsync(
+                        pending.riderUserId.Value,
+                        pending.orderId,
+                        saved.Id,
+                        batch.StoreId,
+                        pending.total);
+                }
+                else if (!pending.direct)
+                {
+                    await _notifications.NotifyOpenPoolOrderAsync(
+                        pending.orderId,
+                        saved.Id,
+                        batch.StoreId,
+                        pending.total);
+                }
+            }
 
             return new ApiResponse<AssignOrderResultDto>(true, "Orders assigned successfully", new AssignOrderResultDto
             {

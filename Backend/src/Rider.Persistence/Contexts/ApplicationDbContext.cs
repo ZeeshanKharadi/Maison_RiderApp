@@ -19,6 +19,8 @@ namespace Rider.Persistence.Contexts
         public DbSet<AssignedOrderBatch> AssignedOrderBatches { get; set; }
         public DbSet<AssignedOrder> AssignedOrders { get; set; }
         public DbSet<AssignedOrderItem> AssignedOrderItems { get; set; }
+        public DbSet<RiderNotification> RiderNotifications { get; set; }
+        public DbSet<UserDeviceToken> UserDeviceTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -149,6 +151,36 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.Comment).HasMaxLength(500);
                 entity.Property(e => e.LineNum).HasMaxLength(50);
                 entity.Property(e => e.Size).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<RiderNotification>(entity =>
+            {
+                entity.ToTable("RiderNotifications");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Category).HasMaxLength(30);
+                entity.Property(e => e.Title).HasMaxLength(200);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.Property(e => e.OrderId).HasMaxLength(50);
+                entity.Property(e => e.Priority).HasMaxLength(20);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<UserDeviceToken>(entity =>
+            {
+                entity.ToTable("UserDeviceTokens");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Token).HasMaxLength(500).IsRequired();
+                entity.Property(e => e.Platform).HasMaxLength(20);
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.HasIndex(e => e.Token).IsUnique();
+                entity.HasOne<AppUser>()
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

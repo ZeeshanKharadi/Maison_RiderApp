@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "333906692569",
+    "project_id": "maison-riderapp",
+    "storage_bucket": "maison-riderapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:333906692569:android:65480ea05cbecb7bd231c8",
+        "android_client_info": {
+          "package_name": "com.rapiddeliveryrider"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCH99FD1vW_uyYvggaOz-4EzkVDOIHhBCo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

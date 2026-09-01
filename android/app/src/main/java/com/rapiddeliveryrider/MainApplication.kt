@@ -1,6 +1,9 @@
 package com.rapiddeliveryrider
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -22,6 +25,21 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    createNotificationChannel()
     loadReactNative(this)
+  }
+
+  private fun createNotificationChannel() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val channel = NotificationChannel(
+      "maison_orders",
+      "Order assignments",
+      NotificationManager.IMPORTANCE_HIGH,
+    ).apply {
+      description = "Alerts when new delivery orders are assigned"
+      enableVibration(true)
+    }
+    val manager = getSystemService(NotificationManager::class.java)
+    manager?.createNotificationChannel(channel)
   }
 }

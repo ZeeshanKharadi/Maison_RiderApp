@@ -7,13 +7,13 @@ import React, {
   useState,
 } from 'react';
 import * as accountRepository from '../repositories/accountRepository';
+import * as notificationsRepository from '../repositories/notificationsRepository';
 import { useAuth } from '../services/AuthContext';
 import {
   AppNotification,
   AppSettings,
   DEFAULT_PROFILE,
   DEFAULT_SETTINGS,
-  MOCK_APP_NOTIFICATIONS,
   MOCK_DOCUMENTS,
   NotificationCategory,
   RiderDocument,
@@ -50,6 +50,8 @@ type AccountContextValue = {
     query: string,
     category: NotificationCategory | 'all',
   ) => AppNotification[];
+  syncNotifications: (items: AppNotification[]) => Promise<void>;
+  refreshNotifications: () => Promise<void>;
   ready: boolean;
 };
 
@@ -59,30 +61,32 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [profile, setProfile] = useState<RiderProfile>(DEFAULT_PROFILE);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [notifications, setNotifications] = useState<AppNotification[]>(
-    MOCK_APP_NOTIFICATIONS,
-  );
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [ready, setReady] = useState(false);
   const documents = MOCK_DOCUMENTS;
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [p, s, n] = await Promise.all([
+      const [p, s] = await Promise.all([
         accountRepository.loadProfile(),
         accountRepository.loadSettings(),
-        accountRepository.loadNotifications(),
       ]);
       if (!mounted) return;
       if (p.ok) setProfile(p.data);
       if (s.ok) setSettings(s.data);
-      if (n.ok) setNotifications(n.data);
+
+      if (user) {
+        const n = await notificationsRepository.fetchNotifications();
+        if (n.ok) setNotifications(n.data);
+      }
+
       setReady(true);
     })();
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user?.id]);
 
   // Keep local profile in sync with backend auth user (login / CurrentUser).
   useEffect(() => {
@@ -142,20 +146,34 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     await accountRepository.saveNotifications(next);
   }, []);
 
+  const syncNotifications = useCallback(async (items: AppNotification[]) => {
+    setNotifications(items);
+    await accountRepository.saveNotifications(items);
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    const result = await notificationsRepository.fetchNotifications();
+    if (result.ok) {
+      await syncNotifications(result.data);
+    }
+  }, [syncNotifications]);
+
   const markNotificationRead = useCallback(
     (id: string) => {
       const next = notifications.map(n =>
         n.id === id ? { ...n, read: true } : n,
       );
-      void persistNotifications(next);
+      void syncNotifications(next);
+      void notificationsRepository.markNotificationRead(id);
     },
-    [notifications, persistNotifications],
+    [notifications, syncNotifications],
   );
 
   const markAllNotificationsRead = useCallback(() => {
     const next = notifications.map(n => ({ ...n, read: true }));
-    void persistNotifications(next);
-  }, [notifications, persistNotifications]);
+    void syncNotifications(next);
+    void notificationsRepository.markAllNotificationsRead();
+  }, [notifications, syncNotifications]);
 
   const deleteNotification = useCallback(
     (id: string) => {
@@ -209,6 +227,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       deleteNotification,
       clearAllNotifications,
       filterNotifications,
+      syncNotifications,
+      refreshNotifications,
       ready,
     }),
     [
@@ -224,6 +244,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       deleteNotification,
       clearAllNotifications,
       filterNotifications,
+      syncNotifications,
+      refreshNotifications,
       ready,
     ],
   );

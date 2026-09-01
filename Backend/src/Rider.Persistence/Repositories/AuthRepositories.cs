@@ -37,6 +37,26 @@ namespace Rider.Persistence.Repositories
 
             return await q.OrderBy(u => u.UserName).ToListAsync();
         }
+
+        public async Task<List<AppUser>> ListActiveRidersForStoreAsync(string storeId)
+        {
+            var q = _entities
+                .AsNoTracking()
+                .Include(u => u.UserRoles)
+                    .ThenInclude(ur => ur.Role)
+                .Where(u => u.DeletedAt == null
+                    && u.IsActive
+                    && u.IsVerified
+                    && u.UserRoles.Any(ur => ur.Role != null && ur.Role.RoleName == "Rider"));
+
+            if (!string.IsNullOrWhiteSpace(storeId))
+            {
+                var sid = storeId.Trim();
+                q = q.Where(u => u.StoreId == sid || u.StoreId == null);
+            }
+
+            return await q.OrderBy(u => u.UserName).ToListAsync();
+        }
     }
 
     public class OtpRepository : Repository<OtpCode>, IOtpRepository
