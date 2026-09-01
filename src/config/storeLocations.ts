@@ -7,10 +7,15 @@ import { LatLng } from '../utils/geo';
 export type StoreLocationEntry = LatLng & { label?: string };
 
 export const DEV_STORE_LOCATIONS: Record<string, StoreLocationEntry> = {
-  'ST-001': {
+  '10006': {
     latitude: 24.8607,
     longitude: 67.0011,
-    label: 'Maison Store 001',
+    label: 'Store 10006',
+  },
+  '10008': {
+    latitude: 24.865,
+    longitude: 67.005,
+    label: 'Store 10008',
   },
   DEFAULT: {
     latitude: 24.8607,
