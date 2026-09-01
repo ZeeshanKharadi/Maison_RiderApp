@@ -27,7 +27,7 @@ type LoginUserData = {
 
 function mapApiUser(dto: ApiUserData | undefined, fallbackId: string): AuthUser {
   return {
-    id: dto?.employeeId || dto?.id || fallbackId,
+    id: dto?.id || dto?.employeeId || fallbackId,
     name: dto?.name?.trim() || 'Rider',
     email: dto?.email?.trim() || '',
     phone: dto?.phoneNumber?.trim() || '',

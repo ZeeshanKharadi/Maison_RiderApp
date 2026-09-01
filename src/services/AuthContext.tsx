@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await authRepository.fetchCurrentUser();
     if (result.ok) {
       await persistUser(result.data);
-      void syncFcmDeviceToken();
+      await syncFcmDeviceToken(true);
     }
   }, [persistUser]);
 
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (result.status && result.data) {
         const userData: User = JSON.parse(result.data);
         await persistUser(userData);
-        void syncFcmDeviceToken();
+        await syncFcmDeviceToken(true);
         return { status: true };
       }
       return { status: false, message: result.message };

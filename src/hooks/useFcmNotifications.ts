@@ -24,7 +24,7 @@ export function useFcmNotifications(enabled: boolean) {
     void syncFcmDeviceToken();
 
     const unsubToken = onFcmTokenRefresh(() => {
-      void syncFcmDeviceToken();
+      void syncFcmDeviceToken(true);
     });
 
     const unsubMessage = onForegroundMessage(message => {
@@ -47,14 +47,19 @@ export function useFcmNotifications(enabled: boolean) {
 
     const appStateSub = AppState.addEventListener('change', state => {
       if (state === 'active') {
-        void syncFcmDeviceToken();
+        void syncFcmDeviceToken(true);
       }
     });
+
+    const resyncInterval = setInterval(() => {
+      void syncFcmDeviceToken(true);
+    }, 5 * 60_000);
 
     return () => {
       unsubToken();
       unsubMessage();
       appStateSub.remove();
+      clearInterval(resyncInterval);
     };
   }, [enabled, user?.id, settings.pushNotifications, refreshNotifications, refreshOrders]);
 }

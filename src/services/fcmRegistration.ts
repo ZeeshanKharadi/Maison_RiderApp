@@ -1,22 +1,64 @@
 import { Platform } from 'react-native';
+import { getAccessToken } from '../api/tokenStorage';
 import * as deviceTokenRepository from '../repositories/deviceTokenRepository';
 import { getFcmToken, requestPushPermission } from './pushNotifications';
 
-let lastRegisteredToken: string | null = null;
+const SYNC_DEBOUNCE_MS = 15_000;
+let lastSynced: { token: string; at: number } | null = null;
 
-/** Register this device's FCM token with the backend (safe to call repeatedly). */
-export async function syncFcmDeviceToken(): Promise<boolean> {
-  await requestPushPermission();
+function logFcm(message: string, detail?: unknown) {
+  if (detail !== undefined) {
+    console.log(`[FCM] ${message}`, detail);
+    return;
+  }
+  console.log(`[FCM] ${message}`);
+}
 
-  const token = await getFcmToken();
-  if (!token) {
-    if (__DEV__) {
-      console.warn('[FCM] Could not obtain device token — rebuild the app after adding google-services.json');
+function warnFcm(message: string, detail?: unknown) {
+  if (detail !== undefined) {
+    console.warn(`[FCM] ${message}`, detail);
+    return;
+  }
+  console.warn(`[FCM] ${message}`);
+}
+
+async function wait(ms: number) {
+  await new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+async function getFcmTokenWithRetry(attempts = 4): Promise<string | null> {
+  for (let i = 0; i < attempts; i += 1) {
+    const token = await getFcmToken();
+    if (token) return token;
+    if (i < attempts - 1) {
+      await wait(1500 * (i + 1));
     }
+  }
+  return null;
+}
+
+/** Register this device's FCM token with the backend (idempotent upsert). */
+export async function syncFcmDeviceToken(force = false): Promise<boolean> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    warnFcm('No auth token — login before registering device');
     return false;
   }
 
-  if (token === lastRegisteredToken) {
+  await requestPushPermission();
+
+  const token = await getFcmTokenWithRetry();
+  if (!token) {
+    warnFcm('Could not obtain FCM token — rebuild app after adding google-services.json');
+    return false;
+  }
+
+  const now = Date.now();
+  if (
+    !force &&
+    lastSynced?.token === token &&
+    now - lastSynced.at < SYNC_DEBOUNCE_MS
+  ) {
     return true;
   }
 
@@ -26,23 +68,19 @@ export async function syncFcmDeviceToken(): Promise<boolean> {
   );
 
   if (!result.ok) {
-    if (__DEV__) {
-      console.warn('[FCM] Backend registration failed:', result.message);
-    }
+    warnFcm('Backend registration failed', result.message);
     return false;
   }
 
-  lastRegisteredToken = token;
-  if (__DEV__) {
-    console.log('[FCM] Device token registered with backend');
-  }
+  lastSynced = { token, at: now };
+  logFcm('Device token registered with backend');
   return true;
 }
 
 export async function unregisterFcmDeviceToken(): Promise<void> {
-  const token = lastRegisteredToken ?? (await getFcmToken());
+  const token = lastSynced?.token ?? (await getFcmToken());
   if (!token) return;
 
   await deviceTokenRepository.removeDeviceToken(token);
-  lastRegisteredToken = null;
+  lastSynced = null;
 }
