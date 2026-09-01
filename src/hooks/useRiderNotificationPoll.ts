@@ -1,15 +1,18 @@
 import { useEffect, useRef } from 'react';
-import { Alert, AppState, Vibration } from 'react-native';
+import { AppState } from 'react-native';
 import { useAccount } from '../context/AccountContext';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import * as notificationsRepository from '../repositories/notificationsRepository';
+import {
+  shouldAlertNotification,
+  showOrderNotificationAlert,
+} from '../utils/notificationAlert';
 
-const POLL_MS = 20_000;
+const POLL_MS = 8_000;
 
 /**
  * Polls server notifications while the rider is logged in.
- * Works regardless of the Dashboard online/offline toggle — that toggle is UI-only today.
- * Shows an in-app alert for new order assignments; refreshes the orders list.
+ * Order assignments always alert; other categories respect pushNotifications setting.
  */
 export function useRiderNotificationPoll(enabled: boolean) {
   const { settings, syncNotifications, notifications } = useAccount();
@@ -45,18 +48,15 @@ export function useRiderNotificationPoll(enabled: boolean) {
         return;
       }
 
-      if (!settings.pushNotifications) return;
-
       for (const n of incoming) {
-        if (n.category !== 'orders' || n.read || alertedRef.current.has(n.id)) {
-          continue;
-        }
+        if (alertedRef.current.has(n.id)) continue;
+        if (!shouldAlertNotification(n, settings.pushNotifications)) continue;
+
         alertedRef.current.add(n.id);
-        Vibration.vibrate(400);
-        Alert.alert(n.title, n.description, [
-          { text: 'OK', style: 'default' },
-        ]);
-        void refreshOrders();
+        showOrderNotificationAlert(n.title, n.description);
+        if (n.category === 'orders') {
+          void refreshOrders();
+        }
       }
     };
 

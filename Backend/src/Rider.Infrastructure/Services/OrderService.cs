@@ -163,6 +163,15 @@ namespace Rider.Infrastructure.Services
                             $"Order {existing.OrderId} is already {existing.Status} and assigned to another rider",
                             null);
 
+                    if (assignToUserId.HasValue)
+                    {
+                        pendingNotifications.Add((
+                            true,
+                            assignToUserId.Value,
+                            existing.OrderId,
+                            dto.orderTotal));
+                    }
+
                     savedOrderIds.Add(existing.OrderId);
                     continue;
                 }

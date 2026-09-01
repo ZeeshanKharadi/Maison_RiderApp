@@ -94,6 +94,9 @@ using (var scope = app.Services.CreateScope())
 
         await SeedPassword("RD-9921", "RD-9921", "demo rider");
         await SeedPassword("HO-ADMIN", "Admin@Maison1", "head-office admin");
+
+        var fcm = scope.ServiceProvider.GetService<Rider.Application.Interfaces.IFcmPushService>();
+        Log.Information("Firebase FCM push enabled: {Enabled}", fcm?.IsConfigured == true);
     }
     catch (Exception ex)
     {

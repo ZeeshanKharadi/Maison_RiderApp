@@ -1,80 +1,60 @@
-import { useEffect, useRef } from 'react';
-import { Alert, Vibration } from 'react-native';
+import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { useAuth } from '../services/AuthContext';
 import { useAccount } from '../context/AccountContext';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
-import * as deviceTokenRepository from '../repositories/deviceTokenRepository';
+import { syncFcmDeviceToken } from '../services/fcmRegistration';
 import {
-  getFcmToken,
   onFcmTokenRefresh,
   onForegroundMessage,
-  requestPushPermission,
 } from '../services/pushNotifications';
+import { showOrderNotificationAlert } from '../utils/notificationAlert';
 
 /**
- * Registers the device FCM token with the backend and handles foreground push alerts.
+ * Keeps FCM token synced with backend and shows foreground push alerts.
  */
 export function useFcmNotifications(enabled: boolean) {
   const { user } = useAuth();
   const { settings, refreshNotifications } = useAccount();
   const { refreshOrders } = useAvailableOrders();
-  const tokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || !user) return;
 
-    let alive = true;
+    void syncFcmDeviceToken();
 
-    const register = async (token: string) => {
-      tokenRef.current = token;
-      await deviceTokenRepository.registerDeviceToken(token, 'android');
-    };
-
-    const setup = async () => {
-      const granted = await requestPushPermission();
-      if (!alive || !granted) return;
-
-      const token = await getFcmToken();
-      if (!alive || !token) return;
-      await register(token);
-    };
-
-    void setup();
-
-    const unsubToken = onFcmTokenRefresh(token => {
-      void register(token);
+    const unsubToken = onFcmTokenRefresh(() => {
+      void syncFcmDeviceToken();
     });
 
     const unsubMessage = onForegroundMessage(message => {
-      if (!settings.pushNotifications) return;
-
       const title =
-        message.notification?.title ?? message.data?.title ?? 'New notification';
+        message.notification?.title ??
+        message.data?.title ??
+        'New notification';
       const body =
         message.notification?.body ?? message.data?.body ?? '';
+      const isOrder = message.data?.category === 'orders';
 
-      Vibration.vibrate(400);
-      Alert.alert(title, body, [{ text: 'OK', style: 'default' }]);
+      if (!isOrder && !settings.pushNotifications) return;
+
+      showOrderNotificationAlert(title, body);
       void refreshNotifications();
-      if (message.data?.category === 'orders') {
+      if (isOrder) {
         void refreshOrders();
       }
     });
 
+    const appStateSub = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        void syncFcmDeviceToken();
+      }
+    });
+
     return () => {
-      alive = false;
       unsubToken();
       unsubMessage();
-      const token = tokenRef.current;
-      if (token) {
-        void deviceTokenRepository.removeDeviceToken(token);
-      }
+      appStateSub.remove();
     };
-  }, [
-    enabled,
-    user?.id,
-    settings.pushNotifications,
-    refreshNotifications,
-    refreshOrders,
-  ]);
+  }, [enabled, user?.id, settings.pushNotifications, refreshNotifications, refreshOrders]);
 }

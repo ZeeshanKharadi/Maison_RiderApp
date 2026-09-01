@@ -1,5 +1,5 @@
-import { API_PATHS } from '../config';
-import { apiEnvelope } from '../httpClient';
+import { API_PATHS } from '../api/config';
+import { apiEnvelope } from '../api/httpClient';
 import {
   ApiRiderNotification,
   mapApiNotification,

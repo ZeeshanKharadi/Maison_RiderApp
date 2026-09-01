@@ -34,7 +34,10 @@ namespace Rider.Infrastructure.Services
             IReadOnlyDictionary<string, string>? data = null)
         {
             if (!IsConfigured)
+            {
+                _logger.LogWarning("FCM push skipped — Firebase service account is not configured");
                 return;
+            }
 
             var tokens = await _unitOfWork.UserDeviceTokenRepository.ListTokensForUserAsync(userId);
             if (tokens.Count == 0)
@@ -65,7 +68,11 @@ namespace Rider.Infrastructure.Services
                         }
                     };
 
-                    await FirebaseMessaging.DefaultInstance.SendAsync(message);
+                    var messageId = await FirebaseMessaging.DefaultInstance.SendAsync(message);
+                    _logger.LogInformation(
+                        "FCM sent to user {UserId}, messageId={MessageId}",
+                        userId,
+                        messageId);
                 }
                 catch (FirebaseMessagingException ex) when (
                     ex.MessagingErrorCode == MessagingErrorCode.Unregistered ||
@@ -109,8 +116,9 @@ namespace Rider.Infrastructure.Services
                     _initialized = true;
                     return true;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Console.WriteLine($"Firebase init failed: {ex.Message}");
                     return false;
                 }
             }

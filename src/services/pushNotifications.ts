@@ -17,13 +17,14 @@ const messaging = getMessaging();
 export type { RemoteMessage };
 
 export async function requestPushPermission(): Promise<boolean> {
-  if (Platform.OS === 'android' && Platform.Version >= 33) {
-    const result = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-    );
-    if (result !== PermissionsAndroid.RESULTS.GRANTED) {
-      return false;
+  if (Platform.OS === 'android') {
+    if (Platform.Version >= 33) {
+      await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      );
     }
+    // FCM token can still be issued even if the user declined tray notifications.
+    return true;
   }
 
   const status = await requestPermission(messaging);
@@ -35,9 +36,14 @@ export async function requestPushPermission(): Promise<boolean> {
 
 export async function getFcmToken(): Promise<string | null> {
   try {
-    await registerDeviceForRemoteMessages(messaging);
+    if (Platform.OS === 'ios') {
+      await registerDeviceForRemoteMessages(messaging);
+    }
     return await getToken(messaging);
-  } catch {
+  } catch (err) {
+    if (__DEV__) {
+      console.warn('[FCM] getToken failed:', err);
+    }
     return null;
   }
 }
