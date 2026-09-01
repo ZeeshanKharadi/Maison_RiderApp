@@ -4,6 +4,22 @@ export type ApiEnvelope<T> = {
   Data: T;
 };
 
+type RawApiEnvelope<T> = {
+  status?: boolean;
+  message?: string;
+  Data?: T;
+  data?: T;
+};
+
+function normalizeEnvelope<T>(raw: RawApiEnvelope<T>): ApiEnvelope<T> {
+  return {
+    status: !!raw.status,
+    message: raw.message ?? '',
+    // ASP.NET serializes ApiResponse.Data as `data` (camelCase)
+    Data: (raw.Data ?? raw.data) as T,
+  };
+}
+
 export type UserData = {
   id: string;
   employeeId: string;
@@ -64,6 +80,35 @@ function apiBase(): string {
   return env && env.length > 0 ? env.replace(/\/$/, '') : '';
 }
 
+/** Pull a human-readable message from ApiResponse or ProblemDetails bodies. */
+function readApiError(json: unknown, httpStatus: number): string {
+  if (!json || typeof json !== 'object') {
+    if (httpStatus === 401) return 'Session expired. Please sign in again.';
+    if (httpStatus === 403) return 'You do not have access to this action.';
+    return `Request failed (${httpStatus})`;
+  }
+
+  const body = json as Record<string, unknown>;
+  const direct =
+    (typeof body.message === 'string' && body.message) ||
+    (typeof body.Message === 'string' && body.Message);
+  if (direct) return direct;
+
+  const errors = body.errors as Record<string, string[]> | undefined;
+  if (errors) {
+    const parts = Object.entries(errors).flatMap(([field, msgs]) =>
+      (msgs ?? []).map((m) => `${field}: ${m}`),
+    );
+    if (parts.length > 0) return parts.join(' · ');
+  }
+
+  if (typeof body.title === 'string' && body.title) return body.title;
+
+  if (httpStatus === 401) return 'Session expired. Please sign in again.';
+  if (httpStatus === 403) return 'You do not have access to this action.';
+  return `Request failed (${httpStatus})`;
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {},
@@ -79,29 +124,29 @@ export async function api<T>(
 
   const res = await fetch(`${apiBase()}${path}`, { ...options, headers });
   const text = await res.text();
-  let json: ApiEnvelope<T> | null = null;
+  let json: RawApiEnvelope<T> | null = null;
   try {
-    json = text ? (JSON.parse(text) as ApiEnvelope<T>) : null;
+    json = text ? (JSON.parse(text) as RawApiEnvelope<T>) : null;
   } catch {
     json = null;
   }
 
   if (!res.ok) {
-    const message =
-      json?.message ||
-      (res.status === 401
-        ? 'Session expired. Please sign in again.'
-        : res.status === 403
-          ? 'You do not have access to this action.'
-          : `Request failed (${res.status})`);
-    throw new Error(message);
+    throw new Error(readApiError(json, res.status));
   }
 
   if (!json) {
     throw new Error('Empty response from API');
   }
 
-  return json;
+  const envelope = normalizeEnvelope(json);
+
+  // Some endpoints return HTTP 200 with status:false — treat as an error too.
+  if (!envelope.status && res.ok) {
+    throw new Error(envelope.message || 'Request failed');
+  }
+
+  return envelope;
 }
 
 export async function apiBlob(

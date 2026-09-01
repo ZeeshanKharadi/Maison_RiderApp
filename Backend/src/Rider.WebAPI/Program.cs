@@ -13,7 +13,11 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 builder.Host.UseSerilog();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Optional JSON fields (email, storeId, password) are truly optional on admin DTOs.
+    options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {

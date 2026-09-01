@@ -2,7 +2,23 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { RiderDto, StoreDto } from '../api/types';
 
-const emptyForm = { workerId: '', name: '', phone: '', storeId: '', password: '' };
+const emptyForm = { workerId: '', name: '', phone: '', email: '', storeId: '', password: '' };
+
+function buildCreateRiderBody(form: typeof emptyForm): Record<string, string> {
+  const body: Record<string, string> = {
+    workerId: form.workerId.trim(),
+    name: form.name.trim(),
+  };
+  const phone = form.phone.trim();
+  const email = form.email.trim();
+  const storeId = form.storeId.trim();
+  const password = form.password.trim();
+  if (phone) body.phone = phone;
+  if (email) body.email = email;
+  if (storeId) body.storeId = storeId;
+  if (password) body.password = password;
+  return body;
+}
 
 export default function RidersPage() {
   const [riders, setRiders] = useState<RiderDto[]>([]);
@@ -19,7 +35,6 @@ export default function RidersPage() {
       api<RiderDto[]>('/api/Admin/Riders'),
       api<StoreDto[]>('/api/Admin/Stores'),
     ]);
-    if (!r.status) throw new Error(r.message);
     setRiders(r.Data || []);
     setStores(s.Data || []);
   }
@@ -35,10 +50,9 @@ export default function RidersPage() {
     try {
       const res = await api<RiderDto>('/api/Admin/Riders', {
         method: 'POST',
-        body: JSON.stringify(form),
+        body: JSON.stringify(buildCreateRiderBody(form)),
       });
-      if (!res.status) throw new Error(res.message);
-      setNotice(res.message);
+      setNotice(res.message || 'Rider created');
       setForm(emptyForm);
       await load();
     } catch (err) {
@@ -116,8 +130,12 @@ export default function RidersPage() {
             <input className="form-control" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           </div>
           <div className="col-md-2">
+            <label className="form-label">Email</label>
+            <input className="form-control" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Optional" />
+          </div>
+          <div className="col-md-2">
             <label className="form-label">Store</label>
-            <input className="form-control" list="store-list" value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} />
+            <input className="form-control" list="store-list" required value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} placeholder="e.g. 10007" />
             <datalist id="store-list">
               {stores.map((s) => (
                 <option key={s.storeId} value={s.storeId}>{s.name}</option>
@@ -126,7 +144,7 @@ export default function RidersPage() {
           </div>
           <div className="col-md-2">
             <label className="form-label">Password</label>
-            <input className="form-control" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Optional" />
+            <input className="form-control" type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Min 6 chars" />
           </div>
           <div className="col-md-1">
             <button className="btn btn-maison w-100" type="submit">Add</button>

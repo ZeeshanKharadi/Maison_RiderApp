@@ -288,8 +288,6 @@ namespace Rider.Infrastructure.Services
         public async Task<ApiResponse<List<AvailableOrderDto>>> GetAvailableOrdersAsync(Guid riderUserId)
         {
             var orders = await _unitOfWork.AssignedOrderRepository.GetAvailableWithItemsAsync(riderUserId);
-            var list = orders.Select(MapOrder).ToList();
-            var orders = await _unitOfWork.AssignedOrderRepository.GetAvailableWithItemsAsync();
             var list = orders
                 .GroupBy(o => o.OrderId.Trim(), StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(o => o.CreatedAt).First())

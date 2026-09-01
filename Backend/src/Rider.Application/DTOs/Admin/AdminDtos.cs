@@ -34,32 +34,32 @@ namespace Rider.Application.DTOs.Admin
     public class CreateRiderRequest
     {
         [Required]
-        public string workerId { get; set; }
+        public string workerId { get; set; } = "";
 
         [Required]
-        public string name { get; set; }
+        public string name { get; set; } = "";
 
-        public string phone { get; set; }
-        public string email { get; set; }
-        public string storeId { get; set; }
+        public string? phone { get; set; }
+        public string? email { get; set; }
+        public string? storeId { get; set; }
 
         /// <summary>If set, rider is verified and can log in immediately. Otherwise they use register/OTP.</summary>
-        public string password { get; set; }
+        public string? password { get; set; }
     }
 
     public class UpdateRiderRequest
     {
-        public string name { get; set; }
-        public string phone { get; set; }
-        public string email { get; set; }
-        public string storeId { get; set; }
+        public string? name { get; set; }
+        public string? phone { get; set; }
+        public string? email { get; set; }
+        public string? storeId { get; set; }
         public bool? isActive { get; set; }
     }
 
     public class ResetRiderPasswordRequest
     {
         [Required]
-        public string password { get; set; }
+        public string password { get; set; } = "";
     }
 
     public class AdminOrderListDto
