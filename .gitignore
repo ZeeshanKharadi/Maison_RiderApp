@@ -65,6 +65,7 @@ yarn-error.log
 
 AdminPortal/dist
 AdminPortal/.env
+.env
 
 
 # Yarn

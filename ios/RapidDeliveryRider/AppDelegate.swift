@@ -2,6 +2,9 @@ import UIKit
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+#if canImport(GoogleMaps)
+import GoogleMaps
+#endif
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -14,6 +17,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+#if canImport(GoogleMaps)
+    if let apiKey = Bundle.main.object(forInfoDictionaryKey: "GOOGLE_MAPS_API_KEY") as? String,
+       !apiKey.isEmpty,
+       !apiKey.hasPrefix("$(") {
+      GMSServices.provideAPIKey(apiKey)
+    }
+#endif
+
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()

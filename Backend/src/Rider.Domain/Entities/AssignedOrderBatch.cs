@@ -20,6 +20,8 @@ namespace Rider.Domain.Entities
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        public Store Store { get; set; }
+
         public ICollection<AssignedOrder> Orders { get; set; }
     }
 }

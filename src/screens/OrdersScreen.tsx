@@ -42,7 +42,7 @@ export default function OrdersScreen() {
   const { openMenu } = useSideMenu();
   const { orders, loading, error, acceptOrder, rejectOrder, refreshOrders } =
     useAvailableOrders();
-  const { activeJob } = useRiderSession();
+  const { activeJobs } = useRiderSession();
 
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<OrderFilters>(DEFAULT_ORDER_FILTERS);
@@ -72,23 +72,20 @@ export default function OrdersScreen() {
 
   const handleAccept = useCallback(
     (order: AvailableOrder) => {
-      if (activeJob) {
+      const alreadyActive = activeJobs.some(j => j.id === order.id);
+      if (!alreadyActive && activeJobs.length >= 5) {
         confirmDialog({
-          title: 'Replace active delivery?',
-          message: `You already have ${activeJob.id} in progress. Accepting ${order.id} will replace it.`,
-          confirmLabel: 'Accept anyway',
-          destructive: true,
-          onConfirm: () => {
-            acceptOrder(order);
-            goDashboard();
-          },
+          title: 'Order limit',
+          message: 'You can carry up to 5 active orders at once.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
         });
         return;
       }
       acceptOrder(order);
       goDashboard();
     },
-    [activeJob, acceptOrder, goDashboard],
+    [activeJobs, acceptOrder, goDashboard],
   );
 
   const handleRejectPress = useCallback((order: AvailableOrder) => {

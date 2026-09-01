@@ -346,6 +346,8 @@ namespace Rider.Infrastructure.Services
             orderId = o.OrderId,
             orderNo = o.OrderNo,
             storeId = o.Batch?.StoreId,
+            storeLat = o.Batch?.Store?.Latitude,
+            storeLng = o.Batch?.Store?.Longitude,
             orderTypeId = o.OrderTypeId,
             orderState = o.OrderState,
             status = o.Status,

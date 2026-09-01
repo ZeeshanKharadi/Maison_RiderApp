@@ -13,7 +13,7 @@ import {
   createJobFromOrder,
   transitionJob,
 } from '../delivery/types';
-import { getNextState, isCompletionStep } from '../delivery/stateMachine';
+import { getNextState, isCompletionStep, isTerminalState } from '../delivery/stateMachine';
 import {
   applyCompletionToStats,
   applyCompletionToWallet,
@@ -30,31 +30,44 @@ type CompleteResult = {
   historyItem: DeliveryHistoryItem;
 };
 
+function isActiveJob(job: ActiveDeliveryJob): boolean {
+  return !isTerminalState(job.state);
+}
+
+function pickSelectedJob(
+  jobs: ActiveDeliveryJob[],
+  selectedId: string | null,
+): ActiveDeliveryJob | null {
+  if (selectedId) {
+    const selected = jobs.find(j => j.id === selectedId && isActiveJob(j));
+    if (selected) return selected;
+  }
+  return jobs.find(isActiveJob) ?? null;
+}
+
 type RiderSessionContextValue = {
   isOnline: boolean;
   setOnline: (online: boolean) => void;
   toggleOnline: () => void;
   shiftStartedAt: Date | null;
+  /** Non-completed delivery jobs (multi-order). */
+  activeJobs: ActiveDeliveryJob[];
+  selectedJobId: string | null;
+  /** Currently selected active job — backward compatible alias. */
   activeJob: ActiveDeliveryJob | null;
   /** @deprecated alias — prefer activeJob */
   activeDelivery: ActiveDeliveryJob | null;
+  selectActiveJob: (jobId: string) => void;
   acceptOrderAsJob: (order: AvailableOrder) => void;
   setActiveJob: (job: ActiveDeliveryJob | null) => void;
   clearActiveDelivery: () => void;
-  /** Advance one step in the state machine (not for final complete). */
   advanceDelivery: () => void;
-  /** Mark COD cash collected before completing. */
   setCashCollected: (collected: boolean) => void;
-  /**
-   * Finish trip: DELIVERED → COMPLETED, update metrics.
-   * Clears after ActiveDeliveryScreen success animation via clearActiveDelivery.
-   */
   completeDelivery: (opts?: { cashCollected?: boolean }) => CompleteResult | null;
   needsCodConfirmation: boolean;
   history: DeliveryHistoryItem[];
   wallet: WalletState;
   stats: SessionStats;
-  /** Mock withdraw — returns false if amount invalid. */
   withdrawFunds: (amount: number) => boolean;
 };
 
@@ -62,10 +75,6 @@ const RiderSessionContext = createContext<RiderSessionContextValue | null>(
   null,
 );
 
-/**
- * Unified rider session: online status, active delivery job, and local metrics.
- * Replaces thin RiderStatusContext for Phase 2B lifecycle.
- */
 export function RiderSessionProvider({
   children,
 }: {
@@ -75,11 +84,16 @@ export function RiderSessionProvider({
   const [shiftStartedAt, setShiftStartedAt] = useState<Date | null>(
     () => new Date(Date.now() - 5.5 * 60 * 60 * 1000),
   );
-  const [activeJob, setActiveJob] = useState<ActiveDeliveryJob | null>(null);
-  /** Only trips completed from AssignOrder-sourced accepts — no mock seed. */
+  const [activeJobs, setActiveJobs] = useState<ActiveDeliveryJob[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
   const [wallet, setWallet] = useState<WalletState>(INITIAL_WALLET);
   const [stats, setStats] = useState<SessionStats>(INITIAL_SESSION_STATS);
+
+  const activeJob = useMemo(
+    () => pickSelectedJob(activeJobs, selectedJobId),
+    [activeJobs, selectedJobId],
+  );
 
   const setOnline = useCallback((online: boolean) => {
     setIsOnline(online);
@@ -94,34 +108,87 @@ export function RiderSessionProvider({
     setOnline(!isOnline);
   }, [isOnline, setOnline]);
 
-  const clearActiveDelivery = useCallback(() => {
-    setActiveJob(null);
+  const updateJobInList = useCallback(
+    (jobId: string, updater: (job: ActiveDeliveryJob) => ActiveDeliveryJob) => {
+      setActiveJobs(prev =>
+        prev.map(job => (job.id === jobId ? updater(job) : job)),
+      );
+    },
+    [],
+  );
+
+  const selectActiveJob = useCallback((jobId: string) => {
+    setSelectedJobId(jobId);
   }, []);
+
+  const clearActiveDelivery = useCallback(() => {
+    setActiveJobs(prev => {
+      if (!selectedJobId) {
+        return [];
+      }
+      const remaining = prev.filter(j => j.id !== selectedJobId);
+      setSelectedJobId(remaining.find(isActiveJob)?.id ?? null);
+      return remaining;
+    });
+  }, [selectedJobId]);
 
   const acceptOrderAsJob = useCallback(
     (order: AvailableOrder) => {
-      setActiveJob(createJobFromOrder(order));
+      setActiveJobs(prev => {
+        const existing = prev.find(j => j.id === order.id);
+        if (existing && isActiveJob(existing)) {
+          setSelectedJobId(order.id);
+          return prev;
+        }
+        const withoutCompleted = prev.filter(j => j.id !== order.id);
+        const next = [...withoutCompleted, createJobFromOrder(order)];
+        setSelectedJobId(order.id);
+        return next;
+      });
       setOnline(true);
     },
     [setOnline],
   );
 
+  const setActiveJob = useCallback((job: ActiveDeliveryJob | null) => {
+    if (!job) {
+      setActiveJobs([]);
+      setSelectedJobId(null);
+      return;
+    }
+    setActiveJobs(prev => {
+      const idx = prev.findIndex(j => j.id === job.id);
+      if (idx < 0) return [...prev, job];
+      const copy = [...prev];
+      copy[idx] = job;
+      return copy;
+    });
+    setSelectedJobId(job.id);
+  }, []);
+
   const advanceDelivery = useCallback(() => {
-    setActiveJob(prev => {
-      if (!prev) return prev;
+    if (!activeJob) return;
+    const jobId = activeJob.id;
+    updateJobInList(jobId, prev => {
       if (isCompletionStep(prev.state)) return prev;
       const next = getNextState(prev.state);
       if (!next || next === 'DELIVERED' || next === 'COMPLETED') {
-        // ARRIVED_AT_DESTINATION must go through completeDelivery
         if (prev.state === 'ARRIVED_AT_DESTINATION') return prev;
       }
       return advanceJob(prev);
     });
-  }, []);
+  }, [activeJob, updateJobInList]);
 
-  const setCashCollected = useCallback((collected: boolean) => {
-    setActiveJob(prev => (prev ? { ...prev, cashCollected: collected } : prev));
-  }, []);
+  const setCashCollected = useCallback(
+    (collected: boolean) => {
+      if (!activeJob) return;
+      updateJobInList(activeJob.id, prev => ({
+        ...prev,
+        cashCollected: collected,
+      }));
+    },
+    [activeJob, updateJobInList],
+  );
 
   const needsCodConfirmation = !!(
     activeJob?.isCod &&
@@ -151,7 +218,13 @@ export function RiderSessionProvider({
       setHistory(prev => [historyItem, ...prev]);
       setWallet(prev => applyCompletionToWallet(prev, delivered));
       setStats(prev => applyCompletionToStats(prev, delivered));
-      setActiveJob(delivered);
+
+      setActiveJobs(prev => {
+        const remaining = prev.filter(j => j.id !== delivered.id);
+        const nextSelected = remaining.find(isActiveJob)?.id ?? null;
+        setSelectedJobId(nextSelected);
+        return remaining;
+      });
       setOnline(true);
 
       return { historyItem };
@@ -175,8 +248,11 @@ export function RiderSessionProvider({
       setOnline,
       toggleOnline,
       shiftStartedAt,
+      activeJobs: activeJobs.filter(isActiveJob),
+      selectedJobId,
       activeJob,
       activeDelivery: activeJob,
+      selectActiveJob,
       acceptOrderAsJob,
       setActiveJob,
       clearActiveDelivery,
@@ -194,8 +270,12 @@ export function RiderSessionProvider({
       setOnline,
       toggleOnline,
       shiftStartedAt,
+      activeJobs,
+      selectedJobId,
       activeJob,
+      selectActiveJob,
       acceptOrderAsJob,
+      setActiveJob,
       clearActiveDelivery,
       advanceDelivery,
       setCashCollected,

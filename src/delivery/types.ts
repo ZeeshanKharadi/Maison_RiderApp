@@ -15,11 +15,16 @@ export type DeliveryTimelineStep = {
 
 export type ActiveDeliveryJob = {
   id: string;
+  storeId?: string;
+  storeLat?: number | null;
+  storeLng?: number | null;
   restaurant: string;
   customerName: string;
   customerPhone: string;
   pickupAddress: string;
   dropoffAddress: string;
+  customerLat?: number | null;
+  customerLng?: number | null;
   distanceMiles: number;
   etaMinutes: number;
   orderAmount: number;
@@ -43,11 +48,16 @@ export function createJobFromOrder(order: AvailableOrder): ActiveDeliveryJob {
   const now = new Date().toISOString();
   return {
     id: order.id,
+    storeId: order.storeId,
+    storeLat: order.storeLat,
+    storeLng: order.storeLng,
     restaurant: order.restaurant,
     customerName: order.customerName,
     customerPhone: order.customerPhone,
     pickupAddress: order.pickupAddress,
     dropoffAddress: order.dropoffAddress,
+    customerLat: order.customerLat,
+    customerLng: order.customerLng,
     distanceMiles: order.distanceMiles,
     etaMinutes: order.etaMinutes,
     orderAmount: order.orderAmount,

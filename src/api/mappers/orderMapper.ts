@@ -16,6 +16,8 @@ export type ApiAvailableOrder = {
   orderId: string;
   orderNo?: string | null;
   storeId?: string | null;
+  storeLat?: number | null;
+  storeLng?: number | null;
   orderTypeId?: string | null;
   orderState?: string | null;
   status?: string | null;
@@ -155,11 +157,16 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
 
   return {
     id: displayId,
+    storeId: dto.storeId ?? undefined,
+    storeLat: dto.storeLat ?? null,
+    storeLng: dto.storeLng ?? null,
     restaurant: storeLabel,
     customerName,
     customerPhone: (dto.phone ?? '').trim() || '—',
     pickupAddress: storeLabel,
     dropoffAddress,
+    customerLat: dto.lat ?? null,
+    customerLng: dto.lng ?? null,
     distanceMiles: 0,
     etaMinutes: 30,
     orderAmount: Number(dto.orderTotal) || 0,

@@ -17,6 +17,10 @@ end
 target 'RapidDeliveryRider' do
   config = use_native_modules!
 
+  # Google Maps tiles on iOS (requires GOOGLE_MAPS_API_KEY in .env)
+  rn_maps_path = '../node_modules/react-native-maps'
+  pod 'react-native-maps/Google', :path => rn_maps_path
+
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.

@@ -44,7 +44,7 @@ export default function OrderDetailsScreen() {
   const route = useRoute<DetailsRoute>();
   const { orderId } = route.params;
   const { getOrderById, acceptOrder, rejectOrder } = useAvailableOrders();
-  const { activeJob } = useRiderSession();
+  const { activeJobs } = useRiderSession();
   const [rejectOpen, setRejectOpen] = useState(false);
 
   const order = getOrderById(orderId);
@@ -58,22 +58,19 @@ export default function OrderDetailsScreen() {
 
   const handleAccept = useCallback(() => {
     if (!order) return;
-    const run = () => {
-      acceptOrder(order);
-      goDashboard();
-    };
-    if (activeJob) {
+    const alreadyActive = activeJobs.some(j => j.id === order.id);
+    if (!alreadyActive && activeJobs.length >= 5) {
       confirmDialog({
-        title: 'Replace active delivery?',
-        message: `You already have ${activeJob.id} in progress. Accepting will replace it.`,
-        confirmLabel: 'Accept anyway',
-        destructive: true,
-        onConfirm: run,
+        title: 'Order limit',
+        message: 'You can carry up to 5 active orders at once.',
+        confirmLabel: 'OK',
+        onConfirm: () => {},
       });
       return;
     }
-    run();
-  }, [order, activeJob, acceptOrder, goDashboard]);
+    acceptOrder(order);
+    goDashboard();
+  }, [order, activeJobs, acceptOrder, goDashboard]);
 
   const handleRejectConfirm = useCallback(
     async (reason: RejectReason) => {
