@@ -33,18 +33,22 @@ export function AvailableOrdersProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const { acceptOrderAsJob, activeJob } = useRiderSession();
+  const { acceptOrderAsJob, activeJobs } = useRiderSession();
   const [orders, setOrders] = useState<AvailableOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const removedIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (activeJob?.id) {
-      removedIdsRef.current.add(activeJob.id);
-      setOrders(prev => prev.filter(o => o.id !== activeJob.id));
+    for (const job of activeJobs) {
+      removedIdsRef.current.add(job.id);
     }
-  }, [activeJob?.id]);
+    if (activeJobs.length > 0) {
+      setOrders(prev =>
+        prev.filter(o => !activeJobs.some(j => j.id === o.id)),
+      );
+    }
+  }, [activeJobs]);
 
   const getOrderById = useCallback(
     (id: string) => orders.find(o => o.id === id),

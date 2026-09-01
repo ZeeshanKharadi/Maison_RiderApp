@@ -22,6 +22,7 @@ namespace Rider.Persistence.Repositories
             => await _entities
                 .Include(o => o.Items)
                 .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
                 .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
         public async Task<List<AssignedOrder>> GetAvailableWithItemsAsync(Guid riderUserId)
@@ -29,6 +30,7 @@ namespace Rider.Persistence.Repositories
                 .AsNoTracking()
                 .Include(o => o.Items)
                 .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
                 .Where(o => o.Status == "Available"
                     && (o.AcceptedByUserId == null || o.AcceptedByUserId == riderUserId))
                 .OrderByDescending(o => o.CreatedAt)
@@ -39,6 +41,7 @@ namespace Rider.Persistence.Repositories
                 .AsNoTracking()
                 .Include(o => o.Items)
                 .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
                 .Include(o => o.AcceptedByUser)
                 .FirstOrDefaultAsync(o => o.Id == id);
 
@@ -46,6 +49,7 @@ namespace Rider.Persistence.Repositories
             => await _entities
                 .Include(o => o.Items)
                 .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
                 .Include(o => o.AcceptedByUser)
                 .FirstOrDefaultAsync(o => o.Id == id);
 

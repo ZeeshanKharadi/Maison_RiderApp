@@ -2,12 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
+  Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import ActiveOrderSelector from '../components/delivery/ActiveOrderSelector';
+import DeliveryMapPanel from '../components/delivery/DeliveryMapPanel';
 import {
   AppHeader,
   AppButton,
@@ -25,9 +29,14 @@ import {
   isCompletionStep,
 } from '../delivery/stateMachine';
 import {
+  buildGoogleMapsDirectionsUrl,
+  resolveMapTarget,
+} from '../delivery/mapTargets';
+import {
   buildDeliveryTimeline,
   jobProgress,
 } from '../delivery/types';
+import { useRiderLocation } from '../hooks/useRiderLocation';
 import { paymentLabel } from '../data/orders';
 import { formatMoney, formatTime } from '../utils/format';
 import { navigate } from '../navigation/RootNavigation';
@@ -45,12 +54,21 @@ import {
 export default function ActiveDeliveryScreen() {
   const navigation = useNavigation();
   const {
+    activeJobs,
+    selectedJobId,
+    selectActiveJob,
     activeJob,
     advanceDelivery,
     completeDelivery,
-    clearActiveDelivery,
     setCashCollected,
   } = useRiderSession();
+
+  const {
+    location: riderLocation,
+    loading: locationLoading,
+    error: locationError,
+    refresh: refreshLocation,
+  } = useRiderLocation(activeJobs.length > 0);
 
   const [codSheetOpen, setCodSheetOpen] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
@@ -88,12 +106,44 @@ export default function ActiveDeliveryScreen() {
     }, 40);
   }, [navigation]);
 
-  const contactAction = useCallback((label: string) => {
-    Alert.alert(
-      label,
-      'Calling, messaging, and navigation will connect when device integrations are enabled.',
-    );
-  }, []);
+  const mapTarget = useMemo(
+    () => (activeJob ? resolveMapTarget(activeJob, riderLocation) : null),
+    [activeJob, riderLocation],
+  );
+
+  const openGoogleMaps = useCallback(async () => {
+    if (!activeJob) return;
+
+    if (!mapTarget?.coordinate) {
+      Alert.alert(
+        'Navigation unavailable',
+        'Destination coordinates are not available for this order.',
+      );
+      return;
+    }
+
+    const url = riderLocation
+      ? buildGoogleMapsDirectionsUrl(riderLocation, mapTarget.coordinate)
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+          `${mapTarget.coordinate.latitude},${mapTarget.coordinate.longitude}`,
+        )}&travelmode=driving`;
+
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+        return;
+      }
+      // Android 11+ may report false negatives without manifest queries — try anyway.
+      if (Platform.OS === 'android') {
+        await Linking.openURL(url);
+        return;
+      }
+      Alert.alert('Unable to open maps', 'Google Maps is not available on this device.');
+    } catch {
+      Alert.alert('Unable to open maps', 'Could not launch Google Maps.');
+    }
+  }, [activeJob, mapTarget, riderLocation]);
 
   const finishTrip = useCallback(
     (opts?: { cashCollected?: boolean }) => {
@@ -118,14 +168,12 @@ export default function ActiveDeliveryScreen() {
         }),
       ]).start(() => {
         setSuccessVisible(false);
-        clearActiveDelivery();
         goDashboard();
       });
     },
     [
       activeJob,
       completeDelivery,
-      clearActiveDelivery,
       goDashboard,
       successOpacity,
     ],
@@ -168,7 +216,7 @@ export default function ActiveDeliveryScreen() {
     );
   }, [setCashCollected]);
 
-  if (!activeJob || !config) {
+  if (activeJobs.length === 0 || !activeJob || !config) {
     return (
       <View style={styles.container}>
         <AppHeader
@@ -200,6 +248,29 @@ export default function ActiveDeliveryScreen() {
         showBack
         onBackPress={() => navigation.goBack()}
       />
+
+      <ActiveOrderSelector
+        jobs={activeJobs}
+        selectedJobId={selectedJobId}
+        onSelect={selectActiveJob}
+      />
+
+      <DeliveryMapPanel
+        job={activeJob}
+        riderLocation={riderLocation}
+        locationLoading={locationLoading}
+        locationError={locationError}
+      />
+
+      <View style={styles.mapsAction}>
+        <AppButton
+          label="Open in Google Maps"
+          icon="google-maps"
+          variant="outline"
+          fullWidth
+          onPress={() => void openGoogleMaps()}
+        />
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -339,23 +410,44 @@ export default function ActiveDeliveryScreen() {
             icon="phone"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => contactAction('Call customer')}
+            onPress={() =>
+              Alert.alert(
+                'Call customer',
+                'Calling will connect when device integrations are enabled.',
+              )
+            }
           />
           <AppButton
             label="Message"
             icon="message-text-outline"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => contactAction('Message customer')}
+            onPress={() =>
+              Alert.alert(
+                'Message customer',
+                'Messaging will connect when device integrations are enabled.',
+              )
+            }
           />
           <AppButton
-            label="Navigate"
-            icon="navigation-variant"
+            label="Open Maps"
+            icon="google-maps"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => contactAction('Open navigation')}
+            onPress={() => void openGoogleMaps()}
           />
         </View>
+
+        {locationError ? (
+          <AppButton
+            label="Retry GPS"
+            icon="crosshairs-gps"
+            variant="outline"
+            fullWidth
+            onPress={refreshLocation}
+            style={styles.gpsRetry}
+          />
+        ) : null}
 
         <View style={styles.bottomSummary}>
           <View>
@@ -432,6 +524,13 @@ export default function ActiveDeliveryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  mapsAction: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
   content: { padding: spacing.md, paddingBottom: spacing.xxxl },
   statusHeader: {
     flexDirection: 'row',
@@ -518,6 +617,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   dummyBtn: { flex: 1 },
+  gpsRetry: { marginBottom: spacing.md },
   bottomSummary: {
     flexDirection: 'row',
     justifyContent: 'space-between',

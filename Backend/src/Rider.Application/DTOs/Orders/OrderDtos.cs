@@ -76,6 +76,8 @@ namespace Rider.Application.DTOs.Orders
         public string orderId { get; set; }
         public string orderNo { get; set; }
         public string storeId { get; set; }
+        public double? storeLat { get; set; }
+        public double? storeLng { get; set; }
         public string orderTypeId { get; set; }
         public string orderState { get; set; }
         public string status { get; set; }

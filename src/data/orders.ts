@@ -16,11 +16,17 @@ export type AvailableOrder = {
   id: string;
   /** Backend AssignedOrders.Id — used for GET /api/Order/{id} */
   backendId?: number;
+  /** AssignOrder storeId */
+  storeId?: string;
+  storeLat?: number | null;
+  storeLng?: number | null;
   restaurant: string;
   customerName: string;
   customerPhone: string;
   pickupAddress: string;
   dropoffAddress: string;
+  customerLat?: number | null;
+  customerLng?: number | null;
   /** Miles as number for sorting/filtering */
   distanceMiles: number;
   /** Minutes for sorting */

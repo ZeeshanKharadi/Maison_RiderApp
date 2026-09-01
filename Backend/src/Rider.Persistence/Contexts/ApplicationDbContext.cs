@@ -84,6 +84,8 @@ namespace Rider.Persistence.Contexts
                 entity.HasKey(e => e.StoreId);
                 entity.Property(e => e.StoreId).HasMaxLength(50);
                 entity.Property(e => e.Name).HasMaxLength(200);
+                entity.Property(e => e.Latitude);
+                entity.Property(e => e.Longitude);
             });
 
             modelBuilder.Entity<AppSetting>(entity =>
@@ -101,6 +103,11 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.Time).HasColumnName("Time").HasMaxLength(50);
                 entity.Property(e => e.StoreId).HasMaxLength(50).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.HasOne(e => e.Store)
+                    .WithMany()
+                    .HasForeignKey(e => e.StoreId)
+                    .HasPrincipalKey(s => s.StoreId)
+                    .IsRequired(false);
                 entity.HasMany(e => e.Orders)
                     .WithOne(o => o.Batch)
                     .HasForeignKey(o => o.BatchId)

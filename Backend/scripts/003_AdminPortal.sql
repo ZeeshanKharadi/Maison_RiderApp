@@ -33,6 +33,8 @@ BEGIN
     (
         StoreId   NVARCHAR(50)  NOT NULL CONSTRAINT PK_Stores PRIMARY KEY,
         Name      NVARCHAR(200) NULL,
+        Latitude  FLOAT         NULL,
+        Longitude FLOAT         NULL,
         IsActive  BIT           NOT NULL CONSTRAINT DF_Stores_IsActive DEFAULT (1),
         CreatedAt DATETIME2     NOT NULL CONSTRAINT DF_Stores_CreatedAt DEFAULT (SYSUTCDATETIME())
     );
