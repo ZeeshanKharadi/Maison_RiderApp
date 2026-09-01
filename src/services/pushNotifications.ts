@@ -1,7 +1,20 @@
 import { PermissionsAndroid, Platform } from 'react-native';
-import messaging, {
-  FirebaseMessagingTypes,
+import {
+  AuthorizationStatus,
+  getMessaging,
+  getToken,
+  getInitialNotification as getInitialFcmNotification,
+  onMessage,
+  onNotificationOpenedApp as onFcmNotificationOpenedApp,
+  onTokenRefresh,
+  registerDeviceForRemoteMessages,
+  requestPermission,
+  type RemoteMessage,
 } from '@react-native-firebase/messaging';
+
+const messaging = getMessaging();
+
+export type { RemoteMessage };
 
 export async function requestPushPermission(): Promise<boolean> {
   if (Platform.OS === 'android' && Platform.Version >= 33) {
@@ -13,38 +26,38 @@ export async function requestPushPermission(): Promise<boolean> {
     }
   }
 
-  const status = await messaging().requestPermission();
+  const status = await requestPermission(messaging);
   return (
-    status === messaging.AuthorizationStatus.AUTHORIZED ||
-    status === messaging.AuthorizationStatus.PROVISIONAL
+    status === AuthorizationStatus.AUTHORIZED ||
+    status === AuthorizationStatus.PROVISIONAL
   );
 }
 
 export async function getFcmToken(): Promise<string | null> {
   try {
-    await messaging().registerDeviceForRemoteMessages();
-    return await messaging().getToken();
+    await registerDeviceForRemoteMessages(messaging);
+    return await getToken(messaging);
   } catch {
     return null;
   }
 }
 
 export function onFcmTokenRefresh(listener: (token: string) => void) {
-  return messaging().onTokenRefresh(listener);
+  return onTokenRefresh(messaging, listener);
 }
 
 export function onForegroundMessage(
-  listener: (message: FirebaseMessagingTypes.RemoteMessage) => void,
+  listener: (message: RemoteMessage) => void,
 ) {
-  return messaging().onMessage(listener);
+  return onMessage(messaging, listener);
 }
 
 export function getInitialNotification() {
-  return messaging().getInitialNotification();
+  return getInitialFcmNotification(messaging);
 }
 
 export function onNotificationOpenedApp(
-  listener: (message: FirebaseMessagingTypes.RemoteMessage) => void,
+  listener: (message: RemoteMessage) => void,
 ) {
-  return messaging().onNotificationOpenedApp(listener);
+  return onFcmNotificationOpenedApp(messaging, listener);
 }

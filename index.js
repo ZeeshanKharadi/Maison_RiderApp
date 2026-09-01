@@ -1,10 +1,13 @@
 import 'react-native-gesture-handler';
-import messaging from '@react-native-firebase/messaging';
+import {
+  getMessaging,
+  setBackgroundMessageHandler,
+} from '@react-native-firebase/messaging';
 import { AppRegistry } from 'react-native';
 import App from './App';
 import { name as appName } from './app.json';
 
-messaging().setBackgroundMessageHandler(async () => {
+setBackgroundMessageHandler(getMessaging(), async () => {
   // System tray notification is shown by FCM when a notification payload is sent.
 });
 
