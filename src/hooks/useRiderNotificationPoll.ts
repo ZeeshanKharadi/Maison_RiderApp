@@ -53,7 +53,9 @@ export function useRiderNotificationPoll(enabled: boolean) {
         if (!shouldAlertNotification(n, settings.pushNotifications)) continue;
 
         alertedRef.current.add(n.id);
-        showOrderNotificationAlert(n.title, n.description);
+        void showOrderNotificationAlert(n.title, n.description, {
+          category: n.category,
+        });
         if (n.category === 'orders') {
           void refreshOrders();
         }

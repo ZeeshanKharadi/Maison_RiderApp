@@ -9,7 +9,7 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as authRepository from '../repositories/authRepository';
 import { clearTokens, getAccessToken } from '../api/tokenStorage';
-import { syncFcmDeviceToken, unregisterFcmDeviceToken } from './fcmRegistration';
+import notificationService from './NotificationService';
 import { loginUser } from './UserService';
 
 export interface User {
@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await authRepository.fetchCurrentUser();
     if (result.ok) {
       await persistUser(result.data);
-      await syncFcmDeviceToken(true);
+      void notificationService.saveTokensToBackend();
     }
   }, [persistUser]);
 
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (result.status && result.data) {
         const userData: User = JSON.parse(result.data);
         await persistUser(userData);
-        await syncFcmDeviceToken(true);
+        void notificationService.saveTokensToBackend();
         return { status: true };
       }
       return { status: false, message: result.message };
@@ -97,7 +97,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    await unregisterFcmDeviceToken();
+    try {
+      await authRepository.logout();
+    } catch {
+      // Reference: still clear local session if API fails.
+    }
+    await notificationService.removeTokenFromBackend();
     setUser(null);
     await AsyncStorage.removeItem('user');
     await clearTokens();

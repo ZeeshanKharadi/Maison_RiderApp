@@ -1,10 +1,11 @@
 
-const API_HOST = '192.168.25.198';
+const API_HOST = '192.168.25.83';
 
 export const API_BASE_URL = `http://${API_HOST}:5195`;
 
 export const API_PATHS = {
   login: '/api/User/login',
+  logout: '/api/User/Logout',
   currentUser: '/api/User/CurrentUser',
   availableOrders: '/api/Order/Available',
   orderById: (id: number | string) => `/api/Order/${id}`,

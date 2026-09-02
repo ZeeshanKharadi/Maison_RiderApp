@@ -1,12 +1,12 @@
-import { Alert, Vibration } from 'react-native';
 import { AppNotification } from '../data/account';
+import notificationService from '../services/NotificationService';
 
-export function showOrderNotificationAlert(
+export async function showOrderNotificationAlert(
   title: string,
   description: string,
-): void {
-  Vibration.vibrate(400);
-  Alert.alert(title, description, [{ text: 'OK', style: 'default' }]);
+  data?: Record<string, string>,
+): Promise<void> {
+  await notificationService.showLocalNotification(title, description, data);
 }
 
 export function shouldAlertNotification(

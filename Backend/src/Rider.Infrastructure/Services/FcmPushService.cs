@@ -75,7 +75,8 @@ namespace Rider.Infrastructure.Services
                         messageId);
                 }
                 catch (FirebaseMessagingException ex) when (
-                    ex.MessagingErrorCode == MessagingErrorCode.Unregistered)
+                    ex.MessagingErrorCode == MessagingErrorCode.Unregistered ||
+                    ex.MessagingErrorCode == MessagingErrorCode.InvalidArgument)
                 {
                     _logger.LogInformation("Removing stale FCM token for user {UserId}", userId);
                     await _unitOfWork.UserDeviceTokenRepository.RemoveAsync(userId, token);

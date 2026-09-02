@@ -27,7 +27,7 @@ type LoginUserData = {
 
 function mapApiUser(dto: ApiUserData | undefined, fallbackId: string): AuthUser {
   return {
-    id: dto?.id || dto?.employeeId || fallbackId,
+    id: dto?.employeeId || dto?.id || fallbackId,
     name: dto?.name?.trim() || 'Rider',
     email: dto?.email?.trim() || '',
     phone: dto?.phoneNumber?.trim() || '',
@@ -98,6 +98,18 @@ export async function fetchCurrentUser(): Promise<ApiResult<AuthUser>> {
       'NETWORK',
       err instanceof Error ? err.message : 'Unable to reach user API',
     );
+  }
+}
+
+/** Reference: call backend logout before clearing local session. */
+export async function logout(): Promise<void> {
+  try {
+    await apiEnvelope<string>(API_PATHS.logout, {
+      method: 'POST',
+      auth: true,
+    });
+  } catch {
+    // Local logout proceeds even if API is unreachable.
   }
 }
 

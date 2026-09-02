@@ -6,6 +6,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/services/AuthContext';
 import { navigationRef } from './src/navigation/RootNavigation';
+import { NotificationProvider } from './src/context/NotificationContext';
+import {
+  NotificationPermissionHandler,
+} from './src/components/NotificationHandler';
 import SplashScreen from './src/screens/SplashScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
@@ -59,11 +63,14 @@ export default function App() {
     <SafeAreaProvider>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar barStyle="light-content" backgroundColor={BRAND_RED} />
-        <AuthProvider>
-          <NavigationContainer ref={navigationRef}>
-            <MainNavigator />
-          </NavigationContainer>
-        </AuthProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <NavigationContainer ref={navigationRef}>
+              <NotificationPermissionHandler />
+              <MainNavigator />
+            </NavigationContainer>
+          </AuthProvider>
+        </NotificationProvider>
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

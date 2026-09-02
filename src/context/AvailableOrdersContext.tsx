@@ -13,7 +13,6 @@ import {
 } from '../data/orders';
 import { saveRejectedOrder } from '../data/rejectStorage';
 import * as ordersRepository from '../repositories/ordersRepository';
-import { syncFcmDeviceToken } from '../services/fcmRegistration';
 import { useRiderSession } from './RiderSessionContext';
 
 type AvailableOrdersContextValue = {
@@ -93,7 +92,6 @@ export function AvailableOrdersProvider({
       result.data.filter(o => !removedIdsRef.current.has(o.id)),
     );
     setLoading(false);
-    void syncFcmDeviceToken();
   }, []);
 
   useEffect(() => {
