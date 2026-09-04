@@ -1,5 +1,37 @@
 [
   {
+    "ContainingType": "Rider.WebAPI.Controllers.AdminNotificationsController",
+    "Method": "Broadcast",
+    "RelativePath": "api/Admin/Notifications/broadcast",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "Rider.Application.DTOs.Notifications.BroadcastNotificationRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "Rider.WebAPI.Controllers.AdminNotificationsController",
+    "Method": "SendToUser",
+    "RelativePath": "api/Admin/Notifications/send",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "Rider.Application.DTOs.Notifications.SendNotificationRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
     "ContainingType": "Rider.WebAPI.Controllers.AdminOrdersController",
     "Method": "List",
     "RelativePath": "api/Admin/Orders",

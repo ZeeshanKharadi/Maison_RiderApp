@@ -16,5 +16,11 @@ namespace Rider.Application.Interfaces
         /// <summary>New open-pool order for riders serving this store.</summary>
         Task NotifyOpenPoolOrderAsync(
             string orderId, long? assignedOrderId, string storeId, decimal orderTotal);
+
+        /// <summary>Admin/Swagger test: send inbox + FCM to one user.</summary>
+        Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(SendNotificationRequest request);
+
+        /// <summary>Admin/Swagger test: send inbox + FCM to active riders (optional store).</summary>
+        Task<ApiResponse<SendNotificationResultDto>> BroadcastTestAsync(BroadcastNotificationRequest request);
     }
 }

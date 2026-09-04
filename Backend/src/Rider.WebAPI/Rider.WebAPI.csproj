@@ -22,6 +22,9 @@
     <None Update="firebase-service-account.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="maison-riderapp-firebase-adminsdk-fbsvc-e9bd836a3e.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

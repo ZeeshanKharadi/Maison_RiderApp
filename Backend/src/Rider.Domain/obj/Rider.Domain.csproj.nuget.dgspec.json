@@ -1,23 +1,23 @@
 {
   "format": 1,
   "restore": {
-    "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj": {}
+    "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj": {}
   },
   "projects": {
-    "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj": {
+    "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
+        "projectUniqueName": "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
         "projectName": "Rider.Domain",
-        "projectPath": "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
-        "packagesPath": "C:\\Users\\ZeeshanKharadi\\.nuget\\packages\\",
-        "outputPath": "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\obj\\",
+        "projectPath": "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
+        "packagesPath": "C:\\Users\\FahadMujtaba\\.nuget\\packages\\",
+        "outputPath": "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
         ],
         "configFilePaths": [
-          "C:\\Users\\ZeeshanKharadi\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\FahadMujtaba\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
@@ -25,7 +25,7 @@
           "net8.0"
         ],
         "sources": {
-          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages": {},
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -65,7 +65,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.306/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

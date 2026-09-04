@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "chp7oiOImI8=",
+  "dgSpecHash": "iD2YK6RUpus=",
   "success": true,
-  "projectFilePath": "C:\\MaisonProjects\\Maison\\MaisonRiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
+  "projectFilePath": "C:\\cli\\Maison_RiderApp\\Backend\\src\\Rider.Domain\\Rider.Domain.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

@@ -29,6 +29,8 @@ build/
 .gradle
 local.properties
 **/firebase-service-account.json
+**/maison-riderapp-firebase-adminsdk-*.json
+*firebase-adminsdk*.json
 *.iml
 *.hprof
 .cxx/
