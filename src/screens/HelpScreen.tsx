@@ -36,11 +36,11 @@ const FAQ = [
   },
   {
     q: 'When do I get paid?',
-    a: 'Earnings are added to your wallet after each completed delivery. You can withdraw from Wallet anytime.',
+    a: 'Settlements and payouts are managed by your administrator. In-app wallet withdraw is not available.',
   },
   {
     q: 'How do I update documents?',
-    a: 'Open Profile → Documents to review status and expiry. Contact support if a document needs re-verification.',
+    a: 'Documents are managed by your administrator. Contact support if something needs updating.',
   },
 ];
 
@@ -120,7 +120,10 @@ export default function HelpScreen() {
   }, [active]);
 
   const submitForm = (kind: string) => {
-    Alert.alert('Submitted', `${kind} received. Thank you!`);
+    Alert.alert(
+      'Saved locally',
+      `${kind} was noted on this device only. It was not submitted to a support server.`,
+    );
     setMessage('');
     setActive(null);
   };

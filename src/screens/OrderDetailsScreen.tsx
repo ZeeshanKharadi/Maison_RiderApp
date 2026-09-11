@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,12 +43,35 @@ type DetailsRoute = RouteProp<MainStackParamList, 'OrderDetails'>;
 export default function OrderDetailsScreen() {
   const navigation = useNavigation();
   const route = useRoute<DetailsRoute>();
-  const { orderId } = route.params;
-  const { getOrderById, acceptOrder, rejectOrder } = useAvailableOrders();
-  const { activeJobs } = useRiderSession();
+  const { orderId, backendId } = route.params;
+  const { getOrderById, resolveOrder, acceptOrder, rejectOrder } =
+    useAvailableOrders();
+  const { activeJobs, isOnline } = useRiderSession();
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [order, setOrder] = useState(() => getOrderById(orderId));
+  const [resolving, setResolving] = useState(!getOrderById(orderId));
+  const [busy, setBusy] = useState(false);
 
-  const order = getOrderById(orderId);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const local = getOrderById(orderId);
+      if (local) {
+        setOrder(local);
+        setResolving(false);
+        return;
+      }
+      setResolving(true);
+      const fetched = await resolveOrder(orderId, backendId);
+      if (!cancelled) {
+        setOrder(fetched);
+        setResolving(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, backendId, getOrderById, resolveOrder]);
 
   const goDashboard = useCallback(() => {
     navigation.goBack();
@@ -56,9 +80,15 @@ export default function OrderDetailsScreen() {
     }, 50);
   }, [navigation]);
 
-  const handleAccept = useCallback(() => {
+  const handleAccept = useCallback(async () => {
     if (!order) return;
-    const alreadyActive = activeJobs.some(j => j.id === order.id);
+    if (!isOnline) {
+      Alert.alert('Offline', 'Go online before accepting orders.');
+      return;
+    }
+    const alreadyActive = activeJobs.some(
+      j => j.backendId === order.backendId || j.id === order.id,
+    );
     if (!alreadyActive && activeJobs.length >= 5) {
       confirmDialog({
         title: 'Order limit',
@@ -68,26 +98,51 @@ export default function OrderDetailsScreen() {
       });
       return;
     }
-    acceptOrder(order);
-    goDashboard();
-  }, [order, activeJobs, acceptOrder, goDashboard]);
+    setBusy(true);
+    const result = await acceptOrder(order);
+    setBusy(false);
+    if (result.ok) {
+      goDashboard();
+    }
+  }, [order, activeJobs, acceptOrder, goDashboard, isOnline]);
 
   const handleRejectConfirm = useCallback(
     async (reason: RejectReason) => {
       if (!order) return;
       setRejectOpen(false);
-      await rejectOrder(order, reason);
-      navigation.goBack();
+      setBusy(true);
+      const result = await rejectOrder(order, reason);
+      setBusy(false);
+      if (result.ok) {
+        navigation.goBack();
+      }
     },
     [order, rejectOrder, navigation],
   );
 
-  const contactAction = useCallback((label: string) => {
-    Alert.alert(
-      label,
-      'Calling, messaging, and navigation will connect when device integrations are enabled.',
-    );
-  }, []);
+  const contactAction = useCallback(
+    (label: string) => {
+      const phone = (order?.customerPhone ?? '').trim();
+      const looksValid =
+        phone &&
+        phone !== '—' &&
+        phone !== '-' &&
+        /[\d+]/.test(phone);
+
+      if (label.toLowerCase().includes('call') && looksValid) {
+        void Linking.openURL(`tel:${phone.replace(/[^\d+]/g, '')}`);
+        return;
+      }
+
+      Alert.alert(
+        label,
+        looksValid
+          ? 'Messaging is not available in this build.'
+          : 'Customer phone is not available for this order.',
+      );
+    },
+    [order],
+  );
 
   const priorityTone = useMemo(() => {
     if (!order) return 'neutral' as const;
@@ -95,6 +150,23 @@ export default function OrderDetailsScreen() {
     if (order.priority === 'high') return 'warning' as const;
     return 'neutral' as const;
   }, [order]);
+
+  if (resolving) {
+    return (
+      <View style={styles.container}>
+        <AppHeader
+          title="Order details"
+          showBack
+          onBackPress={() => navigation.goBack()}
+        />
+        <EmptyState
+          icon="package-variant"
+          title="Loading order…"
+          message="Fetching order details from the server."
+        />
+      </View>
+    );
+  }
 
   if (!order) {
     return (
@@ -154,8 +226,18 @@ export default function OrderDetailsScreen() {
         <View style={styles.summary}>
           <SummaryCell label="Fee" value={formatMoney(order.deliveryFee)} highlight />
           <SummaryCell label="Order" value={formatMoney(order.orderAmount)} />
-          <SummaryCell label="Distance" value={`${order.distanceMiles} mi`} />
-          <SummaryCell label="ETA" value={`${order.etaMinutes} min`} />
+          <SummaryCell
+            label="Distance"
+            value={
+              order.distanceMiles != null
+                ? `${order.distanceMiles} mi`
+                : '—'
+            }
+          />
+          <SummaryCell
+            label="ETA"
+            value={order.etaMinutes != null ? `${order.etaMinutes} min` : '—'}
+          />
         </View>
 
         <SectionHeader title="Timeline" />
@@ -262,17 +344,19 @@ export default function OrderDetailsScreen() {
 
         <View style={styles.primaryActions}>
           <AppButton
-            label="Accept order"
+            label={busy ? 'Accepting…' : 'Accept order'}
             icon="check"
             variant="secondary"
             fullWidth
-            onPress={handleAccept}
+            onPress={() => void handleAccept()}
+            disabled={busy}
           />
           <AppButton
             label="Reject order"
             variant="outline"
             fullWidth
             onPress={() => setRejectOpen(true)}
+            disabled={busy}
             style={{ marginTop: spacing.sm }}
           />
         </View>

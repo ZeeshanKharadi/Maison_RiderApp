@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { RiderDto, StoreDto } from '../api/types';
+import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
 const emptyForm = { workerId: '', name: '', phone: '', email: '', storeId: '', password: '' };
 
@@ -30,18 +31,20 @@ export default function RidersPage() {
   const [resetId, setResetId] = useState<string | null>(null);
   const [resetPassword, setResetPassword] = useState('');
 
-  async function load() {
+  const load = useCallback(async () => {
     const [r, s] = await Promise.all([
       api<RiderDto[]>('/api/Admin/Riders'),
       api<StoreDto[]>('/api/Admin/Stores'),
     ]);
     setRiders(r.Data || []);
     setStores(s.Data || []);
-  }
+  }, []);
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-  }, []);
+  }, [load]);
+
+  useLiveRefresh(load, ['RiderAvailabilityChanged', 'OrderChanged']);
 
   async function createRider(e: FormEvent) {
     e.preventDefault();

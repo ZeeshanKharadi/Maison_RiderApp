@@ -1,20 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { LiveSummary, money } from '../api/types';
+import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
 export default function DashboardPage() {
   const [data, setData] = useState<LiveSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api<LiveSummary>('/api/Admin/Orders/summary')
-      .then((r) => {
-        if (!r.status) throw new Error(r.message);
-        setData(r.Data);
-      })
-      .catch((e: Error) => setError(e.message));
+  const load = useCallback(async () => {
+    const r = await api<LiveSummary>('/api/Admin/Orders/summary');
+    if (!r.status) throw new Error(r.message);
+    setData(r.Data);
+    setError(null);
   }, []);
+
+  useEffect(() => {
+    load().catch((e: Error) => setError(e.message));
+  }, [load]);
+
+  useLiveRefresh(load);
 
   return (
     <div>

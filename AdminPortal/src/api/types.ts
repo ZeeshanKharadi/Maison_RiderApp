@@ -32,6 +32,12 @@ export type OrderListDto = {
   paymentMethod: string;
   cash?: number | null;
   cashCollected?: number | null;
+  expectedCash?: number | null;
+  cashHandedOverAmount?: number | null;
+  cashHandedOverAt?: string | null;
+  cashSemanticsNote?: string | null;
+  isDirectAssignment?: boolean;
+  cancelReason?: string | null;
   acceptedByUserId?: string | null;
   acceptedByName?: string | null;
   acceptedByWorkerId?: string | null;
@@ -63,6 +69,18 @@ export type OrderDetailDto = OrderListDto & {
   orderTime?: string;
   batchTime?: string;
   items: OrderItemDto[];
+};
+
+export type AdminNotificationDto = {
+  id: number;
+  storeId?: string | null;
+  category?: string | null;
+  title: string;
+  body?: string | null;
+  orderId?: string | null;
+  assignedOrderId?: number | null;
+  isRead: boolean;
+  createdAt: string;
 };
 
 export type LiveSummary = {

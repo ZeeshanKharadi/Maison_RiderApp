@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { customerName, daysAgoInput, money, OrderListDto, RiderDto, StoreDto, todayInput } from '../api/types';
+import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
 const STATUSES = ['Available', 'Accepted', 'InProgress', 'Completed', 'Cancelled'];
 
@@ -18,13 +19,17 @@ export default function OperationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'board' | 'table'>('board');
 
-  async function load() {
+  const filtersRef = useRef({ storeId, status, riderId, from, to });
+  filtersRef.current = { storeId, status, riderId, from, to };
+
+  const load = useCallback(async () => {
+    const f = filtersRef.current;
     const qs = new URLSearchParams();
-    if (storeId) qs.set('storeId', storeId);
-    if (status) qs.set('status', status);
-    if (riderId) qs.set('riderId', riderId);
-    if (from) qs.set('from', from);
-    if (to) qs.set('to', to);
+    if (f.storeId) qs.set('storeId', f.storeId);
+    if (f.status) qs.set('status', f.status);
+    if (f.riderId) qs.set('riderId', f.riderId);
+    if (f.from) qs.set('from', f.from);
+    if (f.to) qs.set('to', f.to);
     const [o, s, r] = await Promise.all([
       api<OrderListDto[]>(`/api/Admin/Orders?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
@@ -34,12 +39,14 @@ export default function OperationsPage() {
     setOrders(o.Data || []);
     setStores(s.Data || []);
     setRiders(r.Data || []);
-  }
+    setError(null);
+  }, []);
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
+
+  useLiveRefresh(load);
 
   const grouped = useMemo(() => {
     const map: Record<string, OrderListDto[]> = {};

@@ -172,17 +172,12 @@ export default function LoginScreen() {
             style={styles.otpBtn}
             onPress={() => navigation.navigate('ForgetPassword' as never)}>
             <Icon name="cellphone" size={18} color={TEXT_PRIMARY} />
-            <Text style={styles.otpBtnText}>Login with OTP</Text>
+            <Text style={styles.otpBtnText}>Forgot password / OTP</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.registerLink}
-            onPress={() => navigation.navigate('CreateAccount' as never)}>
-            <Text style={styles.registerText}>
-              Don't have an account?{' '}
-              <Text style={styles.registerHighlight}>Register</Text>
-            </Text>
-          </TouchableOpacity>
+          <Text style={[styles.registerText, { textAlign: 'center', marginTop: 12 }]}>
+            Rider accounts are created by your administrator.
+          </Text>
         </View>
 
         <Text style={styles.footer}>

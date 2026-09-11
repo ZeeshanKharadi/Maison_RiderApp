@@ -14,7 +14,11 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import AppSafeAreaView from '../components/AppSafeAreaView';
 import Loader from '../components/Loader';
 import { updatePassword } from '../services/UserService';
-import { getUserIdWithExpiry } from './CreateAccountScreen';
+import {
+  clearPasswordResetTemp,
+  getResetTokenWithExpiry,
+  getUserIdWithExpiry,
+} from './CreateAccountScreen';
 import { resetNavigation } from '../navigation/RootNavigation';
 import {
   BACKGROUND,
@@ -42,16 +46,18 @@ export default function ResetPasswordScreen() {
     }
 
     const userId = await getUserIdWithExpiry();
-    if (!userId) {
-      Alert.alert('Error', 'Session expired. Please start again.');
+    const resetToken = await getResetTokenWithExpiry();
+    if (!resetToken) {
+      Alert.alert('Error', 'Reset session expired. Please verify OTP again.');
       resetNavigation('login');
       return;
     }
 
     setIsLoading(true);
     try {
-      const result = await updatePassword(userId, password);
+      const result = await updatePassword(userId, password, resetToken);
       if (result.status) {
+        await clearPasswordResetTemp();
         Alert.alert('Success', 'Password updated! Please login.', [
           { text: 'OK', onPress: () => resetNavigation('login') },
         ]);

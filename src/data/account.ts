@@ -12,7 +12,7 @@ export type RiderProfile = {
   language: AppLanguage;
 };
 
-export type DocumentStatus = 'verified' | 'pending' | 'expired';
+export type DocumentStatus = 'verified' | 'pending' | 'expired' | 'unavailable';
 
 export type RiderDocument = {
   id: string;
@@ -82,26 +82,26 @@ export const MOCK_DOCUMENTS: RiderDocument[] = [
   {
     id: 'doc-license',
     title: 'Driving License',
-    status: 'verified',
-    expiryDate: '2028-04-12',
+    status: 'unavailable',
+    expiryDate: '—',
   },
   {
     id: 'doc-reg',
     title: 'Vehicle Registration',
-    status: 'verified',
-    expiryDate: '2027-11-01',
+    status: 'unavailable',
+    expiryDate: '—',
   },
   {
     id: 'doc-ins',
     title: 'Insurance',
-    status: 'pending',
-    expiryDate: '2026-12-31',
+    status: 'unavailable',
+    expiryDate: '—',
   },
   {
     id: 'doc-id',
     title: 'National ID',
-    status: 'verified',
-    expiryDate: '2030-01-15',
+    status: 'unavailable',
+    expiryDate: '—',
   },
 ];
 

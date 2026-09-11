@@ -109,7 +109,7 @@ export function jobToHistoryItem(
     orderAmount: job.orderAmount,
     deliveryFee: job.deliveryFee,
     tip,
-    distanceMiles: job.distanceMiles,
+    distanceMiles: job.distanceMiles ?? 0,
     durationMin: estimateDurationMin(job),
     items: job.items,
     rating: 5,

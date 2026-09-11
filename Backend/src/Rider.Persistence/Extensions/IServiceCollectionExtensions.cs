@@ -58,17 +58,23 @@ namespace Rider.Persistence.Extensions
                 };
                 options.Events = new JwtBearerEvents
                 {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+                        if (!string.IsNullOrEmpty(accessToken)
+                            && path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    },
                     OnAuthenticationFailed = ctx =>
                     {
                         Console.WriteLine($"JWT auth failed: {ctx.Exception.Message}");
                         return Task.CompletedTask;
                     },
-                    OnChallenge = ctx =>
-                    {
-                        // Help Swagger users who paste "Bearer <token>" into HTTP scheme
-                        // (double Bearer) or omit prefix when using older ApiKey setup.
-                        return Task.CompletedTask;
-                    }
+                    OnChallenge = ctx => Task.CompletedTask
                 };
             });
         }

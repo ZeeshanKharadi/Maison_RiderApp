@@ -2,22 +2,28 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
+import { Alert, AppState, AppStateStatus } from 'react-native';
 import { DeliveryHistoryItem } from '../data/deliveryHistory';
 import {
   ActiveDeliveryJob,
   advanceJob,
   buildDeliveryTimeline,
   createJobFromOrder,
+  isInProgressTransition,
   transitionJob,
 } from '../delivery/types';
-import { getNextState, isCompletionStep, isTerminalState } from '../delivery/stateMachine';
+import {
+  getNextState,
+  isCompletionStep,
+  isTerminalState,
+} from '../delivery/stateMachine';
 import {
   applyCompletionToStats,
-  applyCompletionToWallet,
-  applyWithdrawal,
   INITIAL_SESSION_STATS,
   INITIAL_WALLET,
   jobToHistoryItem,
@@ -25,9 +31,25 @@ import {
   WalletState,
 } from '../delivery/sessionUpdates';
 import { AvailableOrder } from '../data/orders';
+import {
+  isCancelledBackendStatus,
+} from '../api/mappers/orderMapper';
+import * as ordersRepository from '../repositories/ordersRepository';
+import * as authRepository from '../repositories/authRepository';
+import { useAuth } from '../services/AuthContext';
+
+const MAX_ACTIVE_JOBS = 5;
+
+type CompleteOpts = {
+  cashCollected?: boolean;
+  cashCollectedAmount?: number;
+  cashCollectedReason?: string;
+};
 
 type CompleteResult = {
-  historyItem: DeliveryHistoryItem;
+  ok: boolean;
+  historyItem?: DeliveryHistoryItem;
+  message?: string;
 };
 
 function isActiveJob(job: ActiveDeliveryJob): boolean {
@@ -47,8 +69,8 @@ function pickSelectedJob(
 
 type RiderSessionContextValue = {
   isOnline: boolean;
-  setOnline: (online: boolean) => void;
-  toggleOnline: () => void;
+  setOnline: (online: boolean) => Promise<boolean>;
+  toggleOnline: () => Promise<boolean>;
   shiftStartedAt: Date | null;
   /** Non-completed delivery jobs (multi-order). */
   activeJobs: ActiveDeliveryJob[];
@@ -61,14 +83,17 @@ type RiderSessionContextValue = {
   acceptOrderAsJob: (order: AvailableOrder) => void;
   setActiveJob: (job: ActiveDeliveryJob | null) => void;
   clearActiveDelivery: () => void;
-  advanceDelivery: () => void;
+  advanceDelivery: () => Promise<boolean>;
   setCashCollected: (collected: boolean) => void;
-  completeDelivery: (opts?: { cashCollected?: boolean }) => CompleteResult | null;
+  completeDelivery: (opts?: CompleteOpts) => Promise<CompleteResult | null>;
   needsCodConfirmation: boolean;
   history: DeliveryHistoryItem[];
   wallet: WalletState;
   stats: SessionStats;
   withdrawFunds: (amount: number) => boolean;
+  restoreActiveDeliveries: () => Promise<void>;
+  lifecyclePending: boolean;
+  lastLifecycleError: string | null;
 };
 
 const RiderSessionContext = createContext<RiderSessionContextValue | null>(
@@ -80,32 +105,46 @@ export function RiderSessionProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [isOnline, setIsOnline] = useState(true);
-  const [shiftStartedAt, setShiftStartedAt] = useState<Date | null>(
-    () => new Date(Date.now() - 5.5 * 60 * 60 * 1000),
-  );
+  const { user, isLoading: authLoading } = useAuth();
+  const [isOnline, setIsOnline] = useState(false);
+  const [shiftStartedAt, setShiftStartedAt] = useState<Date | null>(null);
   const [activeJobs, setActiveJobs] = useState<ActiveDeliveryJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
   const [wallet, setWallet] = useState<WalletState>(INITIAL_WALLET);
   const [stats, setStats] = useState<SessionStats>(INITIAL_SESSION_STATS);
+  const [lifecyclePending, setLifecyclePending] = useState(false);
+  const [lastLifecycleError, setLastLifecycleError] = useState<string | null>(
+    null,
+  );
+  const restoringRef = useRef(false);
 
   const activeJob = useMemo(
     () => pickSelectedJob(activeJobs, selectedJobId),
     [activeJobs, selectedJobId],
   );
 
-  const setOnline = useCallback((online: boolean) => {
+  const setOnline = useCallback(async (online: boolean): Promise<boolean> => {
+    setLifecyclePending(true);
+    setLastLifecycleError(null);
+    const result = await ordersRepository.setAvailability(online);
+    setLifecyclePending(false);
+    if (!result.ok) {
+      setLastLifecycleError(result.error.message);
+      Alert.alert('Availability', result.error.message);
+      return false;
+    }
     setIsOnline(online);
     if (online) {
       setShiftStartedAt(prev => prev ?? new Date());
     } else {
       setShiftStartedAt(null);
     }
+    return true;
   }, []);
 
-  const toggleOnline = useCallback(() => {
-    setOnline(!isOnline);
+  const toggleOnline = useCallback(async () => {
+    return setOnline(!isOnline);
   }, [isOnline, setOnline]);
 
   const updateJobInList = useCallback(
@@ -132,21 +171,30 @@ export function RiderSessionProvider({
     });
   }, [selectedJobId]);
 
-  const acceptOrderAsJob = useCallback(
-    (order: AvailableOrder) => {
-      setActiveJobs(prev => {
-        const existing = prev.find(j => j.id === order.id);
-        if (existing && isActiveJob(existing)) {
-          return prev;
-        }
-        const withoutCompleted = prev.filter(j => j.id !== order.id);
-        return [...withoutCompleted, createJobFromOrder(order)];
-      });
-      setSelectedJobId(order.id);
-      setOnline(true);
-    },
-    [setOnline],
-  );
+  const acceptOrderAsJob = useCallback((order: AvailableOrder) => {
+    if (order.backendId == null) {
+      throw new Error('backendId is required to accept an order as a job');
+    }
+    setActiveJobs(prev => {
+      const existing = prev.find(
+        j =>
+          (j.backendId === order.backendId || j.id === order.id) &&
+          isActiveJob(j),
+      );
+      if (existing) {
+        return prev;
+      }
+      const activeCount = prev.filter(isActiveJob).length;
+      if (activeCount >= MAX_ACTIVE_JOBS) {
+        throw new Error('You can carry up to 5 active orders at once.');
+      }
+      const withoutDup = prev.filter(
+        j => j.backendId !== order.backendId && j.id !== order.id,
+      );
+      return [...withoutDup, createJobFromOrder(order)];
+    });
+    setSelectedJobId(order.id);
+  }, []);
 
   const setActiveJob = useCallback((job: ActiveDeliveryJob | null) => {
     if (!job) {
@@ -155,7 +203,9 @@ export function RiderSessionProvider({
       return;
     }
     setActiveJobs(prev => {
-      const idx = prev.findIndex(j => j.id === job.id);
+      const idx = prev.findIndex(
+        j => j.backendId === job.backendId || j.id === job.id,
+      );
       if (idx < 0) return [...prev, job];
       const copy = [...prev];
       copy[idx] = job;
@@ -164,17 +214,144 @@ export function RiderSessionProvider({
     setSelectedJobId(job.id);
   }, []);
 
-  const advanceDelivery = useCallback(() => {
-    if (!activeJob) return;
-    const jobId = activeJob.id;
-    updateJobInList(jobId, prev => {
-      if (isCompletionStep(prev.state)) return prev;
-      const next = getNextState(prev.state);
-      if (!next || next === 'DELIVERED' || next === 'COMPLETED') {
-        if (prev.state === 'ARRIVED_AT_DESTINATION') return prev;
+  const restoreActiveDeliveries = useCallback(async () => {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    setLifecyclePending(true);
+    try {
+      const result = await ordersRepository.fetchActiveOrders();
+      if (!result.ok) {
+        setLastLifecycleError(result.error.message);
+        return;
       }
-      return advanceJob(prev);
-    });
+
+      const cancelled: AvailableOrder[] = [];
+      const active: AvailableOrder[] = [];
+      for (const order of result.data) {
+        if (isCancelledBackendStatus(order.backendStatus)) {
+          cancelled.push(order);
+        } else if (
+          order.backendStatus &&
+          /completed/i.test(order.backendStatus)
+        ) {
+          // Completed should not appear in Active; skip if it does.
+        } else {
+          active.push(order);
+        }
+      }
+
+      if (cancelled.length > 0) {
+        const labels = cancelled.map(o => o.id).join(', ');
+        Alert.alert(
+          'Order cancelled',
+          cancelled.length === 1
+            ? `Order ${labels} was cancelled.`
+            : `Orders cancelled: ${labels}`,
+        );
+      }
+
+      const jobs: ActiveDeliveryJob[] = [];
+      for (const order of active) {
+        try {
+          jobs.push(createJobFromOrder(order, { restore: true }));
+        } catch {
+          // Skip rows missing backendId
+        }
+      }
+
+      setActiveJobs(jobs);
+      setSelectedJobId(prev => {
+        if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
+          return prev;
+        }
+        return jobs.find(isActiveJob)?.id ?? null;
+      });
+      setLastLifecycleError(null);
+    } finally {
+      setLifecyclePending(false);
+      restoringRef.current = false;
+    }
+  }, []);
+
+  // Hydrate online flag + active jobs once auth is ready
+  useEffect(() => {
+    if (authLoading || !user) return;
+    let cancelled = false;
+    (async () => {
+      const me = await authRepository.fetchCurrentUser();
+      if (cancelled) return;
+      if (me.ok && typeof me.data.isAvailableOnline === 'boolean') {
+        setIsOnline(me.data.isAvailableOnline);
+        if (me.data.isAvailableOnline) {
+          setShiftStartedAt(prev => prev ?? new Date());
+        }
+      }
+      await restoreActiveDeliveries();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, restoreActiveDeliveries]);
+
+  // Refresh active jobs when app returns to foreground
+  useEffect(() => {
+    if (!user) return;
+    const onChange = (state: AppStateStatus) => {
+      if (state === 'active') {
+        void restoreActiveDeliveries();
+      }
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [user, restoreActiveDeliveries]);
+
+  const advanceDelivery = useCallback(async (): Promise<boolean> => {
+    if (!activeJob) return false;
+    if (isCompletionStep(activeJob.state)) return false;
+
+    const next = getNextState(activeJob.state);
+    if (!next || next === 'DELIVERED' || next === 'COMPLETED') {
+      return false;
+    }
+
+    const jobId = activeJob.id;
+    const backendId = activeJob.backendId;
+
+    if (isInProgressTransition(activeJob.state, next)) {
+      setLifecyclePending(true);
+      setLastLifecycleError(null);
+      updateJobInList(jobId, prev => ({
+        ...prev,
+        pendingAction: 'pickup',
+        lastError: null,
+      }));
+      const result = await ordersRepository.updateOrderStatus(backendId, {
+        status: 'InProgress',
+      });
+      setLifecyclePending(false);
+      if (!result.ok) {
+        setLastLifecycleError(result.error.message);
+        updateJobInList(jobId, prev => ({
+          ...prev,
+          pendingAction: null,
+          lastError: result.error.message,
+        }));
+        Alert.alert('Pickup failed', result.error.message);
+        return false;
+      }
+      const now = new Date().toISOString();
+      updateJobInList(jobId, prev => ({
+        ...advanceJob(prev),
+        backendStatus: 'InProgress',
+        pickedUpAt: now,
+        pendingAction: null,
+        lastError: null,
+      }));
+      return true;
+    }
+
+    updateJobInList(jobId, prev => advanceJob(prev));
+    return true;
   }, [activeJob, updateJobInList]);
 
   const setCashCollected = useCallback(
@@ -195,18 +372,73 @@ export function RiderSessionProvider({
   );
 
   const completeDelivery = useCallback(
-    (opts?: { cashCollected?: boolean }): CompleteResult | null => {
+    async (opts?: CompleteOpts): Promise<CompleteResult | null> => {
       if (!activeJob) return null;
       if (activeJob.state !== 'ARRIVED_AT_DESTINATION') return null;
-      const cashOk =
-        !activeJob.isCod ||
-        activeJob.cashCollected === true ||
-        opts?.cashCollected === true;
-      if (!cashOk) return null;
+
+      if (activeJob.isCod) {
+        const amount = opts?.cashCollectedAmount;
+        if (amount == null || !Number.isFinite(amount)) {
+          return {
+            ok: false,
+            message: 'Enter the cash amount collected.',
+          };
+        }
+        const expected = activeJob.expectedCash ?? activeJob.orderAmount;
+        if (
+          expected != null &&
+          Number(amount) !== Number(expected) &&
+          !(opts?.cashCollectedReason ?? '').trim()
+        ) {
+          return {
+            ok: false,
+            message: 'A reason is required when cash differs from expected.',
+          };
+        }
+      }
+
+      const jobId = activeJob.id;
+      const backendId = activeJob.backendId;
+
+      setLifecyclePending(true);
+      setLastLifecycleError(null);
+      updateJobInList(jobId, prev => ({
+        ...prev,
+        pendingAction: 'complete',
+        lastError: null,
+      }));
+
+      const result = await ordersRepository.updateOrderStatus(backendId, {
+        status: 'Completed',
+        cashCollected: activeJob.isCod
+          ? opts?.cashCollectedAmount
+          : undefined,
+        cashCollectedReason: activeJob.isCod
+          ? opts?.cashCollectedReason
+          : undefined,
+      });
+
+      setLifecyclePending(false);
+
+      if (!result.ok) {
+        setLastLifecycleError(result.error.message);
+        updateJobInList(jobId, prev => ({
+          ...prev,
+          pendingAction: null,
+          lastError: result.error.message,
+        }));
+        Alert.alert('Complete failed', result.error.message);
+        return { ok: false, message: result.error.message };
+      }
 
       let delivered: ActiveDeliveryJob = {
         ...activeJob,
         cashCollected: activeJob.isCod ? true : activeJob.cashCollected,
+        cashCollectedAmount: opts?.cashCollectedAmount ?? null,
+        cashCollectedReason: opts?.cashCollectedReason ?? null,
+        backendStatus: 'Completed',
+        pendingAction: null,
+        lastError: null,
       };
       delivered = transitionJob(delivered, 'DELIVERED');
       delivered = transitionJob(delivered, 'COMPLETED');
@@ -214,7 +446,7 @@ export function RiderSessionProvider({
       const historyItem = jobToHistoryItem(delivered, timeline);
 
       setHistory(prev => [historyItem, ...prev]);
-      setWallet(prev => applyCompletionToWallet(prev, delivered));
+      // Do not auto-credit wallet as withdrawable money — settlements are admin-managed.
       setStats(prev => applyCompletionToStats(prev, delivered));
 
       setActiveJobs(prev => {
@@ -223,22 +455,19 @@ export function RiderSessionProvider({
         setSelectedJobId(nextSelected);
         return remaining;
       });
-      setOnline(true);
 
-      return { historyItem };
+      return { historyItem, ok: true };
     },
-    [activeJob, setOnline],
+    [activeJob, updateJobInList],
   );
 
-  const withdrawFunds = useCallback(
-    (amount: number): boolean => {
-      const next = applyWithdrawal(wallet, amount);
-      if (!next) return false;
-      setWallet(next);
-      return true;
-    },
-    [wallet],
-  );
+  const withdrawFunds = useCallback((_amount: number): boolean => {
+    Alert.alert(
+      'Withdraw unavailable',
+      'Not available — settlements are managed by admin.',
+    );
+    return false;
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -262,6 +491,9 @@ export function RiderSessionProvider({
       wallet,
       stats,
       withdrawFunds,
+      restoreActiveDeliveries,
+      lifecyclePending,
+      lastLifecycleError,
     }),
     [
       isOnline,
@@ -283,6 +515,9 @@ export function RiderSessionProvider({
       wallet,
       stats,
       withdrawFunds,
+      restoreActiveDeliveries,
+      lifecyclePending,
+      lastLifecycleError,
     ],
   );
 

@@ -43,7 +43,7 @@ export default function ForgetPasswordScreen() {
           'Success',
           result.message || 'Verification code sent!',
         );
-        await saveUserIdWithExpiry(result.data || empId.trim());
+        await saveUserIdWithExpiry(empId.trim());
         navigation.navigate('VerifyOTP' as never);
       } else {
         Alert.alert('Error', result.message || 'Failed to send OTP');

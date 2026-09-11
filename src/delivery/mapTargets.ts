@@ -1,9 +1,7 @@
 import { DeliveryState } from './stateMachine';
 import { ActiveDeliveryJob } from './types';
-import { resolveStoreLocation } from '../config/storeLocations';
 import {
   distanceKm,
-  estimateEtaMinutes,
   formatDistanceKm,
   isValidCoord,
   LatLng,
@@ -19,16 +17,7 @@ function resolveStoreCoordinate(job: {
       coordinate: { latitude: job.storeLat!, longitude: job.storeLng! },
     };
   }
-
-  const fallback = resolveStoreLocation(job.storeId);
-  if (!fallback) {
-    return { coordinate: null };
-  }
-
-  return {
-    coordinate: { latitude: fallback.latitude, longitude: fallback.longitude },
-    label: fallback.label,
-  };
+  return { coordinate: null };
 }
 
 export type MapDestinationKind = 'store' | 'customer';
@@ -55,6 +44,7 @@ export type MapTarget = {
   label: string;
   coordinate: LatLng | null;
   distanceKm: number | null;
+  /** Always null for straight-line geometry — do not present as route ETA. */
   etaMinutes: number | null;
   distanceLabel: string | null;
 };
@@ -75,7 +65,7 @@ export function resolveMapTarget(
       label: job.restaurant || store.label || 'Store',
       coordinate,
       distanceKm: dist,
-      etaMinutes: dist != null ? estimateEtaMinutes(dist) : null,
+      etaMinutes: null,
       distanceLabel: dist != null ? formatDistanceKm(dist) : null,
     };
   }
@@ -92,7 +82,7 @@ export function resolveMapTarget(
     label: job.customerName || 'Customer',
     coordinate,
     distanceKm: dist,
-    etaMinutes: dist != null ? estimateEtaMinutes(dist) : null,
+    etaMinutes: null,
     distanceLabel: dist != null ? formatDistanceKm(dist) : null,
   };
 }

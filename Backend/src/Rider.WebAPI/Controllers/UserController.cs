@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Rider.Application.DTOs.Auth;
 using Rider.Application.DTOs.Notifications;
 using Rider.Application.Interfaces;
@@ -8,9 +9,6 @@ using Rider.Domain.Common;
 
 namespace Rider.WebAPI.Controllers
 {
-    /// <summary>
-    /// ESS-compatible User auth endpoints under /api/User/*
-    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class UserController : ControllerBase
@@ -34,45 +32,58 @@ namespace Rider.WebAPI.Controllers
 
         [HttpPost("register")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Register([FromBody] VerifyAndGetUserDetailsRequest request)
         {
             try
             {
-                if (!await _userService.UserExists(request?.workerId))
-                {
-                    var result = await _userService.AddUser(request);
-                    return Ok(result);
-                }
-
-                var forgot = await _userService.ForgetPassword(request);
-                return Ok(forgot);
+                var result = await _userService.AddUser(request);
+                return Ok(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during user registration");
-                return BadRequest(new ApiResponse<string>(false, ex.Message, null));
+                return BadRequest(new ApiResponse<string>(false, "Unable to register", null));
+            }
+        }
+
+        [HttpPost("ForgetPassword")]
+        [AllowAnonymous]
+        [EnableRateLimiting("auth")]
+        public async Task<IActionResult> ForgetPassword([FromBody] VerifyAndGetUserDetailsRequest request)
+        {
+            try
+            {
+                var result = await _userService.ForgetPassword(request);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during ForgetPassword");
+                return BadRequest(new ApiResponse<string>(false, "Unable to process request", null));
             }
         }
 
         [HttpPost("login")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
             try
             {
-                _logger.LogInformation("Calling Login");
                 var result = await _userService.UserLoginUsingEmailandPassword(model);
                 return Ok(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during user login");
-                return BadRequest(ex.Message);
+                return BadRequest(new ApiResponse<string>(false, "Unable to login", null));
             }
         }
 
         [HttpPost("VerifyOtp")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> VerifyOtp([FromBody] VerfiyOtp req)
         {
             try
@@ -83,23 +94,24 @@ namespace Rider.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during VerifyOtp");
-                return BadRequest(ex.Message);
+                return BadRequest(new ApiResponse<string>(false, "Unable to verify OTP", null));
             }
         }
 
         [HttpPost("UpdatePassword")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> UpdatePassword([FromBody] UpdatePassword req)
         {
             try
             {
-                var data = await _userService.UpdatePassword(req?.userid, req?.password);
+                var data = await _userService.UpdatePasswordWithTokenAsync(req ?? new UpdatePassword());
                 return Ok(data);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during UpdatePassword");
-                return BadRequest(ex.Message);
+                return BadRequest(new ApiResponse<string>(false, "Unable to update password", null));
             }
         }
 
@@ -121,7 +133,7 @@ namespace Rider.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during ChangePassword");
-                return BadRequest(ex.Message);
+                return BadRequest(new ApiResponse<string>(false, "Unable to change password", null));
             }
         }
 

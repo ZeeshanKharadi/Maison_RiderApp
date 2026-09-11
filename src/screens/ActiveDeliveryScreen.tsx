@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -22,7 +23,7 @@ import {
   StatusPill,
   confirmDialog,
 } from '../components/ui';
-import BottomSheet, { FilterChip } from '../components/ui/BottomSheet';
+import BottomSheet from '../components/ui/BottomSheet';
 import { useRiderSession } from '../context/RiderSessionContext';
 import {
   getStateConfig,
@@ -61,6 +62,8 @@ export default function ActiveDeliveryScreen() {
     advanceDelivery,
     completeDelivery,
     setCashCollected,
+    lifecyclePending,
+    lastLifecycleError,
   } = useRiderSession();
 
   const {
@@ -71,6 +74,8 @@ export default function ActiveDeliveryScreen() {
   } = useRiderLocation(activeJobs.length > 0);
 
   const [codSheetOpen, setCodSheetOpen] = useState(false);
+  const [codAmount, setCodAmount] = useState('');
+  const [codReason, setCodReason] = useState('');
   const [successVisible, setSuccessVisible] = useState(false);
   const [successEarned, setSuccessEarned] = useState(0);
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -146,11 +151,20 @@ export default function ActiveDeliveryScreen() {
   }, [activeJob, mapTarget, riderLocation]);
 
   const finishTrip = useCallback(
-    (opts?: { cashCollected?: boolean }) => {
+    async (opts?: {
+      cashCollected?: boolean;
+      cashCollectedAmount?: number;
+      cashCollectedReason?: string;
+    }) => {
       if (!activeJob) return;
       const earned = activeJob.deliveryFee;
-      const result = completeDelivery(opts);
-      if (!result) return;
+      const result = await completeDelivery(opts);
+      if (!result?.ok) {
+        if (result?.message) {
+          Alert.alert('Complete delivery', result.message);
+        }
+        return;
+      }
       setSuccessVisible(true);
       setSuccessEarned(earned);
       successOpacity.setValue(0);
@@ -171,19 +185,17 @@ export default function ActiveDeliveryScreen() {
         goDashboard();
       });
     },
-    [
-      activeJob,
-      completeDelivery,
-      goDashboard,
-      successOpacity,
-    ],
+    [activeJob, completeDelivery, goDashboard, successOpacity],
   );
 
   const handlePrimary = useCallback(() => {
     if (!activeJob || !config) return;
 
     if (isCompletionStep(activeJob.state)) {
-      if (activeJob.isCod && activeJob.cashCollected !== true) {
+      if (activeJob.isCod) {
+        const expected = activeJob.expectedCash;
+        setCodAmount(expected != null ? String(expected) : '');
+        setCodReason('');
         setCodSheetOpen(true);
         return;
       }
@@ -191,21 +203,50 @@ export default function ActiveDeliveryScreen() {
         title: 'Complete delivery?',
         message: `Confirm ${activeJob.id} was delivered successfully.`,
         confirmLabel: 'Complete',
-        onConfirm: finishTrip,
+        onConfirm: () => {
+          void finishTrip();
+        },
       });
       return;
     }
 
-    advanceDelivery();
+    void advanceDelivery();
   }, [activeJob, config, advanceDelivery, finishTrip]);
 
-  const handleCodYes = useCallback(() => {
+  const handleCodSubmit = useCallback(() => {
+    if (!activeJob) return;
+    const amount = Number(codAmount);
+    if (!Number.isFinite(amount)) {
+      Alert.alert('Cash amount', 'Enter a valid cash amount.');
+      return;
+    }
+    const expected = activeJob.expectedCash;
+    if (expected == null && !codReason.trim()) {
+      Alert.alert(
+        'Expected cash unknown',
+        'POS did not provide expected cash. Enter the amount collected and a short note.',
+      );
+      return;
+    }
+    if (
+      expected != null &&
+      Number(amount) !== Number(expected) &&
+      !codReason.trim()
+    ) {
+      Alert.alert(
+        'Reason required',
+        'Enter a reason when collected cash differs from expected.',
+      );
+      return;
+    }
     setCashCollected(true);
     setCodSheetOpen(false);
-    setTimeout(() => {
-      finishTrip({ cashCollected: true });
-    }, 150);
-  }, [setCashCollected, finishTrip]);
+    void finishTrip({
+      cashCollected: true,
+      cashCollectedAmount: amount,
+      cashCollectedReason: codReason.trim() || undefined,
+    });
+  }, [activeJob, codAmount, codReason, setCashCollected, finishTrip]);
 
   const handleCodNo = useCallback(() => {
     setCashCollected(false);
@@ -215,6 +256,15 @@ export default function ActiveDeliveryScreen() {
       'Collect payment from the customer before completing a COD order.',
     );
   }, [setCashCollected]);
+
+  const callCustomer = useCallback(() => {
+    const phone = (activeJob?.customerPhone ?? '').trim();
+    if (!phone || phone === '—' || phone === '-' || !/[\d+]/.test(phone)) {
+      Alert.alert('Call unavailable', 'Customer phone is not available.');
+      return;
+    }
+    void Linking.openURL(`tel:${phone.replace(/[^\d+]/g, '')}`);
+  }, [activeJob]);
 
   if (activeJobs.length === 0 || !activeJob || !config) {
     return (
@@ -375,7 +425,9 @@ export default function ActiveDeliveryScreen() {
             label="COD"
             value={
               activeJob.isCod
-                ? `Collect ${formatMoney(activeJob.orderAmount)}`
+                ? activeJob.expectedCash != null
+                  ? `Collect ${formatMoney(activeJob.expectedCash)}`
+                  : 'Collect cash (amount from POS unknown)'
                 : 'Prepaid'
             }
           />
@@ -410,12 +462,7 @@ export default function ActiveDeliveryScreen() {
             icon="phone"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() =>
-              Alert.alert(
-                'Call customer',
-                'Calling will connect when device integrations are enabled.',
-              )
-            }
+            onPress={callCustomer}
           />
           <AppButton
             label="Message"
@@ -424,8 +471,8 @@ export default function ActiveDeliveryScreen() {
             style={styles.dummyBtn}
             onPress={() =>
               Alert.alert(
-                'Message customer',
-                'Messaging will connect when device integrations are enabled.',
+                'Message unavailable',
+                'In-app messaging is not available.',
               )
             }
           />
@@ -437,6 +484,10 @@ export default function ActiveDeliveryScreen() {
             onPress={() => void openGoogleMaps()}
           />
         </View>
+
+        {lastLifecycleError ? (
+          <Text style={styles.errorText}>{lastLifecycleError}</Text>
+        ) : null}
 
         {locationError ? (
           <AppButton
@@ -451,7 +502,7 @@ export default function ActiveDeliveryScreen() {
 
         <View style={styles.bottomSummary}>
           <View>
-            <Text style={styles.summaryLabel}>You'll earn</Text>
+            <Text style={styles.summaryLabel}>Delivery fee</Text>
             <Text style={styles.summaryValue}>
               {formatMoney(activeJob.deliveryFee)}
             </Text>
@@ -459,18 +510,24 @@ export default function ActiveDeliveryScreen() {
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.summaryLabel}>Distance</Text>
             <Text style={styles.summaryMeta}>
-              {activeJob.distanceMiles} mi · ~{activeJob.etaMinutes} min
+              {activeJob.distanceMiles != null
+                ? `${activeJob.distanceMiles} mi`
+                : '—'}
+              {activeJob.etaMinutes != null
+                ? ` · ~${activeJob.etaMinutes} min`
+                : ''}
             </Text>
           </View>
         </View>
 
         {config.primaryAction ? (
           <AppButton
-            label={config.primaryAction}
+            label={lifecyclePending ? 'Updating…' : config.primaryAction}
             icon="check-circle"
             variant="secondary"
             fullWidth
             onPress={handlePrimary}
+            disabled={lifecyclePending}
             accessibilityLabel={config.primaryAction}
             style={styles.primaryBtn}
           />
@@ -484,10 +541,11 @@ export default function ActiveDeliveryScreen() {
         footer={
           <View style={styles.codActions}>
             <AppButton
-              label="Yes, collected"
+              label="Confirm collected"
               variant="secondary"
               style={{ flex: 1 }}
-              onPress={handleCodYes}
+              onPress={handleCodSubmit}
+              disabled={lifecyclePending}
             />
             <AppButton
               label="Not yet"
@@ -498,12 +556,30 @@ export default function ActiveDeliveryScreen() {
           </View>
         }>
         <Text style={styles.codHint}>
-          Collect {formatMoney(activeJob.orderAmount)} from{' '}
-          {activeJob.customerName} before completing this COD order.
+          Enter the cash collected from {activeJob.customerName}. Expected:{' '}
+          {activeJob.expectedCash != null
+            ? formatMoney(activeJob.expectedCash)
+            : 'not provided by POS — add a note'}.
         </Text>
-        <View style={styles.codChips}>
-          <FilterChip label="Cash on delivery" selected onPress={() => {}} />
-        </View>
+        <Text style={styles.codLabel}>Amount collected</Text>
+        <TextInput
+          style={styles.codInput}
+          value={codAmount}
+          onChangeText={setCodAmount}
+          keyboardType="decimal-pad"
+          placeholder="0.00"
+          placeholderTextColor={colors.textMuted}
+        />
+        <Text style={styles.codLabel}>
+          Reason (required if amount differs)
+        </Text>
+        <TextInput
+          style={[styles.codInput, styles.codReason]}
+          value={codReason}
+          onChangeText={setCodReason}
+          placeholder="e.g. customer short-changed / tip included"
+          placeholderTextColor={colors.textMuted}
+        />
       </BottomSheet>
 
       {successVisible ? (
@@ -513,7 +589,11 @@ export default function ActiveDeliveryScreen() {
           <View style={styles.successCard}>
             <Text style={styles.successTitle}>Delivery completed</Text>
             <Text style={styles.successBody}>
-              +{formatMoney(successEarned)} added to wallet
+              Trip finished. Settlements are managed by admin
+              {successEarned > 0
+                ? ` (fee shown: ${formatMoney(successEarned)})`
+                : ''}
+              .
             </Text>
           </View>
         </Animated.View>
@@ -640,8 +720,31 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: spacing.md,
   },
-  codChips: { flexDirection: 'row', marginBottom: spacing.sm },
+  codLabel: {
+    ...typography.caption,
+    marginBottom: spacing.xxs,
+  },
+  codInput: {
+    ...typography.body,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+    backgroundColor: colors.background,
+  },
+  codReason: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
   codActions: { flexDirection: 'row', gap: spacing.sm },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
+    marginBottom: spacing.sm,
+  },
   successOverlay: {
     position: 'absolute',
     top: 0,

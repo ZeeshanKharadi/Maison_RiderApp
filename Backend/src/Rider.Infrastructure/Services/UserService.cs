@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Rider.Application.Authentication;
@@ -7,16 +10,17 @@ using Rider.Application.Interfaces;
 using Rider.Application.Interfaces.Repositories;
 using Rider.Domain.Common;
 using Rider.Domain.Entities;
+using Rider.Infrastructure.Helpers;
 
 namespace Rider.Infrastructure.Services
 {
-    /// <summary>
-    /// ESS UserService business logic adapted to EF repositories (KDS data layer).
-    /// </summary>
     public class UserService : IUserService
     {
+        private const string GenericResetMessage =
+            "If an account exists for this employee ID, a verification code will be sent shortly.";
+
         private readonly IUnitOfWork _unitOfWork;
-        private readonly IPasswordCrypto _passwordCrypto;
+        private readonly PasswordVerifier _passwordVerifier;
         private readonly IJwtTokenHandler _jwtTokenHandler;
         private readonly IOtpNotifier _otpNotifier;
         private readonly IConfiguration _configuration;
@@ -24,14 +28,14 @@ namespace Rider.Infrastructure.Services
 
         public UserService(
             IUnitOfWork unitOfWork,
-            IPasswordCrypto passwordCrypto,
+            PasswordVerifier passwordVerifier,
             IJwtTokenHandler jwtTokenHandler,
             IOtpNotifier otpNotifier,
             IConfiguration configuration,
             ILogger<UserService> logger)
         {
             _unitOfWork = unitOfWork;
-            _passwordCrypto = passwordCrypto;
+            _passwordVerifier = passwordVerifier;
             _jwtTokenHandler = jwtTokenHandler;
             _otpNotifier = otpNotifier;
             _configuration = configuration;
@@ -45,14 +49,13 @@ namespace Rider.Infrastructure.Services
 
             var user = await _unitOfWork.UserRepository.GetByEmployeeIdAsync(req.userid.Trim());
             if (user == null)
-                return new ApiResponse<LoginUser>(false, "User not found", null);
+                return new ApiResponse<LoginUser>(false, "Invalid Employee ID or Password", null);
 
-            if (user.PasswordEncrypted == null || user.PasswordEncrypted.Length == 0)
-                return new ApiResponse<LoginUser>(false, "Invalid credentialss", null);
+            if (!_passwordVerifier.Verify(user, req.password, out var needsUpgrade))
+                return new ApiResponse<LoginUser>(false, "Invalid Employee ID or Password", null);
 
-            string pass = _passwordCrypto.Decrypt(user.PasswordEncrypted);
-            if (req.password != pass)
-                return new ApiResponse<LoginUser>(false, "Invalid credentialss", null);
+            if (needsUpgrade)
+                _passwordVerifier.SetPassword(user, req.password);
 
             if (!user.IsActive && req.userid != "000000")
                 return new ApiResponse<LoginUser>(false, "User account is inactive. Contact admin.", null);
@@ -94,115 +97,163 @@ namespace Rider.Infrastructure.Services
                 u.ThirdPartyEmployeeId == thirdPartyId.Trim() && u.DeletedAt == null);
         }
 
-        public async Task<ApiResponse<string>> AddUser(VerifyAndGetUserDetailsRequest req)
-        {
-            if (req == null || string.IsNullOrWhiteSpace(req.workerId))
-                return new ApiResponse<string>(false, "Invalid User Id", "Invalid User Id");
-
-            var workerId = req.workerId.Trim();
-            if (await UserExists(workerId))
-                return await ForgetPassword(req);
-
-            var user = new AppUser
-            {
-                UserId = Guid.NewGuid(),
-                UserName = $"Rider {workerId}",
-                Email = $"{workerId.ToLowerInvariant()}@rapiddelivery.local",
-                ThirdPartyEmployeeId = workerId,
-                IsActive = true,
-                IsVerified = false,
-                CreatedAt = DateTime.UtcNow,
-                Position = "Rider",
-                Department = "Delivery",
-                PhoneNumber = ""
-            };
-
-            await _unitOfWork.UserRepository.AddAsync(user);
-
-            var riderRole = await _unitOfWork.RoleRepository.GetByNameAsync(RoleNames.Rider);
-            if (riderRole != null)
-            {
-                await _unitOfWork.UserRoleRepository.AddAsync(new UserRole
-                {
-                    UserId = user.UserId,
-                    RoleId = riderRole.RoleId,
-                    AssignedAt = DateTime.UtcNow
-                });
-            }
-
-            await _unitOfWork.SaveChangesAsync();
-
-            await AddOtpAsync(user);
-            return new ApiResponse<string>(
-                true,
-                $"A verification code has been sent to your email ({user.Email})",
-                user.UserId.ToString());
-        }
+        public Task<ApiResponse<string>> AddUser(VerifyAndGetUserDetailsRequest req)
+            => Task.FromResult(new ApiResponse<string>(
+                false,
+                "Self-registration is disabled. Contact your administrator.",
+                null));
 
         public async Task<ApiResponse<string>> ForgetPassword(VerifyAndGetUserDetailsRequest req)
         {
+            // Always use the same client-facing success path shape when we intentionally
+            // avoid confirming whether an account exists. SMTP failure is an explicit error.
+            if (!_otpNotifier.IsConfigured)
+                return new ApiResponse<string>(false, "Unable to send verification code. Try again later.", null);
+
             if (req == null || string.IsNullOrWhiteSpace(req.workerId))
-                return new ApiResponse<string>(false, "Employee not found", null);
+                return new ApiResponse<string>(true, GenericResetMessage, null);
 
             var user = await _unitOfWork.UserRepository.GetByEmployeeIdAsync(req.workerId.Trim());
-            if (user == null || !user.IsActive)
-                return new ApiResponse<string>(false, "Employee not found", null);
+            if (user == null || !user.IsActive || !user.IsVerified)
+                return new ApiResponse<string>(true, GenericResetMessage, null);
 
-            await AddOtpAsync(user);
-            return new ApiResponse<string>(
-                true,
-                $"A verification code has been sent to your email ({user.Email})",
-                user.UserId.ToString());
+            var cooldown = int.TryParse(_configuration["PasswordReset:ResendCooldownSeconds"], out var cd) ? cd : 60;
+            var recent = await _unitOfWork.Context.Set<OtpCode>()
+                .AsNoTracking()
+                .Where(o => o.UserId == user.UserId
+                    && o.Purpose == OtpPurposes.PasswordReset
+                    && o.CreatedAt > DateTime.UtcNow.AddSeconds(-cooldown))
+                .OrderByDescending(o => o.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            // Do not return userId — clients verify OTP with workerId.
+            if (recent != null)
+                return new ApiResponse<string>(true, GenericResetMessage, null);
+
+            var otpMinutes = int.TryParse(_configuration["PasswordReset:OtpMinutes"], out var om) ? om : 5;
+            var otpCode = RandomNumberGenerator.GetInt32(100000, 999999).ToString();
+            await _unitOfWork.OtpRepository.AddAsync(new OtpCode
+            {
+                UserId = user.UserId,
+                OtpCodeValue = otpCode,
+                Channel = "Email",
+                Purpose = OtpPurposes.PasswordReset,
+                AttemptCount = 0,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(otpMinutes),
+                IsUsed = false,
+                CreatedAt = DateTime.UtcNow
+            });
+            await _unitOfWork.SaveChangesAsync();
+
+            var sent = await _otpNotifier.SendOtpAsync(user.Email, user.PhoneNumber, user.UserName, otpCode);
+            if (!sent)
+            {
+                _logger.LogWarning("OTP SMTP send failed for password reset user {UserId}", user.UserId);
+                return new ApiResponse<string>(false, "Unable to send verification code. Try again later.", null);
+            }
+
+            return new ApiResponse<string>(true, GenericResetMessage, null);
         }
 
         public async Task<ApiResponse<string>> VerifyOtpAsync(string userId, string otpCode)
         {
-            if (!Guid.TryParse(userId, out var uid))
-                return new ApiResponse<string>(false, "Employee not found", null);
-
-            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
-            if (user == null)
-                return new ApiResponse<string>(false, "Employee not found", null);
-
-            var otp = await _unitOfWork.OtpRepository.GetLatestValidAsync(uid, otpCode);
-            if (otp == null)
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(otpCode))
                 return new ApiResponse<string>(false, "Invalid OTP", null);
-
-            if (otp.IsUsed)
-                return new ApiResponse<string>(false, "OTP already used", null);
-
-            if (DateTime.UtcNow > otp.ExpiresAt)
-                return new ApiResponse<string>(false, "OTP expired", null);
-
-            otp.IsUsed = true;
-            await _unitOfWork.OtpRepository.UpdateAsync(otp);
-
-            user.IsVerified = true;
-            await _unitOfWork.UserRepository.UpdateAsync(user);
-            await _unitOfWork.SaveChangesAsync();
-
-            return new ApiResponse<string>(true, "OTP verified successfully", null);
-        }
-
-        public async Task<ApiResponse<string>> UpdatePassword(string userId, string password)
-        {
-            if (string.IsNullOrEmpty(userId))
-                return new ApiResponse<string>(false, "Employee id is empty", string.Empty);
-
-            if (string.IsNullOrEmpty(password) || password.Length < 6)
-                return new ApiResponse<string>(false, "Password must be at least 6 characters", string.Empty);
 
             AppUser? user = null;
             if (Guid.TryParse(userId, out var uid))
                 user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
-
             if (user == null)
                 user = await _unitOfWork.UserRepository.GetByEmployeeIdAsync(userId.Trim());
-
             if (user == null)
-                return new ApiResponse<string>(false, "Employee not found", string.Empty);
+                return new ApiResponse<string>(false, "Invalid OTP", null);
 
-            user.PasswordEncrypted = _passwordCrypto.Encrypt(password);
+            uid = user.UserId;
+
+            var maxAttempts = int.TryParse(_configuration["PasswordReset:MaxOtpAttempts"], out var ma) ? ma : 5;
+            var otp = await _unitOfWork.Context.Set<OtpCode>()
+                .Where(o => o.UserId == uid
+                    && o.Purpose == OtpPurposes.PasswordReset
+                    && !o.IsUsed)
+                .OrderByDescending(o => o.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (otp == null)
+                return new ApiResponse<string>(false, "Invalid OTP", null);
+
+            if (DateTime.UtcNow > otp.ExpiresAt)
+            {
+                otp.IsUsed = true;
+                await _unitOfWork.OtpRepository.UpdateAsync(otp);
+                await _unitOfWork.SaveChangesAsync();
+                return new ApiResponse<string>(false, "OTP expired", null);
+            }
+
+            if (otp.AttemptCount >= maxAttempts)
+                return new ApiResponse<string>(false, "Too many attempts. Request a new code.", null);
+
+            if (!string.Equals(otp.OtpCodeValue, otpCode.Trim(), StringComparison.Ordinal))
+            {
+                otp.AttemptCount++;
+                await _unitOfWork.OtpRepository.UpdateAsync(otp);
+                await _unitOfWork.SaveChangesAsync();
+                return new ApiResponse<string>(false, "Invalid OTP", null);
+            }
+
+            otp.IsUsed = true;
+            await _unitOfWork.OtpRepository.UpdateAsync(otp);
+
+            var tokenMinutes = int.TryParse(_configuration["PasswordReset:TokenMinutes"], out var tm) ? tm : 15;
+            var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var tokenHash = Sha256Hex(rawToken);
+
+            await _unitOfWork.Context.Set<PasswordResetToken>().AddAsync(new PasswordResetToken
+            {
+                UserId = user.UserId,
+                TokenHash = tokenHash,
+                Purpose = OtpPurposes.PasswordReset,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(tokenMinutes),
+                CreatedAt = DateTime.UtcNow
+            });
+            await _unitOfWork.SaveChangesAsync();
+
+            return new ApiResponse<string>(true, "OTP verified successfully", rawToken);
+        }
+
+        public Task<ApiResponse<string>> UpdatePassword(string userId, string password)
+            => UpdatePasswordWithTokenAsync(new UpdatePassword { userid = userId, password = password });
+
+        public async Task<ApiResponse<string>> UpdatePasswordWithTokenAsync(UpdatePassword req)
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.resetToken))
+                return new ApiResponse<string>(false, "resetToken is required", string.Empty);
+
+            if (string.IsNullOrEmpty(req.password) || req.password.Length < 6)
+                return new ApiResponse<string>(false, "Password must be at least 6 characters", string.Empty);
+
+            var hash = Sha256Hex(req.resetToken.Trim());
+            var token = await _unitOfWork.Context.Set<PasswordResetToken>()
+                .FirstOrDefaultAsync(t => t.TokenHash == hash && t.UsedAt == null);
+
+            if (token == null || token.ExpiresAt < DateTime.UtcNow)
+                return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+
+            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(token.UserId);
+            if (user == null)
+                return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+
+            token.UsedAt = DateTime.UtcNow;
+            _passwordVerifier.SetPassword(user, req.password);
+
+            var refreshTokens = _unitOfWork.UserRefreshTokenRepository
+                .GetAll(t => t.UserId == user.UserId && !t.IsRevoked)
+                .ToList();
+            foreach (var rt in refreshTokens)
+            {
+                rt.IsRevoked = true;
+                await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(rt);
+            }
+
             await _unitOfWork.UserRepository.UpdateAsync(user);
             await _unitOfWork.SaveChangesAsync();
 
@@ -218,14 +269,19 @@ namespace Rider.Infrastructure.Services
                 return new ApiResponse<string>(false, "User not Found", "User not Found");
 
             var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
-            if (user == null || user.PasswordEncrypted == null || user.PasswordEncrypted.Length == 0)
+            if (user == null)
                 return new ApiResponse<string>(false, "User not Found", "User not Found");
 
-            string storedPassword = _passwordCrypto.Decrypt(user.PasswordEncrypted);
-            if (storedPassword != req.oldPassword)
+            if (!_passwordVerifier.Verify(user, req.oldPassword, out _))
                 return new ApiResponse<string>(false, "Old password not match ", "Old password not match");
 
-            return await UpdatePassword(req.employeeId, req.newPassword);
+            if (string.IsNullOrEmpty(req.newPassword) || req.newPassword.Length < 6)
+                return new ApiResponse<string>(false, "Password must be at least 6 characters", string.Empty);
+
+            _passwordVerifier.SetPassword(user, req.newPassword);
+            await _unitOfWork.UserRepository.UpdateAsync(user);
+            await _unitOfWork.SaveChangesAsync();
+            return new ApiResponse<string>(true, "Password Updated successfully", string.Empty);
         }
 
         public async Task<ApiResponse<string>> Logout(string userId)
@@ -332,22 +388,10 @@ namespace Rider.Infrastructure.Services
             return Task.FromResult(new ApiResponse<bool>(ok, ok ? "Token valid" : "Token invalid", ok));
         }
 
-        private async Task AddOtpAsync(AppUser user)
+        private static string Sha256Hex(string value)
         {
-            var otpCode = new Random().Next(100000, 999999).ToString();
-            await _unitOfWork.OtpRepository.AddAsync(new OtpCode
-            {
-                UserId = user.UserId,
-                OtpCodeValue = otpCode,
-                Channel = "Email",
-                ExpiresAt = DateTime.UtcNow.AddMinutes(5),
-                IsUsed = false,
-                CreatedAt = DateTime.UtcNow
-            });
-            await _unitOfWork.SaveChangesAsync();
-
-            await _otpNotifier.SendOtpAsync(user.Email, user.PhoneNumber, user.UserName, otpCode);
-            _logger.LogInformation("OTP generated for user {UserId}", user.UserId);
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+            return Convert.ToHexString(bytes);
         }
 
         private static GetUserResponse MapUser(AppUser user)
@@ -380,6 +424,7 @@ namespace Rider.Infrastructure.Services
                 profilePicture = user.ProfileImageUrl,
                 isActive = user.IsActive,
                 isVerified = user.IsVerified,
+                isAvailableOnline = user.IsAvailableOnline,
                 storeId = user.StoreId,
                 roles = roles,
                 permissions = isAdminPortal

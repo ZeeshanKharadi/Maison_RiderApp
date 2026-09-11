@@ -83,7 +83,32 @@ namespace Rider.Domain.Entities
 
         public DateTime? CompletedAt { get; set; }
 
+        /// <summary>Cash the rider reported collecting from the customer (not store handover, not earnings).</summary>
         public decimal? CashCollected { get; set; }
+
+        /// <summary>Expected COD/cash due from customer (from POS Cash when cash method).</summary>
+        public decimal? ExpectedCash { get; set; }
+
+        [MaxLength(500)]
+        public string? CashCollectedReason { get; set; }
+
+        public DateTime? CashHandedOverAt { get; set; }
+
+        public Guid? CashHandedOverByUserId { get; set; }
+
+        public decimal? CashHandedOverAmount { get; set; }
+
+        /// <summary>e.g. LegacyCashCollected_Ambiguous | RiderCollected | AdminCorrected | HandedOver</summary>
+        [MaxLength(100)]
+        public string? CashSemanticsNote { get; set; }
+
+        [MaxLength(500)]
+        public string? CancelReason { get; set; }
+
+        public bool IsDirectAssignment { get; set; }
+
+        [Timestamp]
+        public byte[]? RowVersion { get; set; }
 
         [ForeignKey(nameof(BatchId))]
         public AssignedOrderBatch Batch { get; set; }

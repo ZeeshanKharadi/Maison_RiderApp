@@ -42,7 +42,7 @@ export default function OrdersScreen() {
   const { openMenu } = useSideMenu();
   const { orders, loading, error, acceptOrder, rejectOrder, refreshOrders } =
     useAvailableOrders();
-  const { activeJobs } = useRiderSession();
+  const { activeJobs, isOnline } = useRiderSession();
 
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<OrderFilters>(DEFAULT_ORDER_FILTERS);
@@ -60,7 +60,10 @@ export default function OrdersScreen() {
     (order: AvailableOrder) => {
       navigate('MainDrawer', {
         screen: 'OrderDetails',
-        params: { orderId: order.id },
+        params: {
+          orderId: order.id,
+          backendId: order.backendId,
+        },
       });
     },
     [],
@@ -71,8 +74,19 @@ export default function OrdersScreen() {
   }, [navigation]);
 
   const handleAccept = useCallback(
-    (order: AvailableOrder) => {
-      const alreadyActive = activeJobs.some(j => j.id === order.id);
+    async (order: AvailableOrder) => {
+      if (!isOnline) {
+        confirmDialog({
+          title: 'Offline',
+          message: 'Go online before accepting orders.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
+      const alreadyActive = activeJobs.some(
+        j => j.backendId === order.backendId || j.id === order.id,
+      );
       if (!alreadyActive && activeJobs.length >= 5) {
         confirmDialog({
           title: 'Order limit',
@@ -82,10 +96,12 @@ export default function OrdersScreen() {
         });
         return;
       }
-      acceptOrder(order);
-      goDashboard();
+      const result = await acceptOrder(order);
+      if (result.ok) {
+        goDashboard();
+      }
     },
-    [activeJobs, acceptOrder, goDashboard],
+    [activeJobs, acceptOrder, goDashboard, isOnline],
   );
 
   const handleRejectPress = useCallback((order: AvailableOrder) => {

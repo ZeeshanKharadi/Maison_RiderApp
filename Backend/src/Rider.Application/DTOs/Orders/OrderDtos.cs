@@ -75,6 +75,8 @@ namespace Rider.Application.DTOs.Orders
         public long id { get; set; }
         public string orderId { get; set; }
         public string orderNo { get; set; }
+        /// <summary>Display order number (same as orderNo; distinct from external orderId).</summary>
+        public string displayOrderNo { get; set; }
         public string storeId { get; set; }
         public double? storeLat { get; set; }
         public double? storeLng { get; set; }
@@ -102,6 +104,12 @@ namespace Rider.Application.DTOs.Orders
         public DateTime? pickedUpAt { get; set; }
         public DateTime? completedAt { get; set; }
         public decimal? cashCollected { get; set; }
+        public decimal? expectedCash { get; set; }
+        public string? cashCollectedReason { get; set; }
+        public DateTime? cashHandedOverAt { get; set; }
+        public decimal? cashHandedOverAmount { get; set; }
+        public string? cashSemanticsNote { get; set; }
+        public bool isDirectAssignment { get; set; }
         public Guid? acceptedByUserId { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
     }
@@ -113,5 +121,30 @@ namespace Rider.Application.DTOs.Orders
         public string status { get; set; }
 
         public decimal? cashCollected { get; set; }
+        public string? cashCollectedReason { get; set; }
+        public string? requestId { get; set; }
+        public string? reason { get; set; }
+    }
+
+    public class RejectOrderRequest
+    {
+        public string? reason { get; set; }
+        public string? requestId { get; set; }
+    }
+
+    public class SetAvailabilityRequest
+    {
+        public bool isOnline { get; set; }
+    }
+
+    public class RiderPerformanceDto
+    {
+        public int completedCount { get; set; }
+        public double? avgDurationMinutes { get; set; }
+        public double onlineHours { get; set; }
+        public decimal codCollected { get; set; }
+        public decimal codOutstanding { get; set; }
+        public DateTime? from { get; set; }
+        public DateTime? to { get; set; }
     }
 }

@@ -112,11 +112,13 @@ export default function DashboardScreen() {
             'You still have an active delivery. Finish it before going offline, or go offline anyway.',
           confirmLabel: 'Go offline',
           destructive: true,
-          onConfirm: () => setOnline(false),
+          onConfirm: () => {
+            void setOnline(false);
+          },
         });
         return;
       }
-      setOnline(next);
+      void setOnline(next);
     },
     [activeJob, setOnline],
   );
@@ -341,7 +343,7 @@ export default function DashboardScreen() {
             actionLabel={isOnline ? 'Browse orders' : 'Go online'}
             onAction={() => {
               if (isOnline) goTab('Orders');
-              else setOnline(true);
+              else void setOnline(true);
             }}
           />
         )}
@@ -390,8 +392,14 @@ export default function DashboardScreen() {
                 </Text>
               </View>
               <Text style={styles.orderMeta} numberOfLines={1}>
-                {order.distanceMiles.toFixed(1)} mi · {order.etaMinutes} min · Order{' '}
-                {formatMoney(order.orderAmount)}
+                {order.distanceMiles != null
+                  ? `${order.distanceMiles.toFixed(1)} mi`
+                  : 'Distance —'}{' '}
+                ·{' '}
+                {order.etaMinutes != null
+                  ? `${order.etaMinutes} min`
+                  : 'ETA —'}{' '}
+                · Order {formatMoney(order.orderAmount)}
               </Text>
             </Pressable>
           ))

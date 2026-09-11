@@ -79,6 +79,12 @@ namespace Rider.Application.DTOs.Admin
         public string paymentMethod { get; set; }
         public decimal? cash { get; set; }
         public decimal? cashCollected { get; set; }
+        public decimal? expectedCash { get; set; }
+        public decimal? cashHandedOverAmount { get; set; }
+        public DateTime? cashHandedOverAt { get; set; }
+        public string? cashSemanticsNote { get; set; }
+        public bool isDirectAssignment { get; set; }
+        public string cancelReason { get; set; }
         public Guid? acceptedByUserId { get; set; }
         public string acceptedByName { get; set; }
         public string acceptedByWorkerId { get; set; }
@@ -115,6 +121,30 @@ namespace Rider.Application.DTOs.Admin
     public class CashCollectedRequest
     {
         public decimal? cashCollected { get; set; }
+    }
+
+    public class CancelOrderRequest
+    {
+        [Required]
+        public string reason { get; set; } = "";
+    }
+
+    public class CashHandoverRequest
+    {
+        public decimal? amount { get; set; }
+    }
+
+    public class AdminNotificationDto
+    {
+        public long id { get; set; }
+        public string storeId { get; set; }
+        public string category { get; set; }
+        public string title { get; set; }
+        public string body { get; set; }
+        public string orderId { get; set; }
+        public long? assignedOrderId { get; set; }
+        public bool isRead { get; set; }
+        public DateTime createdAt { get; set; }
     }
 
     public class StoreDto

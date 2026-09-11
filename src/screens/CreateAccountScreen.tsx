@@ -44,6 +44,30 @@ export const getUserIdWithExpiry = async (): Promise<string> => {
   return data.userId;
 };
 
+export const saveResetTokenWithExpiry = async (resetToken: string) => {
+  const expiryTime = Date.now() + 15 * 60 * 1000;
+  await AsyncStorage.setItem(
+    'tempResetToken',
+    JSON.stringify({ resetToken, expiry: expiryTime }),
+  );
+};
+
+export const getResetTokenWithExpiry = async (): Promise<string> => {
+  const stored = await AsyncStorage.getItem('tempResetToken');
+  if (!stored) return '';
+  const data = JSON.parse(stored);
+  if (Date.now() > data.expiry) {
+    await AsyncStorage.removeItem('tempResetToken');
+    return '';
+  }
+  return data.resetToken || '';
+};
+
+export const clearPasswordResetTemp = async () => {
+  await AsyncStorage.removeItem('tempUserId');
+  await AsyncStorage.removeItem('tempResetToken');
+};
+
 export default function CreateAccountScreen() {
   const navigation = useNavigation();
   const [empId, setEmpId] = useState('');

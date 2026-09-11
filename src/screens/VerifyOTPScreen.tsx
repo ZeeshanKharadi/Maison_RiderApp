@@ -16,7 +16,10 @@ import AppSafeAreaView from '../components/AppSafeAreaView';
 import Loader from '../components/Loader';
 import { useLoader } from '../hooks/useLoader';
 import { verifyOtp } from '../services/UserService';
-import { getUserIdWithExpiry } from './CreateAccountScreen';
+import {
+  getUserIdWithExpiry,
+  saveResetTokenWithExpiry,
+} from './CreateAccountScreen';
 import {
   BACKGROUND,
   BRAND_RED,
@@ -34,6 +37,11 @@ export default function VerifyOTPScreen() {
     const userId = await getUserIdWithExpiry();
     const enteredOtp = otp.join('');
 
+    if (!userId) {
+      Alert.alert('Error', 'Session expired. Please start again.');
+      return;
+    }
+
     if (enteredOtp.length !== 6) {
       Alert.alert('Error', 'Please enter the complete 6-digit OTP');
       return;
@@ -42,7 +50,8 @@ export default function VerifyOTPScreen() {
     showLoader('Verifying OTP...');
     try {
       const result = await verifyOtp(userId, enteredOtp);
-      if (result.status) {
+      if (result.status && result.data) {
+        await saveResetTokenWithExpiry(result.data);
         Alert.alert('Success', 'OTP verified successfully!');
         navigation.dispatch(StackActions.replace('ResetPassword'));
       } else {
@@ -100,8 +109,7 @@ export default function VerifyOTPScreen() {
             </View>
             <Text style={styles.title}>Verify OTP</Text>
             <Text style={styles.subtitle}>
-              Enter the 6-digit code sent to your registered phone.
-              {'\n'}Test code: 123456
+              Enter the 6-digit code sent to your registered contact.
             </Text>
           </View>
 

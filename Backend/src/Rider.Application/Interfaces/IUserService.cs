@@ -11,6 +11,7 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<string>> ForgetPassword(VerifyAndGetUserDetailsRequest req);
         Task<ApiResponse<string>> VerifyOtpAsync(string userId, string otpCode);
         Task<ApiResponse<string>> UpdatePassword(string userId, string password);
+        Task<ApiResponse<string>> UpdatePasswordWithTokenAsync(UpdatePassword req);
         Task<ApiResponse<string>> UpdatePasswordUsingOldPassword(ChangePasswordRequest req);
         Task<ApiResponse<string>> Logout(string userId);
         Task<ApiResponse<GetUserResponse>> GetCurrentUser(string userId);
