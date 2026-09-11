@@ -17,9 +17,12 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<LiveBoardSummaryDto>> GetLiveSummaryAsync(AdminActor actor, string storeId);
         Task<ApiResponse<List<AdminOrderListDto>>> ListOrdersAsync(AdminActor actor, AdminOrderQuery query);
         Task<ApiResponse<AdminOrderDetailDto>> GetOrderAsync(AdminActor actor, long id);
-        Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id);
+        Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason);
         Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id);
         Task<ApiResponse<AdminOrderDetailDto>> SetCashCollectedAsync(AdminActor actor, long id, decimal? cashCollected);
+        Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(AdminActor actor, long id, decimal? amount);
+        Task<ApiResponse<List<AdminNotificationDto>>> ListAdminNotificationsAsync(AdminActor actor, string storeId, int take);
+        Task<ApiResponse<bool>> MarkAdminNotificationReadAsync(AdminActor actor, long id);
 
         Task<ApiResponse<PaymentsDashboardDto>> GetPaymentsAsync(AdminActor actor, DateTime? from, DateTime? to, string storeId, Guid? riderId);
         Task<ApiResponse<byte[]>> ExportPaymentsAsync(AdminActor actor, DateTime? from, DateTime? to, string storeId, Guid? riderId, string format);

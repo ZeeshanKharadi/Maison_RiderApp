@@ -1,47 +1,138 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { customerName, dt, money, OrderDetailDto } from '../api/types';
+import {
+  ensureAdminHub,
+  isAdminHubConnected,
+  onAdminHubReconnect,
+  subscribeOrderChanged,
+} from '../realtime/adminHub';
+
+const POLL_MS = 30_000;
 
 export default function OrderDetailPage() {
   const { id } = useParams();
+  const orderId = Number(id);
   const [order, setOrder] = useState<OrderDetailDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cash, setCash] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
+  const [showCancel, setShowCancel] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}`);
     if (!res.status) throw new Error(res.message);
     setOrder(res.Data);
     setCash(res.Data.cashCollected != null ? String(res.Data.cashCollected) : '');
-  }
+  }, [id]);
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [load]);
 
-  async function act(path: string) {
+  useEffect(() => {
+    if (!Number.isFinite(orderId)) return;
+
+    const run = () => {
+      void load().catch(() => {
+        /* page owns error UI */
+      });
+    };
+
+    void ensureAdminHub().catch(() => {
+      /* polling covers offline hub */
+    });
+
+    const unsubEvent = subscribeOrderChanged((payload) => {
+      if (payload.assignedOrderId === orderId) run();
+    });
+    const unsubReconnect = onAdminHubReconnect(() => run());
+    const poll = window.setInterval(() => {
+      if (!isAdminHubConnected()) run();
+    }, POLL_MS);
+
+    return () => {
+      unsubEvent();
+      unsubReconnect();
+      window.clearInterval(poll);
+    };
+  }, [load, orderId]);
+
+  async function act(path: string, body?: unknown) {
     setError(null);
-    const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/${path}`, { method: 'POST' });
-    if (!res.status) {
-      setError(res.message);
-      return;
+    setBusy(true);
+    try {
+      const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/${path}`, {
+        method: 'POST',
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      if (!res.status) {
+        setError(res.message);
+        return;
+      }
+      setOrder(res.Data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Action failed');
+    } finally {
+      setBusy(false);
     }
-    setOrder(res.Data);
   }
 
-  async function saveCash(e: FormEvent) {
+  async function submitCancel(e: FormEvent) {
     e.preventDefault();
-    const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/cash-collected`, {
-      method: 'PUT',
-      body: JSON.stringify({ cashCollected: cash === '' ? null : Number(cash) }),
-    });
-    if (!res.status) {
-      setError(res.message);
+    const reason = cancelReason.trim();
+    if (!reason) {
+      setError('Cancel reason is required');
       return;
     }
-    setOrder(res.Data);
+    await act('cancel', { reason });
+    setShowCancel(false);
+    setCancelReason('');
+  }
+
+  async function saveCashCorrection(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/cash-collected`, {
+        method: 'PUT',
+        body: JSON.stringify({ cashCollected: cash === '' ? null : Number(cash) }),
+      });
+      if (!res.status) {
+        setError(res.message);
+        return;
+      }
+      setOrder(res.Data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmHandover() {
+    setError(null);
+    setBusy(true);
+    try {
+      const amount =
+        order?.cashCollected ?? order?.expectedCash ?? order?.cash ?? undefined;
+      const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/cash-handover`, {
+        method: 'POST',
+        body: JSON.stringify({ amount: amount ?? null }),
+      });
+      if (!res.status) {
+        setError(res.message);
+        return;
+      }
+      setOrder(res.Data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Handover failed');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!order) {
@@ -52,6 +143,19 @@ export default function OrderDetailPage() {
     .filter(Boolean)
     .join(', ');
 
+  const canCancel =
+    order.status === 'Available' || order.status === 'Accepted' || order.status === 'InProgress';
+  const canRequeue = order.status === 'Available' || order.status === 'Cancelled';
+  const handedOver = !!order.cashHandedOverAt;
+  const showLegacyNote = order.cashSemanticsNote === 'LegacyCashCollected_Ambiguous';
+  const pay = (order.paymentMethod || '').toLowerCase();
+  const isCodLike =
+    pay.includes('cash') ||
+    pay.includes('cod') ||
+    order.expectedCash != null ||
+    order.cashCollected != null ||
+    order.cash != null;
+
   return (
     <div>
       <Link to="/operations" className="small text-muted text-decoration-none">← Live operations</Link>
@@ -61,15 +165,27 @@ export default function OrderDetailPage() {
           <p className="page-sub">{order.storeId} · <span className={`status-pill status-${order.status}`}>{order.status}</span></p>
         </div>
         <div className="d-flex gap-2">
-          {(order.status === 'Available' || order.status === 'Accepted' || order.status === 'InProgress') && (
-            <button className="btn btn-outline-danger" type="button" onClick={() => void act('cancel')}>Cancel</button>
+          {canCancel && (
+            <button
+              className="btn btn-outline-danger"
+              type="button"
+              disabled={busy}
+              onClick={() => { setShowCancel(true); setError(null); }}
+            >
+              Cancel
+            </button>
           )}
-          {(order.status === 'Available' || order.status === 'Cancelled') && (
-            <button className="btn btn-outline-dark" type="button" onClick={() => void act('requeue')}>Requeue</button>
+          {canRequeue && (
+            <button className="btn btn-outline-dark" type="button" disabled={busy} onClick={() => void act('requeue')}>
+              Requeue
+            </button>
           )}
         </div>
       </div>
       {error && <div className="alert alert-danger">{error}</div>}
+      {order.cancelReason && (
+        <div className="alert alert-secondary">Cancel reason: {order.cancelReason}</div>
+      )}
 
       <div className="row g-3">
         <div className="col-lg-7">
@@ -103,14 +219,54 @@ export default function OrderDetailPage() {
         </div>
         <div className="col-lg-5">
           <div className="panel">
-            <h2 className="h6">Payment</h2>
+            <h2 className="h6">Payment &amp; COD</h2>
             <p className="mb-1">Total <strong>{money(order.orderTotal)}</strong></p>
             <p className="mb-1">Method {order.paymentMethod || '—'}</p>
-            <p className="mb-3">Cash on order {order.cash != null ? money(order.cash) : '—'}</p>
-            <form className="d-flex gap-2" onSubmit={saveCash}>
-              <input className="form-control" type="number" step="0.01" placeholder="Cash collected" value={cash} onChange={(e) => setCash(e.target.value)} />
-              <button className="btn btn-maison" type="submit">Save</button>
-            </form>
+            <p className="mb-1">Cash on order {order.cash != null ? money(order.cash) : '—'}</p>
+            <hr className="my-2" />
+            <p className="mb-1">Expected cash <strong>{order.expectedCash != null ? money(order.expectedCash) : '—'}</strong></p>
+            <p className="mb-1">Cash collected <strong>{order.cashCollected != null ? money(order.cashCollected) : '—'}</strong></p>
+            <p className="mb-2">
+              Cash handed over{' '}
+              <strong>
+                {handedOver
+                  ? `${money(order.cashHandedOverAmount)} · ${dt(order.cashHandedOverAt)}`
+                  : '—'}
+              </strong>
+            </p>
+            {showLegacyNote && (
+              <div className="alert alert-warning py-2 small mb-3">
+                Legacy cash note: <code>{order.cashSemanticsNote}</code> — collected vs handed-over may be ambiguous for this order.
+              </div>
+            )}
+            {isCodLike && !handedOver && (
+              <button
+                className="btn btn-maison mb-3"
+                type="button"
+                disabled={busy}
+                onClick={() => void confirmHandover()}
+              >
+                Confirm COD handover
+              </button>
+            )}
+            {isCodLike && (
+              <form className="d-flex flex-column gap-2" onSubmit={saveCashCorrection}>
+                <label className="form-label mb-0 small text-muted">Admin cash correction</label>
+                <div className="d-flex gap-2">
+                  <input
+                    className="form-control"
+                    type="number"
+                    step="0.01"
+                    placeholder="Corrected cash collected"
+                    value={cash}
+                    onChange={(e) => setCash(e.target.value)}
+                  />
+                  <button className="btn btn-outline-dark" type="submit" disabled={busy}>
+                    Save correction
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
           <div className="panel">
             <h2 className="h6">Rider &amp; timestamps</h2>
@@ -122,6 +278,38 @@ export default function OrderDetailPage() {
           </div>
         </div>
       </div>
+
+      {showCancel && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.4)' }}>
+          <form className="modal-dialog" onSubmit={submitCancel}>
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Cancel order</h5>
+                <button type="button" className="btn-close" onClick={() => setShowCancel(false)} />
+              </div>
+              <div className="modal-body">
+                <label className="form-label">Reason (required)</label>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  required
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Why is this order being cancelled?"
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline-secondary" onClick={() => setShowCancel(false)}>
+                  Back
+                </button>
+                <button className="btn btn-danger" type="submit" disabled={busy || !cancelReason.trim()}>
+                  Confirm cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

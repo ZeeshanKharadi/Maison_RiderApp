@@ -119,7 +119,7 @@ export default function SettingsScreen() {
         <View style={styles.group}>
           <SettingsRow
             icon="bell-outline"
-            label="Notifications"
+            label="Notifications (local only)"
             switchValue={settings.pushNotifications}
             onSwitch={v => void updateSettings({ pushNotifications: v })}
           />

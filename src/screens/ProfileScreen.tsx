@@ -37,15 +37,17 @@ import { formatMoney } from '../utils/format';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
-function docTone(status: DocumentStatus): 'success' | 'warning' | 'error' {
+function docTone(status: DocumentStatus): 'success' | 'warning' | 'error' | 'neutral' {
   if (status === 'verified') return 'success';
   if (status === 'pending') return 'warning';
+  if (status === 'unavailable') return 'neutral';
   return 'error';
 }
 
 function docLabel(status: DocumentStatus): string {
   if (status === 'verified') return 'Verified';
   if (status === 'pending') return 'Pending';
+  if (status === 'unavailable') return 'Admin-managed';
   return 'Expired';
 }
 
@@ -212,6 +214,10 @@ export default function ProfileScreen() {
         </View>
 
         <SectionHeader title="Documents" style={styles.sectionGap} />
+        <Text style={styles.docNotice}>
+          Document verification is managed by your administrator and is not
+          available in the app.
+        </Text>
         <View style={styles.docGrid}>
           {documents.map(doc => (
             <View key={doc.id} style={styles.docCard}>
@@ -230,7 +236,11 @@ export default function ProfileScreen() {
                 />
               </View>
               <Text style={styles.docTitle}>{doc.title}</Text>
-              <Text style={styles.docExpiry}>Expires {doc.expiryDate}</Text>
+              <Text style={styles.docExpiry}>
+                {doc.status === 'unavailable'
+                  ? 'Status unavailable'
+                  : `Expires ${doc.expiryDate}`}
+              </Text>
             </View>
           ))}
         </View>
@@ -385,6 +395,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  docNotice: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.xxs,
   },
   docCard: {
     width: '48%',

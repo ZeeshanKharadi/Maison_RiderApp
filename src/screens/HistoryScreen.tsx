@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
-import { useRiderSession } from '../context/RiderSessionContext';
 import HistoryDeliveryCard from '../components/HistoryDeliveryCard';
 import HistoryFilterSheet from '../components/ui/HistoryFilterSheet';
 import {
@@ -28,6 +27,8 @@ import {
   filterAndSortHistory,
   HistoryFilters,
 } from '../data/historyQuery';
+import { mapOrderToHistoryItem } from '../api/mappers/historyMapper';
+import * as ordersRepository from '../repositories/ordersRepository';
 import { formatMoney } from '../utils/format';
 import {
   colors,
@@ -39,25 +40,40 @@ import {
 } from '../theme';
 
 /**
- * Delivery Archive — consumes RiderSessionContext history only.
+ * Delivery Archive — loads from GET /api/Order/History.
  */
 export default function HistoryScreen() {
   const navigation = useNavigation();
-  const { history } = useRiderSession();
 
+  const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
   const [draft, setDraft] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error] = useState(false);
+  const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Brief skeleton while archive hydrates from session
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 350);
-    return () => clearTimeout(t);
+  const loadHistory = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    setErrorMessage(null);
+    const result = await ordersRepository.fetchOrderHistory(1, 50);
+    if (!result.ok) {
+      setError(true);
+      setErrorMessage(result.error.message);
+      setHistory([]);
+      setLoading(false);
+      return;
+    }
+    setHistory(result.data.map(mapOrderToHistoryItem));
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
 
   const visible = useMemo(
     () => filterAndSortHistory(history, query, filters),
@@ -233,9 +249,9 @@ export default function HistoryScreen() {
         <EmptyState
           variant="error"
           title="Couldn't load history"
-          message="Something went wrong loading your archive."
+          message={errorMessage || 'Something went wrong loading your archive.'}
           actionLabel="Try again"
-          onAction={() => setLoading(true)}
+          onAction={() => void loadHistory()}
         />
       </View>
     );

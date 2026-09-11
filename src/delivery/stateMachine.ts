@@ -121,7 +121,7 @@ export const DELIVERY_STATE_CONFIG: Record<DeliveryState, DeliveryStateConfig> =
     COMPLETED: {
       state: 'COMPLETED',
       title: 'Completed',
-      description: 'Trip finished. Earnings have been added to your wallet.',
+      description: 'Trip finished. Settlements are managed by admin.',
       primaryAction: null,
       secondaryAction: null,
       progress: 100,

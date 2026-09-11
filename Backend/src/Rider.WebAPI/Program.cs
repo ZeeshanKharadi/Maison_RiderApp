@@ -1,9 +1,15 @@
-using System.Text;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.OpenApi.Models;
 using Rider.Application.Extensions;
+using Rider.Application.Interfaces;
 using Rider.Infrastructure.Extensions;
+using Rider.Infrastructure.Helpers;
 using Rider.Persistence.Extensions;
+using Rider.WebAPI.Hubs;
 using Rider.WebAPI.Middleware;
+using Rider.WebAPI.Realtime;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,7 +21,6 @@ builder.Host.UseSerilog();
 
 builder.Services.AddControllers(options =>
 {
-    // Optional JSON fields (email, storeId, password) are truly optional on admin DTOs.
     options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
 });
 builder.Services.AddEndpointsApiExplorer();
@@ -32,12 +37,27 @@ builder.Services.AddSwaggerGen(c =>
         Scheme = "bearer",
         BearerFormat = "JWT"
     });
+    c.AddSecurityDefinition("PosApiKey", new OpenApiSecurityScheme
+    {
+        Description =
+            "POS integration key. Value must match PosIntegration:ApiKey in appsettings. Header name: X-POS-Api-Key",
+        Name = "X-POS-Api-Key",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey
+    });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
                 Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        },
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "PosApiKey" }
             },
             Array.Empty<string>()
         }
@@ -48,8 +68,33 @@ builder.Services.AddApplicationLayer();
 builder.Services.AddInfrastructureLayer();
 builder.Services.AddPersistenceLayer(builder.Configuration);
 builder.Services.AddAuthorization();
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IOpsEventPublisher, OpsEventPublisher>();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
+
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173" };
+
 builder.Services.AddCors(options =>
 {
+    options.AddPolicy("Portal", policy =>
+        policy.WithOrigins(corsOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials());
     options.AddPolicy("AllowAll", policy =>
         policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
 });
@@ -65,37 +110,40 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowAll");
+app.UseCors("Portal");
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<AdminOpsHub>("/hubs/admin");
 
-// Ensure demo rider + head-office admin have AES passwords (seed script leaves passwordencrypted NULL).
 using (var scope = app.Services.CreateScope())
 {
     try
     {
         var unitOfWork = scope.ServiceProvider.GetRequiredService<Rider.Application.Interfaces.Repositories.IUnitOfWork>();
-        var crypto = scope.ServiceProvider.GetRequiredService<Rider.Application.Helpers.IPasswordCrypto>();
+        var verifier = scope.ServiceProvider.GetRequiredService<PasswordVerifier>();
 
         async Task SeedPassword(string workerId, string password, string label)
         {
             var user = await unitOfWork.UserRepository.GetByEmployeeIdAsync(workerId);
-            if (user != null && (user.PasswordEncrypted == null || user.PasswordEncrypted.Length == 0))
+            if (user != null
+                && (string.IsNullOrEmpty(user.PasswordHash))
+                && (user.PasswordEncrypted == null || user.PasswordEncrypted.Length == 0))
             {
-                user.PasswordEncrypted = crypto.Encrypt(password);
+                verifier.SetPassword(user, password);
                 user.IsActive = true;
                 user.IsVerified = true;
                 await unitOfWork.UserRepository.UpdateAsync(user);
                 await unitOfWork.SaveChangesAsync();
-                Log.Information("Seeded AES password for {Label} {WorkerId}", label, workerId);
+                Log.Information("Seeded password for {Label} {WorkerId}", label, workerId);
             }
         }
 
         await SeedPassword("RD-9921", "RD-9921", "demo rider");
         await SeedPassword("HO-ADMIN", "Admin@Maison1", "head-office admin");
 
-        var fcm = scope.ServiceProvider.GetService<Rider.Application.Interfaces.IFcmPushService>();
+        var fcm = scope.ServiceProvider.GetService<IFcmPushService>();
         Log.Information("Firebase FCM push enabled: {Enabled}", fcm?.IsConfigured == true);
     }
     catch (Exception ex)
@@ -105,3 +153,5 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+public partial class Program { }

@@ -151,9 +151,7 @@ export function buildTrendPoints(
       return t >= day.getTime() && t < next.getTime();
     }).length;
 
-    // Soft mock baseline when a day has no archived trips
-    const seed = ((day.getDate() * 3 + day.getMonth()) % 6) + 10;
-    const value = count > 0 ? count : seed;
+    const value = count;
 
     let label = '';
     if (range === 7) {

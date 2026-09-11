@@ -18,10 +18,19 @@ namespace Rider.Domain.Entities
         [MaxLength(100)]
         public string? ThirdPartyEmployeeId { get; set; }
 
-        /// <summary>AES ciphertext (IV + payload). Null until password is set.</summary>
+        /// <summary>Legacy AES ciphertext (IV + payload). Migrated to PasswordHash on successful login.</summary>
         public byte[]? PasswordEncrypted { get; set; }
 
+        /// <summary>ASP.NET Identity PasswordHasher hash. Preferred over PasswordEncrypted.</summary>
+        [MaxLength(500)]
+        public string? PasswordHash { get; set; }
+
         public bool IsActive { get; set; } = true;
+
+        /// <summary>Explicit Online preference. Distinct from LastSeenAt connectivity heartbeat.</summary>
+        public bool IsAvailableOnline { get; set; }
+
+        public DateTime? AvailabilityChangedAt { get; set; }
 
         public bool IsVerified { get; set; }
 

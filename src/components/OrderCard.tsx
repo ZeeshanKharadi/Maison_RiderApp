@@ -24,7 +24,7 @@ import {
 type Props = {
   order: AvailableOrder;
   onPress: (order: AvailableOrder) => void;
-  onAccept: (order: AvailableOrder) => void;
+  onAccept: (order: AvailableOrder) => void | Promise<void>;
   onReject: (order: AvailableOrder) => void;
 };
 
@@ -75,8 +75,20 @@ function OrderCardComponent({ order, onPress, onAccept, onReject }: Props) {
         </View>
 
         <View style={styles.metaRow}>
-          <Meta icon="map-marker-distance" text={`${order.distanceMiles} mi`} />
-          <Meta icon="clock-outline" text={`${order.etaMinutes} min`} />
+          <Meta
+            icon="map-marker-distance"
+            text={
+              order.distanceMiles != null
+                ? `${order.distanceMiles} mi`
+                : 'Distance —'
+            }
+          />
+          <Meta
+            icon="clock-outline"
+            text={
+              order.etaMinutes != null ? `${order.etaMinutes} min` : 'ETA —'
+            }
+          />
           <Meta icon="cash" text={formatMoney(order.orderAmount)} />
           <Meta
             icon="credit-card-outline"

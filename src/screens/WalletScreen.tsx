@@ -25,7 +25,6 @@ import {
   SectionHeader,
   StatusPill,
   SummaryCard,
-  confirmDialog,
 } from '../components/ui';
 import { WalletTransaction } from '../delivery/sessionUpdates';
 import {
@@ -33,7 +32,6 @@ import {
   computeMonthlyWalletSummary,
   filterWalletTransactions,
   formatLastUpdated,
-  suggestWithdrawAmount,
   walletTxTypeLabel,
 } from '../data/walletCenter';
 import { formatMoney } from '../utils/format';
@@ -64,7 +62,7 @@ type QuickAction = {
  */
 export default function WalletScreen() {
   const { openMenu } = useSideMenu();
-  const { wallet, stats, withdrawFunds } = useRiderSession();
+  const { wallet, stats } = useRiderSession();
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAllTx, setShowAllTx] = useState(false);
@@ -87,28 +85,11 @@ export default function WalletScreen() {
   const avgFee = useMemo(() => avgDeliveryFee(stats), [stats]);
 
   const handleWithdraw = useCallback(() => {
-    const amount = suggestWithdrawAmount(wallet.balance);
-    if (amount <= 0) {
-      Alert.alert('Withdraw', 'Insufficient available balance.');
-      return;
-    }
-    confirmDialog({
-      title: 'Confirm withdrawal',
-      message: `Withdraw ${formatMoney(amount)} to your linked bank account?`,
-      confirmLabel: 'Withdraw',
-      onConfirm: () => {
-        const ok = withdrawFunds(amount);
-        if (ok) {
-          Alert.alert(
-            'Withdrawal successful',
-            `${formatMoney(amount)} is on the way to your bank. A transaction was added.`,
-          );
-        } else {
-          Alert.alert('Withdrawal failed', 'Could not process this amount.');
-        }
-      },
-    });
-  }, [wallet.balance, withdrawFunds]);
+    Alert.alert(
+      'Withdraw unavailable',
+      'Not available — settlements are managed by admin.',
+    );
+  }, []);
 
   const showInfo = useCallback((title: string, body: string) => {
     Alert.alert(title, body);
@@ -181,8 +162,12 @@ export default function WalletScreen() {
           style={styles.balanceCard}
           accessibilityRole="summary"
           accessibilityLabel={`Available ${formatMoney(wallet.balance)}, pending ${formatMoney(wallet.pending)}`}>
-          <Text style={styles.balanceLabel}>Available balance</Text>
+          <Text style={styles.balanceLabel}>Local display only</Text>
           <Text style={styles.balanceAmount}>{formatMoney(wallet.balance)}</Text>
+          <Text style={styles.balanceHint}>
+            Not a server wallet — settlements are managed by admin. Withdraw is
+            unavailable.
+          </Text>
           <View style={styles.balanceMetaRow}>
             <View style={styles.balanceMeta}>
               <Text style={styles.metaLabel}>Pending</Text>
@@ -457,6 +442,11 @@ const styles = StyleSheet.create({
     ...typography.display,
     color: colors.textOnPrimary,
     marginTop: spacing.xxs,
+  },
+  balanceHint: {
+    ...typography.caption,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: spacing.sm,
   },
   balanceMetaRow: {
     flexDirection: 'row',

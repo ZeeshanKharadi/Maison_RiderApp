@@ -1,4 +1,3 @@
-import { DEMO_EMPLOYEE_ID } from '../constants/app';
 import { API_PATHS } from '../api/config';
 import { apiEnvelope, HttpError } from '../api/httpClient';
 import { saveTokens } from '../api/tokenStorage';
@@ -9,6 +8,7 @@ export type AuthUser = {
   name: string;
   email: string;
   phone?: string;
+  isAvailableOnline?: boolean;
 };
 
 type ApiUserData = {
@@ -17,6 +17,7 @@ type ApiUserData = {
   name?: string;
   email?: string;
   phoneNumber?: string;
+  isAvailableOnline?: boolean;
 };
 
 type LoginUserData = {
@@ -31,6 +32,7 @@ function mapApiUser(dto: ApiUserData | undefined, fallbackId: string): AuthUser 
     name: dto?.name?.trim() || 'Rider',
     email: dto?.email?.trim() || '',
     phone: dto?.phoneNumber?.trim() || '',
+    isAvailableOnline: dto?.isAvailableOnline,
   };
 }
 
@@ -113,28 +115,84 @@ export async function logout(): Promise<void> {
   }
 }
 
+/** POST /api/User/ForgetPassword — body { workerId }. Data may be user GUID. */
 export async function requestOtp(
   employeeId: string,
-): Promise<ApiResult<{ employeeId: string }>> {
-  if (!employeeId.trim()) {
+): Promise<ApiResult<{ employeeId: string; userId?: string }>> {
+  const workerId = employeeId.trim();
+  if (!workerId) {
     return fail('INVALID_INPUT', 'Please enter your Employee ID');
   }
-  return ok({ employeeId: employeeId.trim() });
-}
 
-export async function confirmOtp(
-  _employeeId: string,
-  otp: string,
-): Promise<ApiResult<true>> {
-  if (otp.trim().length >= 4) {
-    return ok(true);
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.forgetPassword, {
+      method: 'POST',
+      body: { workerId },
+    });
+
+    if (!envelope.status) {
+      return fail(
+        'OTP_FAILED',
+        envelope.message || 'Failed to send verification code',
+      );
+    }
+
+    return ok({
+      employeeId: workerId,
+      userId: envelope.Data || undefined,
+    });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return fail(err.code, err.message);
+    }
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach password reset API',
+    );
   }
-  return fail('INVALID_OTP', 'Invalid verification code. Please try again.');
 }
 
+/** POST /api/User/VerifyOtp — Data is resetToken. */
+export async function confirmOtp(
+  userId: string,
+  otp: string,
+): Promise<ApiResult<{ resetToken: string }>> {
+  const uid = userId.trim();
+  const code = otp.trim();
+  if (!uid) {
+    return fail('INVALID_INPUT', 'Session expired. Please start again.');
+  }
+  if (code.length < 4) {
+    return fail('INVALID_OTP', 'Invalid verification code. Please try again.');
+  }
+
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.verifyOtp, {
+      method: 'POST',
+      body: { userid: uid, otp: code },
+    });
+
+    if (!envelope.status || !envelope.Data) {
+      return fail('INVALID_OTP', envelope.message || 'Invalid OTP');
+    }
+
+    return ok({ resetToken: envelope.Data });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return fail(err.code, err.message);
+    }
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to verify OTP',
+    );
+  }
+}
+
+/** POST /api/User/UpdatePassword — requires resetToken (userid alone is not enough). */
 export async function resetPassword(
   employeeId: string,
   newPassword: string,
+  resetToken: string,
 ): Promise<ApiResult<{ employeeId: string }>> {
   if (!newPassword || newPassword.length < 6) {
     return fail(
@@ -142,5 +200,38 @@ export async function resetPassword(
       'Password must be at least 6 characters',
     );
   }
-  return ok({ employeeId: employeeId || DEMO_EMPLOYEE_ID });
+  if (!resetToken?.trim()) {
+    return fail(
+      'MISSING_TOKEN',
+      'Reset session expired. Please verify OTP again.',
+    );
+  }
+
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.updatePassword, {
+      method: 'POST',
+      body: {
+        userid: employeeId.trim() || undefined,
+        password: newPassword,
+        resetToken: resetToken.trim(),
+      },
+    });
+
+    if (!envelope.status) {
+      return fail(
+        'RESET_FAILED',
+        envelope.message || 'Failed to update password',
+      );
+    }
+
+    return ok({ employeeId: employeeId.trim() });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return fail(err.code, err.message);
+    }
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to update password',
+    );
+  }
 }

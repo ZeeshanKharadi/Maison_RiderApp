@@ -24,7 +24,7 @@ export type MainStackParamList = {
   Notifications: undefined;
   Settings: undefined;
   Help: { section?: 'faq' | 'support' | 'report' | 'feedback' | 'privacy' | 'terms' } | undefined;
-  OrderDetails: { orderId: string };
+  OrderDetails: { orderId: string; backendId?: number };
   ActiveDelivery: undefined;
 };
 

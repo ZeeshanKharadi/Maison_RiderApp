@@ -16,6 +16,8 @@ export type AvailableOrder = {
   id: string;
   /** Backend AssignedOrders.Id — used for GET /api/Order/{id} */
   backendId?: number;
+  /** External POS/order id from AssignOrder */
+  externalOrderId?: string;
   /** AssignOrder storeId */
   storeId?: string;
   storeLat?: number | null;
@@ -27,14 +29,20 @@ export type AvailableOrder = {
   dropoffAddress: string;
   customerLat?: number | null;
   customerLng?: number | null;
-  /** Miles as number for sorting/filtering */
-  distanceMiles: number;
-  /** Minutes for sorting */
-  etaMinutes: number;
+  /** Miles when known from routing; null when unavailable */
+  distanceMiles: number | null;
+  /** Minutes when known from routing; null when unavailable */
+  etaMinutes: number | null;
   orderAmount: number;
   deliveryFee: number;
   paymentMethod: PaymentMethod;
   isCod: boolean;
+  expectedCash?: number | null;
+  backendStatus?: string;
+  acceptedAt?: string | null;
+  pickedUpAt?: string | null;
+  completedAt?: string | null;
+  isDirectAssignment?: boolean;
   priority: OrderPriority;
   fragile: boolean;
   express: boolean;
@@ -280,7 +288,10 @@ export function filterAndSortOrders(
         .toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (filters.maxDistance != null && o.distanceMiles > filters.maxDistance) {
+    if (
+      filters.maxDistance != null &&
+      (o.distanceMiles == null || o.distanceMiles > filters.maxDistance)
+    ) {
       return false;
     }
     if (
@@ -299,11 +310,13 @@ export function filterAndSortOrders(
   list = [...list].sort((a, b) => {
     switch (filters.sort) {
       case 'nearest':
-        return a.distanceMiles - b.distanceMiles;
+        return (a.distanceMiles ?? Number.POSITIVE_INFINITY) -
+          (b.distanceMiles ?? Number.POSITIVE_INFINITY);
       case 'highest_fee':
         return b.deliveryFee - a.deliveryFee;
       case 'shortest_eta':
-        return a.etaMinutes - b.etaMinutes;
+        return (a.etaMinutes ?? Number.POSITIVE_INFINITY) -
+          (b.etaMinutes ?? Number.POSITIVE_INFINITY);
       case 'latest':
       default:
         return new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime();

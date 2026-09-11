@@ -14,7 +14,9 @@ namespace Rider.Infrastructure.Extensions
         {
             services.AddScoped<IJwtTokenHandler, JwtTokenHandler>();
             services.AddScoped<IPasswordCrypto, PasswordCrypto>();
+            services.AddScoped<PasswordVerifier>();
             services.AddScoped<IOtpNotifier, OtpNotifier>();
+            services.AddScoped<IOpsEventPublisher, NoOpOpsEventPublisher>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IOrderService, OrderService>();
             services.AddScoped<IAdminService, AdminService>();

@@ -17,6 +17,7 @@ export interface User {
   name: string;
   email: string;
   phone?: string;
+  isAvailableOnline?: boolean;
 }
 
 interface AuthContextType {

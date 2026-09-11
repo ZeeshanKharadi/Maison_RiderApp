@@ -17,10 +17,18 @@ namespace Rider.Infrastructure.Helpers
             _logger = logger;
         }
 
-        public async Task SendOtpAsync(string email, string phoneNumber, string userName, string otpCode)
+        public bool IsConfigured
         {
-            _logger.LogInformation("OTP for {User}: {Otp}", userName ?? email, otpCode);
+            get
+            {
+                var mailServer = _configuration["EmailSettings:MailServer"];
+                var user = _configuration["EmailSettings:User"];
+                return !string.IsNullOrWhiteSpace(mailServer) && !string.IsNullOrWhiteSpace(user);
+            }
+        }
 
+        public async Task<bool> SendOtpAsync(string email, string phoneNumber, string userName, string otpCode)
+        {
             var mailServer = _configuration["EmailSettings:MailServer"];
             var user = _configuration["EmailSettings:User"];
             var password = _configuration["EmailSettings:Password"];
@@ -28,8 +36,8 @@ namespace Rider.Infrastructure.Helpers
 
             if (string.IsNullOrWhiteSpace(mailServer) || string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(email))
             {
-                _logger.LogWarning("Email not configured or recipient missing — OTP logged only.");
-                return;
+                _logger.LogWarning("OTP email not sent: SMTP not configured or recipient missing for user {User}", userName ?? email);
+                return false;
             }
 
             try
@@ -44,18 +52,22 @@ namespace Rider.Infrastructure.Helpers
                 {
                     From = new MailAddress(user),
                     Subject = "Your One-Time Password (OTP) for Verification",
-                    Body = $"Dear User,<br/><br/>Your One-Time Password (OTP) is: <b>{otpCode}</b><br/><br/>This code expires in 5 minutes.",
+                    Body = "Dear User,<br/><br/>Your One-Time Password (OTP) has been generated.<br/><br/>This code expires shortly. If you did not request it, ignore this email.",
                     IsBodyHtml = true
                 };
+                // Include OTP in body for the recipient only — never log the value.
+                mailMessage.Body =
+                    $"Dear User,<br/><br/>Your One-Time Password (OTP) is: <b>{otpCode}</b><br/><br/>This code expires shortly.";
                 mailMessage.To.Add(email);
                 await client.SendMailAsync(mailMessage);
+                _logger.LogInformation("OTP email sent successfully for user {User}", userName ?? email);
+                return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to send OTP email to {Email}", email);
+                _logger.LogError(ex, "Failed to send OTP email to recipient");
+                return false;
             }
-
-            await Task.CompletedTask;
         }
     }
 }

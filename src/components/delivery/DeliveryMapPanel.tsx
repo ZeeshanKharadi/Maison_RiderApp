@@ -110,9 +110,9 @@ export default function DeliveryMapPanel({
         <Text style={styles.overlayTitle} numberOfLines={1}>
           {heading}
         </Text>
-        {target.distanceLabel && target.etaMinutes != null ? (
+        {target.distanceLabel ? (
           <Text style={styles.overlayMeta}>
-            {target.distanceLabel} · ~{target.etaMinutes} min (est.)
+            {target.distanceLabel} straight-line (not a routed ETA)
           </Text>
         ) : (
           <Text style={styles.overlayMeta}>Distance unavailable</Text>

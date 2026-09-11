@@ -9,7 +9,7 @@ type RejectSheetProps = {
   visible: boolean;
   restaurant?: string;
   onClose: () => void;
-  onConfirm: (reason: RejectReason) => void;
+  onConfirm: (reason: RejectReason) => void | Promise<void>;
 };
 
 export function RejectReasonSheet({

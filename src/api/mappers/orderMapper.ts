@@ -1,4 +1,5 @@
 import { AvailableOrder, PaymentMethod, TimelineEvent } from '../../data/orders';
+import { DeliveryState } from '../../delivery/stateMachine';
 
 /** Matches backend AvailableOrderDto / AssignOrderItemDto */
 export type ApiOrderItem = {
@@ -15,6 +16,7 @@ export type ApiAvailableOrder = {
   id: number;
   orderId: string;
   orderNo?: string | null;
+  displayOrderNo?: string | null;
   storeId?: string | null;
   storeLat?: number | null;
   storeLng?: number | null;
@@ -35,10 +37,27 @@ export type ApiAvailableOrder = {
   orderTotal: number;
   paymentMethod?: string | null;
   cash?: number | null;
+  expectedCash?: number | null;
+  cashCollected?: number | null;
+  cashCollectedReason?: string | null;
   orderTime?: string | null;
   batchTime?: string | null;
   createdAt: string;
+  acceptedAt?: string | null;
+  pickedUpAt?: string | null;
+  completedAt?: string | null;
+  isDirectAssignment?: boolean;
   items?: ApiOrderItem[];
+};
+
+export type ApiRiderPerformance = {
+  completedCount: number;
+  avgDurationMinutes?: number | null;
+  onlineHours: number;
+  codCollected: number;
+  codOutstanding: number;
+  from?: string | null;
+  to?: string | null;
 };
 
 const IMAGE_COLORS = [
@@ -61,13 +80,16 @@ function joinParts(...parts: Array<string | null | undefined>): string {
 function mapPaymentMethod(
   paymentMethod?: string | null,
   cash?: number | null,
+  expectedCash?: number | null,
 ): PaymentMethod {
   const raw = (paymentMethod ?? '').trim().toLowerCase();
   if (
     raw === '1' ||
+    raw === 'c' ||
     raw === 'cash' ||
     raw === 'cod' ||
-    (cash != null && cash > 0)
+    (cash != null && cash > 0) ||
+    (expectedCash != null && expectedCash > 0)
   ) {
     return 'cash';
   }
@@ -75,9 +97,24 @@ function mapPaymentMethod(
   return 'card';
 }
 
-function buildTimeline(createdAt: string): TimelineEvent[] {
+function isCodOrder(
+  paymentMethod?: string | null,
+  cash?: number | null,
+  expectedCash?: number | null,
+): boolean {
+  return mapPaymentMethod(paymentMethod, cash, expectedCash) === 'cash';
+}
+
+function buildTimeline(
+  createdAt: string,
+  acceptedAt?: string | null,
+  pickedUpAt?: string | null,
+): TimelineEvent[] {
   const created = new Date(createdAt);
   const safe = Number.isNaN(created.getTime()) ? new Date() : created;
+  const acceptedDone = !!(acceptedAt && !Number.isNaN(new Date(acceptedAt).getTime()));
+  const pickupDone = !!(pickedUpAt && !Number.isNaN(new Date(pickedUpAt).getTime()));
+
   return [
     {
       id: 'created',
@@ -100,14 +137,14 @@ function buildTimeline(createdAt: string): TimelineEvent[] {
     {
       id: 'accepted',
       label: 'Accepted',
-      at: '',
-      done: false,
+      at: acceptedDone ? acceptedAt! : '',
+      done: acceptedDone,
     },
     {
       id: 'pickup',
-      label: 'Pickup pending',
-      at: '',
-      done: false,
+      label: pickupDone ? 'Picked up' : 'Pickup pending',
+      at: pickupDone ? pickedUpAt! : '',
+      done: pickupDone,
     },
   ];
 }
@@ -124,7 +161,12 @@ function colorForId(key: string): string {
  * Maps AssignOrder-backed API rows into the UI AvailableOrder shape.
  */
 export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
-  const displayId = (dto.orderNo || dto.orderId || String(dto.id)).trim();
+  const displayId = (
+    dto.displayOrderNo ||
+    dto.orderNo ||
+    dto.orderId ||
+    String(dto.id)
+  ).trim();
   const customerName = joinParts(dto.firstName, dto.lastName) || 'Customer';
   const dropoffAddress =
     joinParts(
@@ -152,8 +194,18 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
       .join(' | ') || `${Math.max(itemCount, 1)} item(s)`;
 
   const comment = (dto.comment ?? '').trim();
-  const paymentMethod = mapPaymentMethod(dto.paymentMethod, dto.cash);
+  const paymentMethod = mapPaymentMethod(
+    dto.paymentMethod,
+    dto.cash,
+    dto.expectedCash,
+  );
   const storeLabel = dto.storeId ? `Store ${dto.storeId}` : 'Store';
+  const expectedCash =
+    dto.expectedCash != null
+      ? Number(dto.expectedCash)
+      : dto.cash != null
+        ? Number(dto.cash)
+        : null;
 
   return {
     id: displayId,
@@ -167,12 +219,12 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     dropoffAddress,
     customerLat: dto.lat ?? null,
     customerLng: dto.lng ?? null,
-    distanceMiles: 0,
-    etaMinutes: 30,
+    distanceMiles: null,
+    etaMinutes: null,
     orderAmount: Number(dto.orderTotal) || 0,
     deliveryFee: 0,
     paymentMethod,
-    isCod: paymentMethod === 'cash',
+    isCod: isCodOrder(dto.paymentMethod, dto.cash, dto.expectedCash),
     priority: /fast|urgent|asap/i.test(comment) ? 'urgent' : 'normal',
     fragile: false,
     express: /fast|express|asap/i.test(comment),
@@ -181,8 +233,35 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     packageInfo,
     postedAt: dto.createdAt || new Date().toISOString(),
     imageColor: colorForId(displayId),
-    timeline: buildTimeline(dto.createdAt || new Date().toISOString()),
+    timeline: buildTimeline(
+      dto.createdAt || new Date().toISOString(),
+      dto.acceptedAt,
+      dto.pickedUpAt,
+    ),
     /** Internal PK for GET /api/Order/{id} */
     backendId: dto.id,
+    externalOrderId: dto.orderId,
+    expectedCash,
+    backendStatus: dto.status ?? undefined,
+    acceptedAt: dto.acceptedAt ?? undefined,
+    pickedUpAt: dto.pickedUpAt ?? undefined,
+    completedAt: dto.completedAt ?? undefined,
+    isDirectAssignment: dto.isDirectAssignment ?? false,
   };
+}
+
+/** Map backend lifecycle status → local delivery UI state (no fabricated arrivals). */
+export function mapBackendStatusToDeliveryState(
+  status?: string | null,
+): DeliveryState {
+  const raw = (status ?? '').trim().toLowerCase();
+  if (raw === 'completed') return 'COMPLETED';
+  if (raw === 'inprogress' || raw === 'in_progress') return 'ON_THE_WAY';
+  if (raw === 'accepted') return 'ACCEPTED';
+  return 'ACCEPTED';
+}
+
+export function isCancelledBackendStatus(status?: string | null): boolean {
+  const raw = (status ?? '').trim().toLowerCase();
+  return raw === 'cancelled' || raw === 'canceled';
 }

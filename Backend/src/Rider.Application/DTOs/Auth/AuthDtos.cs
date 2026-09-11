@@ -26,6 +26,8 @@ namespace Rider.Application.DTOs.Auth
     {
         public string userid { get; set; }
         public string password { get; set; }
+        /// <summary>Single-use token from VerifyOtp. Required for password reset.</summary>
+        public string resetToken { get; set; }
     }
 
     public class ChangePasswordRequest
@@ -67,6 +69,7 @@ namespace Rider.Application.DTOs.Auth
         public string profilePicture { get; set; }
         public bool isActive { get; set; }
         public bool isVerified { get; set; }
+        public bool isAvailableOnline { get; set; }
         public string storeId { get; set; }
         public List<string> roles { get; set; } = new();
         public List<string> permissions { get; set; } = new();

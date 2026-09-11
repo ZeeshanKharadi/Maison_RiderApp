@@ -65,13 +65,13 @@ namespace Rider.WebAPI.Controllers
         }
 
         [HttpPost("{id:long}/cancel")]
-        public async Task<IActionResult> Cancel(long id)
+        public async Task<IActionResult> Cancel(long id, [FromBody] CancelOrderRequest request)
         {
             var (error, actor) = await this.ResolveAdminActorAsync(_admin);
             if (error != null)
                 return error;
 
-            var result = await _admin.CancelOrderAsync(actor, id);
+            var result = await _admin.CancelOrderAsync(actor, id, request?.reason);
             if (!result.status)
                 return BadRequest(result);
             return Ok(result);
@@ -98,6 +98,19 @@ namespace Rider.WebAPI.Controllers
                 return error;
 
             var result = await _admin.SetCashCollectedAsync(actor, id, request?.cashCollected);
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
+        [HttpPost("{id:long}/cash-handover")]
+        public async Task<IActionResult> CashHandover(long id, [FromBody] CashHandoverRequest request)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null)
+                return error;
+
+            var result = await _admin.ConfirmCashHandoverAsync(actor, id, request?.amount);
             if (!result.status)
                 return BadRequest(result);
             return Ok(result);

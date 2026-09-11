@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Rider.Application.DTOs.Admin;
 using Rider.Application.DTOs.Orders;
 using Rider.Application.Helpers;
@@ -7,6 +9,7 @@ using Rider.Application.Interfaces;
 using Rider.Application.Interfaces.Repositories;
 using Rider.Domain.Common;
 using Rider.Domain.Entities;
+using Rider.Infrastructure.Helpers;
 
 namespace Rider.Infrastructure.Services
 {
@@ -16,11 +19,22 @@ namespace Rider.Infrastructure.Services
 
         private readonly IUnitOfWork _unitOfWork;
         private readonly IPasswordCrypto _passwordCrypto;
+        private readonly PasswordVerifier _passwordVerifier;
+        private readonly IOpsEventPublisher _opsEvents;
+        private readonly ILogger<AdminService> _logger;
 
-        public AdminService(IUnitOfWork unitOfWork, IPasswordCrypto passwordCrypto)
+        public AdminService(
+            IUnitOfWork unitOfWork,
+            IPasswordCrypto passwordCrypto,
+            PasswordVerifier passwordVerifier,
+            IOpsEventPublisher opsEvents,
+            ILogger<AdminService> logger)
         {
             _unitOfWork = unitOfWork;
             _passwordCrypto = passwordCrypto;
+            _passwordVerifier = passwordVerifier;
+            _opsEvents = opsEvents;
+            _logger = logger;
         }
 
         public async Task<AdminActor> ResolveActorAsync(string userId)
@@ -110,8 +124,11 @@ namespace Rider.Infrastructure.Services
                 CreatedAt = DateTime.UtcNow,
                 Position = "Rider",
                 Department = "Delivery",
-                PasswordEncrypted = hasPassword ? _passwordCrypto.Encrypt(request.password) : null
+                PasswordEncrypted = null
             };
+
+            if (hasPassword)
+                _passwordVerifier.SetPassword(user, request.password);
 
             await _unitOfWork.UserRepository.AddAsync(user);
             await _unitOfWork.UserRoleRepository.AddAsync(new UserRole
@@ -181,7 +198,7 @@ namespace Rider.Infrastructure.Services
             if (!CanSeeStore(actor, rider.StoreId))
                 return Fail<string>("Rider not found");
 
-            rider.PasswordEncrypted = _passwordCrypto.Encrypt(request.password);
+            _passwordVerifier.SetPassword(rider, request.password);
             rider.IsVerified = true;
             await _unitOfWork.UserRepository.UpdateAsync(rider);
             await _unitOfWork.SaveChangesAsync();
@@ -226,10 +243,11 @@ namespace Rider.Infrastructure.Services
                 inProgress = orders.Count(o => o.Status == "InProgress"),
                 completedToday = orders.Count(o => o.Status == "Completed" && (o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt) >= today),
                 cancelledToday = orders.Count(o => o.Status == "Cancelled" && (o.UpdatedAt ?? o.CreatedAt) >= today),
-                onlineRiders = riders.Count(r => r.IsActive && r.LastSeenAt.HasValue && r.LastSeenAt.Value >= onlineCutoff),
+                onlineRiders = riders.Count(r => r.IsActive && r.IsAvailableOnline
+                    && r.LastSeenAt.HasValue && r.LastSeenAt.Value >= onlineCutoff),
                 cashToCollectToday = orders
                     .Where(o => (o.CreatedAt >= today) && IsCash(o.PaymentMethod))
-                    .Sum(o => (o.Cash ?? o.OrderTotal) - (o.CashCollected ?? 0))
+                    .Sum(o => CashOutstandingToStore(o))
             };
 
             return Ok(dto, "Live summary");
@@ -258,8 +276,11 @@ namespace Rider.Infrastructure.Services
             return Ok(MapOrderDetail(order), "Success");
         }
 
-        public async Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id)
+        public async Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason)
         {
+            if (string.IsNullOrWhiteSpace(reason))
+                return Fail<AdminOrderDetailDto>("Cancel reason is required");
+
             var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
@@ -267,10 +288,33 @@ namespace Rider.Infrastructure.Services
             if (order.Status is "Completed")
                 return Fail<AdminOrderDetailDto>("Completed orders cannot be cancelled");
 
-            order.Status = "Cancelled";
+            var previous = order.Status;
+            order.Status = OrderStatuses.Cancelled;
+            order.CancelReason = reason.Trim();
             order.UpdatedAt = DateTime.UtcNow;
+
+            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            {
+                AssignedOrderId = id,
+                ActorUserId = actor.UserId,
+                ActorType = "Admin",
+                PreviousStatus = previous,
+                NewStatus = OrderStatuses.Cancelled,
+                Reason = reason.Trim(),
+                CreatedAt = DateTime.UtcNow
+            });
+
             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
             await _unitOfWork.SaveChangesAsync();
+
+            try
+            {
+                await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Cancelled);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Ops publish after cancel failed");
+            }
 
             var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
             return Ok(MapOrderDetail(fresh), "Order cancelled");
@@ -285,14 +329,44 @@ namespace Rider.Infrastructure.Services
             if (order.Status is "Completed" or "InProgress" or "Accepted")
                 return Fail<AdminOrderDetailDto>("Only Available or Cancelled orders can be requeued");
 
-            order.Status = "Available";
+            var previous = order.Status;
+            order.Status = OrderStatuses.Available;
             order.AcceptedByUserId = null;
             order.AcceptedAt = null;
             order.PickedUpAt = null;
             order.CompletedAt = null;
+            order.IsDirectAssignment = false;
+            order.CancelReason = null;
             order.UpdatedAt = DateTime.UtcNow;
+
+            // Clear rejection holds so the order reappears in the pool
+            var rejections = await _unitOfWork.Context.Set<OrderRejection>()
+                .Where(r => r.AssignedOrderId == id)
+                .ToListAsync();
+            _unitOfWork.Context.Set<OrderRejection>().RemoveRange(rejections);
+
+            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            {
+                AssignedOrderId = id,
+                ActorUserId = actor.UserId,
+                ActorType = "Admin",
+                PreviousStatus = previous,
+                NewStatus = OrderStatuses.Available,
+                Reason = "Requeued",
+                CreatedAt = DateTime.UtcNow
+            });
+
             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
             await _unitOfWork.SaveChangesAsync();
+
+            try
+            {
+                await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Available);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Ops publish after requeue failed");
+            }
 
             var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
             return Ok(MapOrderDetail(fresh), "Order requeued as Available");
@@ -305,12 +379,100 @@ namespace Rider.Infrastructure.Services
                 return Fail<AdminOrderDetailDto>("Order not found");
 
             order.CashCollected = cashCollected;
+            order.CashSemanticsNote = CashSemantics.AdminCorrected;
             order.UpdatedAt = DateTime.UtcNow;
+
+            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            {
+                AssignedOrderId = id,
+                ActorUserId = actor.UserId,
+                ActorType = "Admin",
+                PreviousStatus = order.Status,
+                NewStatus = order.Status,
+                Reason = "AdminCashCorrection",
+                CashCollected = cashCollected,
+                CreatedAt = DateTime.UtcNow
+            });
+
             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
             await _unitOfWork.SaveChangesAsync();
 
             var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
             return Ok(MapOrderDetail(fresh), "Cash collected updated");
+        }
+
+        public async Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(AdminActor actor, long id, decimal? amount)
+        {
+            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+            if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                return Fail<AdminOrderDetailDto>("Order not found");
+
+            var handoverAmount = amount ?? order.CashCollected ?? order.ExpectedCash ?? order.Cash;
+            order.CashHandedOverAt = DateTime.UtcNow;
+            order.CashHandedOverByUserId = actor.UserId;
+            order.CashHandedOverAmount = handoverAmount;
+            order.CashSemanticsNote = CashSemantics.HandedOver;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            {
+                AssignedOrderId = id,
+                ActorUserId = actor.UserId,
+                ActorType = "Admin",
+                PreviousStatus = order.Status,
+                NewStatus = order.Status,
+                Reason = "CashHandover",
+                CashCollected = handoverAmount,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+            await _unitOfWork.SaveChangesAsync();
+
+            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+            return Ok(MapOrderDetail(fresh), "Cash handover confirmed");
+        }
+
+        public async Task<ApiResponse<List<AdminNotificationDto>>> ListAdminNotificationsAsync(
+            AdminActor actor, string storeId, int take)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<List<AdminNotificationDto>>(scoped.message);
+
+            if (take < 1) take = 50;
+            if (take > 200) take = 200;
+
+            var q = _unitOfWork.Context.Set<AdminNotification>().AsNoTracking().AsQueryable();
+            if (!string.IsNullOrWhiteSpace(scoped.storeId))
+                q = q.Where(n => n.StoreId == scoped.storeId || n.StoreId == null);
+            else if (!actor.IsHeadOffice)
+                q = q.Where(n => n.StoreId == actor.StoreId);
+
+            var list = await q.OrderByDescending(n => n.CreatedAt).Take(take).ToListAsync();
+            return Ok(list.Select(n => new AdminNotificationDto
+            {
+                id = n.Id,
+                storeId = n.StoreId,
+                category = n.Category,
+                title = n.Title,
+                body = n.Body,
+                orderId = n.OrderId,
+                assignedOrderId = n.AssignedOrderId,
+                isRead = n.IsRead,
+                createdAt = n.CreatedAt
+            }).ToList(), "Notifications");
+        }
+
+        public async Task<ApiResponse<bool>> MarkAdminNotificationReadAsync(AdminActor actor, long id)
+        {
+            var n = await _unitOfWork.Context.Set<AdminNotification>().FirstOrDefaultAsync(x => x.Id == id);
+            if (n == null || !CanSeeStore(actor, n.StoreId))
+                return Fail<bool>("Notification not found");
+
+            n.IsRead = true;
+            await _unitOfWork.SaveChangesAsync();
+            return Ok(true, "Marked read");
         }
 
         public async Task<ApiResponse<PaymentsDashboardDto>> GetPaymentsAsync(
@@ -492,7 +654,7 @@ namespace Rider.Infrastructure.Services
             var other = completed.Where(o => !IsCash(o.PaymentMethod) && !IsCard(o.PaymentMethod)).Sum(o => o.OrderTotal);
 
             var cashToCollect = orders.Where(o => IsCash(o.PaymentMethod) && o.Status != "Cancelled")
-                .Sum(o => o.Cash ?? o.OrderTotal);
+                .Sum(ExpectedCashDue);
             var cashCollected = orders.Sum(o => o.CashCollected ?? 0);
 
             var byDay = completed
@@ -541,7 +703,7 @@ namespace Rider.Infrastructure.Services
                         : done.Count * payout.fixedFee;
 
                     var cashHeld = g.Where(x => IsCash(x.PaymentMethod) && x.Status != "Cancelled")
-                        .Sum(x => (x.Cash ?? x.OrderTotal) - (x.CashCollected ?? 0));
+                        .Sum(CashOutstandingToStore);
 
                     return new RiderSettlementDto
                     {
@@ -603,7 +765,9 @@ namespace Rider.Infrastructure.Services
                 storeName = storeName ?? u.StoreId,
                 isActive = u.IsActive,
                 isVerified = u.IsVerified,
-                isOnline = u.LastSeenAt.HasValue && u.LastSeenAt.Value >= DateTime.UtcNow - OnlineWindow,
+                isOnline = u.IsAvailableOnline
+                    && u.LastSeenAt.HasValue
+                    && u.LastSeenAt.Value >= DateTime.UtcNow - OnlineWindow,
                 lastSeenAt = u.LastSeenAt,
                 createdAt = u.CreatedAt,
                 roles = RolesOf(u)
@@ -627,6 +791,12 @@ namespace Rider.Infrastructure.Services
             paymentMethod = o.PaymentMethod,
             cash = o.Cash,
             cashCollected = o.CashCollected,
+            expectedCash = o.ExpectedCash,
+            cashHandedOverAmount = o.CashHandedOverAmount,
+            cashHandedOverAt = o.CashHandedOverAt,
+            cashSemanticsNote = o.CashSemanticsNote,
+            isDirectAssignment = o.IsDirectAssignment,
+            cancelReason = o.CancelReason,
             acceptedByUserId = o.AcceptedByUserId,
             acceptedByName = o.AcceptedByUser?.UserName,
             acceptedByWorkerId = o.AcceptedByUser?.ThirdPartyEmployeeId,
@@ -656,6 +826,12 @@ namespace Rider.Infrastructure.Services
             dto.paymentMethod = list.paymentMethod;
             dto.cash = list.cash;
             dto.cashCollected = list.cashCollected;
+            dto.expectedCash = list.expectedCash;
+            dto.cashHandedOverAmount = list.cashHandedOverAmount;
+            dto.cashHandedOverAt = list.cashHandedOverAt;
+            dto.cashSemanticsNote = list.cashSemanticsNote;
+            dto.isDirectAssignment = list.isDirectAssignment;
+            dto.cancelReason = list.cancelReason;
             dto.acceptedByUserId = list.acceptedByUserId;
             dto.acceptedByName = list.acceptedByName;
             dto.acceptedByWorkerId = list.acceptedByWorkerId;
@@ -743,6 +919,26 @@ namespace Rider.Infrastructure.Services
             => value.Kind == DateTimeKind.Unspecified
                 ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
                 : value.ToUniversalTime();
+
+        /// <summary>Expected COD due from customer — never OrderTotal for prepaid.</summary>
+        private static decimal ExpectedCashDue(AssignedOrder o)
+            => o.ExpectedCash ?? (IsCash(o.PaymentMethod) ? (o.Cash ?? 0) : 0);
+
+        /// <summary>
+        /// Outstanding to store: customer-collected (or expected) minus handed over to store.
+        /// If not yet collected by rider, uses expected due; once collected, uses CashCollected - HandedOver.
+        /// </summary>
+        private static decimal CashOutstandingToStore(AssignedOrder o)
+        {
+            if (!IsCash(o.PaymentMethod) && !(o.ExpectedCash > 0))
+                return 0;
+
+            var handed = o.CashHandedOverAmount ?? 0;
+            if (o.CashCollected.HasValue)
+                return Math.Max(0, o.CashCollected.Value - handed);
+
+            return Math.Max(0, ExpectedCashDue(o) - handed);
+        }
 
         private static bool IsCash(string method)
         {

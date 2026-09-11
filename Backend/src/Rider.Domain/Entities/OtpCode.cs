@@ -23,6 +23,12 @@ namespace Rider.Domain.Entities
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        /// <summary>PasswordReset | Registration</summary>
+        [MaxLength(40)]
+        public string Purpose { get; set; } = "PasswordReset";
+
+        public int AttemptCount { get; set; }
+
         [ForeignKey(nameof(UserId))]
         public AppUser User { get; set; }
     }

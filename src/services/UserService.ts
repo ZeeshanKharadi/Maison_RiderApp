@@ -25,7 +25,10 @@ export async function sendOtp(employeeId: string): Promise<AuthResult> {
   }
   return {
     status: true,
-    message: 'A verification code has been sent to your registered phone!',
+    message:
+      result.message ||
+      'If this account exists, a verification code has been sent.',
+    // VerifyOtp accepts workerId (employee id); do not rely on returned GUID.
     data: result.data.employeeId,
   };
 }
@@ -38,14 +41,23 @@ export async function verifyOtp(
   if (!result.ok) {
     return { status: false, message: result.error.message };
   }
-  return { status: true, message: 'OTP verified successfully!' };
+  return {
+    status: true,
+    message: 'OTP verified successfully!',
+    data: result.data.resetToken,
+  };
 }
 
 export async function updatePassword(
   employeeId: string,
   newPassword: string,
+  resetToken: string,
 ): Promise<AuthResult> {
-  const result = await authRepository.resetPassword(employeeId, newPassword);
+  const result = await authRepository.resetPassword(
+    employeeId,
+    newPassword,
+    resetToken,
+  );
   if (!result.ok) {
     return { status: false, message: result.error.message };
   }
