@@ -113,6 +113,9 @@ public class AuthResetTests : IDisposable
         });
         Assert.False(missing.status);
         Assert.Contains("resetToken", missing.message);
+
+        var user = await _db.Users.AsNoTracking().FirstAsync(u => u.UserId == _userId);
+        Assert.Equal(1, user.TokenVersion);
     }
 
     [Fact]

@@ -70,6 +70,9 @@ namespace Rider.Domain.Entities
 
         public DateTime? LastSeenAt { get; set; }
 
+        /// <summary>Incremented on password reset to invalidate existing access JWTs.</summary>
+        public int TokenVersion { get; set; }
+
         public ICollection<OtpCode>? Otps { get; set; }
         public ICollection<UserRefreshToken>? RefreshTokens { get; set; }
         public ICollection<UserRole>? UserRoles { get; set; }

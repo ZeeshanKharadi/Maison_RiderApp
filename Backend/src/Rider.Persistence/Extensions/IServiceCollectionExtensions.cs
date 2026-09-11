@@ -69,6 +69,31 @@ namespace Rider.Persistence.Extensions
                         }
                         return Task.CompletedTask;
                     },
+                    OnTokenValidated = async context =>
+                    {
+                        var uidRaw = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                        if (!Guid.TryParse(uidRaw, out var uid))
+                        {
+                            context.Fail("Invalid user");
+                            return;
+                        }
+
+                        var claimVersionRaw = context.Principal?.FindFirst("token_version")?.Value;
+                        if (!int.TryParse(claimVersionRaw, out var claimVersion))
+                            claimVersion = 0;
+
+                        var db = context.HttpContext.RequestServices
+                            .GetRequiredService<Rider.Persistence.Contexts.ApplicationDbContext>();
+                        var current = await db.Users.AsNoTracking()
+                            .Where(u => u.UserId == uid)
+                            .Select(u => new { u.TokenVersion, u.IsActive })
+                            .FirstOrDefaultAsync();
+
+                        if (current == null || !current.IsActive || current.TokenVersion != claimVersion)
+                        {
+                            context.Fail("Token revoked");
+                        }
+                    },
                     OnAuthenticationFailed = ctx =>
                     {
                         Console.WriteLine($"JWT auth failed: {ctx.Exception.Message}");

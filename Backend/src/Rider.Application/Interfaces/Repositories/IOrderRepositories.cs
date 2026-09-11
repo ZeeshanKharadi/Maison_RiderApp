@@ -19,6 +19,14 @@ namespace Rider.Application.Interfaces.Repositories
         Task<List<AssignedOrder>> GetHistoryForRiderAsync(Guid riderUserId, int skip, int take);
         Task<bool> HasRiderRejectedAsync(long assignedOrderId, Guid riderUserId);
         Task<bool> TryAcceptAvailableAsync(long id, Guid riderUserId, DateTime acceptedAtUtc);
+        /// <summary>Atomic InProgress→Completed for one rider. Returns false if lost the race.</summary>
+        Task<bool> TryCompleteInProgressAsync(
+            long id,
+            Guid riderUserId,
+            DateTime completedAtUtc,
+            decimal? cashCollected,
+            string? cashCollectedReason,
+            string? cashSemanticsNote);
     }
 
     public interface IAssignedOrderItemRepository : IRepository<AssignedOrderItem>

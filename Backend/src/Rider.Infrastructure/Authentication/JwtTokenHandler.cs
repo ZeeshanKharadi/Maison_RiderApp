@@ -34,6 +34,7 @@ namespace Rider.Infrastructure.Authentication
                 new Claim(ClaimTypes.NameIdentifier, user.id),
                 new Claim("employeeId", user.employeeId ?? ""),
                 new Claim("storeId", user.storeId ?? ""),
+                new Claim("token_version", user.tokenVersion.ToString()),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 

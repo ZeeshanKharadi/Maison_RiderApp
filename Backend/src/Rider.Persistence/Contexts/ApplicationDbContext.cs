@@ -44,6 +44,7 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.CostCenter).HasColumnName("costCenter");
                 entity.Property(e => e.StoreId).HasMaxLength(50);
                 entity.Property(e => e.IsAvailableOnline).HasDefaultValue(false);
+                entity.Property(e => e.TokenVersion).HasDefaultValue(0);
             });
 
             modelBuilder.Entity<OtpCode>(entity =>
@@ -151,6 +152,10 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.CashSemanticsNote).HasMaxLength(100);
                 entity.Property(e => e.CancelReason).HasMaxLength(500);
                 entity.Property(e => e.IsDirectAssignment).HasDefaultValue(false);
+                entity.Property(e => e.HandoverRequestId).HasMaxLength(100);
+                entity.HasIndex(e => e.HandoverRequestId)
+                    .IsUnique()
+                    .HasFilter("[HandoverRequestId] IS NOT NULL");
                 entity.Property(e => e.OrderTime).HasMaxLength(50);
                 entity.Property(e => e.Status).HasMaxLength(30).HasDefaultValue("Available");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
