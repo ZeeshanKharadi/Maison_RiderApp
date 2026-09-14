@@ -33,7 +33,6 @@ import {
   RiderProfile,
 } from '../data/account';
 import { APP_VERSION } from '../constants/app';
-import { formatMoney } from '../utils/format';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
@@ -59,7 +58,7 @@ type EditDraft = Pick<
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const { openMenu } = useSideMenu();
-  const { isOnline, activeJob, wallet, stats } = useRiderSession();
+  const { isOnline, activeJob, stats } = useRiderSession();
   const { profile, documents, updateProfile } = useAccount();
 
   const [editOpen, setEditOpen] = useState(false);
@@ -206,8 +205,8 @@ export default function ProfileScreen() {
             style={styles.stat}
           />
           <StatCard
-            label="Earnings"
-            value={formatMoney(wallet.lifetimeEarnings, true)}
+            label="Finances"
+            value="Wallet tab"
             icon="cash"
             style={styles.stat}
           />

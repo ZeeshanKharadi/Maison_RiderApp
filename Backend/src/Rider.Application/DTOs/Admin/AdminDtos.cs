@@ -131,7 +131,17 @@ namespace Rider.Application.DTOs.Admin
 
     public class CashHandoverRequest
     {
+        /// <summary>
+        /// Incremental amount to hand over this request (added to CashHandedOverAmount).
+        /// Null = hand over remaining collected balance.
+        /// </summary>
         public decimal? amount { get; set; }
+
+        /// <summary>Idempotency key — retries with same key return prior result.</summary>
+        public string? requestId { get; set; }
+
+        /// <summary>Required when correcting a prior handover total downward/upward via admin override path.</summary>
+        public string? reason { get; set; }
     }
 
     public class AdminNotificationDto

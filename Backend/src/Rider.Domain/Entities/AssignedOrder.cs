@@ -107,6 +107,10 @@ namespace Rider.Domain.Entities
 
         public bool IsDirectAssignment { get; set; }
 
+        /// <summary>Idempotency key for the last successful cash handover request.</summary>
+        [MaxLength(100)]
+        public string? HandoverRequestId { get; set; }
+
         [Timestamp]
         public byte[]? RowVersion { get; set; }
 

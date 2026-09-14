@@ -117,11 +117,13 @@ export default function OrderDetailPage() {
     setError(null);
     setBusy(true);
     try {
-      const amount =
-        order?.cashCollected ?? order?.expectedCash ?? order?.cash ?? undefined;
+      const requestId =
+        globalThis.crypto?.randomUUID?.() ??
+        `ho-${id}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      // Omit amount → server hands over remaining collected balance.
       const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/cash-handover`, {
         method: 'POST',
-        body: JSON.stringify({ amount: amount ?? null }),
+        body: JSON.stringify({ requestId }),
       });
       if (!res.status) {
         setError(res.message);

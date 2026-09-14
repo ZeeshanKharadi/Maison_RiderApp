@@ -429,6 +429,14 @@ namespace Rider.Infrastructure.Services
                 {
                     if (prior.AssignedOrderId == id && prior.NewStatus == next && prior.ActorUserId == riderUserId)
                     {
+                        if (next == OrderStatuses.Completed && prior.CashCollected != request.cashCollected)
+                        {
+                            return new ApiResponse<AvailableOrderDto>(
+                                false,
+                                "Conflicting cashCollected for the same requestId",
+                                null);
+                        }
+
                         var existing = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
                         return new ApiResponse<AvailableOrderDto>(true, "Status updated", MapOrder(existing!));
                     }
@@ -498,6 +506,28 @@ namespace Rider.Infrastructure.Services
                             return new ApiResponse<AvailableOrderDto>(false, "Order is not available for your store", null!);
                         }
 
+                        // Explicit Online preference required for new accepts (distinct from LastSeen heartbeat).
+                        if (!rider.IsAvailableOnline)
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(false, "Go online before accepting orders", null!);
+                        }
+
+                        var heartbeatMinutes = int.TryParse(
+                            _configuration["Availability:HeartbeatMinutes"], out var hb) ? hb : 15;
+                        var staleBefore = DateTime.UtcNow.AddMinutes(-heartbeatMinutes);
+                        if (!rider.LastSeenAt.HasValue || rider.LastSeenAt.Value < staleBefore)
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(
+                                false,
+                                "Session stale — refresh the app and go online again",
+                                null!);
+                        }
+
+                        // Serialize rider-wide active-job limit across concurrent accepts.
+                        await LockRiderRowAsync(riderUserId);
+
                         var active = await _unitOfWork.AssignedOrderRepository.CountActiveForRiderAsync(riderUserId);
                         if (active >= OrderStatuses.MaxActiveDeliveries)
                         {
@@ -554,6 +584,9 @@ namespace Rider.Infrastructure.Services
                         }
 
                         var expected = order.ExpectedCash ?? (IsCashMethod(order.PaymentMethod) ? order.Cash : null);
+                        decimal? cashCollected = null;
+                        string? cashReason = null;
+                        string? cashSemantics = null;
                         if (RequiresCashOnComplete(order, expected))
                         {
                             if (!request.cashCollected.HasValue)
@@ -567,21 +600,34 @@ namespace Rider.Infrastructure.Services
                                 await tx.RollbackAsync();
                                 return new ApiResponse<AvailableOrderDto>(false, "cashCollectedReason is required when amount differs from expected", null);
                             }
-                            order.CashCollected = request.cashCollected;
-                            order.CashCollectedReason = request.cashCollectedReason;
-                            order.CashSemanticsNote = CashSemantics.RiderCollected;
-                            // Do NOT set CashHandedOver*
+                            cashCollected = request.cashCollected;
+                            cashReason = request.cashCollectedReason;
+                            cashSemantics = CashSemantics.RiderCollected;
                         }
                         else if (request.cashCollected.HasValue)
                         {
-                            order.CashCollected = request.cashCollected;
-                            order.CashCollectedReason = request.cashCollectedReason;
-                            order.CashSemanticsNote = CashSemantics.RiderCollected;
+                            cashCollected = request.cashCollected;
+                            cashReason = request.cashCollectedReason;
+                            cashSemantics = CashSemantics.RiderCollected;
                         }
 
-                        order.Status = OrderStatuses.Completed;
-                        order.CompletedAt ??= now;
-                        order.UpdatedAt = now;
+                        // Detach then conditional UPDATE so concurrent completions yield one financial effect.
+                        _unitOfWork.Context.Entry(order).State = EntityState.Detached;
+                        var completed = await _unitOfWork.AssignedOrderRepository.TryCompleteInProgressAsync(
+                            id, riderUserId, now, cashCollected, cashReason, cashSemantics);
+                        if (!completed)
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(false, "Order was already completed or cancelled", null!);
+                        }
+
+                        _unitOfWork.Context.ChangeTracker.Clear();
+                        order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                        if (order == null)
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(false, "Order not found", null!);
+                        }
                         break;
                     }
                 }
@@ -996,5 +1042,22 @@ namespace Rider.Infrastructure.Services
                 })
                 .ToList()
         };
+
+        /// <summary>
+        /// Take an exclusive lock on the rider Users row so concurrent accepts serialize
+        /// the active-job count check. No-ops gracefully on providers without UPDLOCK.
+        /// </summary>
+        private async Task LockRiderRowAsync(Guid riderUserId)
+        {
+            try
+            {
+                await _unitOfWork.Context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT 1 FROM Users WITH (UPDLOCK, ROWLOCK) WHERE UserId = {riderUserId}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Rider row lock unavailable; continuing without UPDLOCK");
+            }
+        }
     }
 }

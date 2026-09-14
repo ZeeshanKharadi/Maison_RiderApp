@@ -110,7 +110,7 @@ namespace Rider.WebAPI.Controllers
             if (error != null)
                 return error;
 
-            var result = await _admin.ConfirmCashHandoverAsync(actor, id, request?.amount);
+            var result = await _admin.ConfirmCashHandoverAsync(actor, id, request ?? new CashHandoverRequest());
             if (!result.status)
                 return BadRequest(result);
             return Ok(result);

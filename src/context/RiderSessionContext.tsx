@@ -273,9 +273,31 @@ export function RiderSessionProvider({
     }
   }, []);
 
+  // Clear rider-scoped UI state on logout / account switch
+  useEffect(() => {
+    if (user) return;
+    setIsOnline(false);
+    setShiftStartedAt(null);
+    setActiveJobs([]);
+    setSelectedJobId(null);
+    setHistory([]);
+    setWallet(INITIAL_WALLET);
+    setStats(INITIAL_SESSION_STATS);
+    setLifecyclePending(false);
+    setLastLifecycleError(null);
+  }, [user]);
+
   // Hydrate online flag + active jobs once auth is ready
   useEffect(() => {
     if (authLoading || !user) return;
+    // Reset session caches when switching accounts so prior rider data cannot leak.
+    setActiveJobs([]);
+    setSelectedJobId(null);
+    setHistory([]);
+    setWallet(INITIAL_WALLET);
+    setStats(INITIAL_SESSION_STATS);
+    setLastLifecycleError(null);
+
     let cancelled = false;
     (async () => {
       const me = await authRepository.fetchCurrentUser();
@@ -284,6 +306,8 @@ export function RiderSessionProvider({
         setIsOnline(me.data.isAvailableOnline);
         if (me.data.isAvailableOnline) {
           setShiftStartedAt(prev => prev ?? new Date());
+        } else {
+          setShiftStartedAt(null);
         }
       }
       await restoreActiveDeliveries();

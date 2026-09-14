@@ -401,36 +401,108 @@ namespace Rider.Infrastructure.Services
             return Ok(MapOrderDetail(fresh), "Cash collected updated");
         }
 
-        public async Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(AdminActor actor, long id, decimal? amount)
+        public async Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(
+            AdminActor actor, long id, CashHandoverRequest request)
         {
-            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
-            if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
-                return Fail<AdminOrderDetailDto>("Order not found");
+            request ??= new CashHandoverRequest();
+            var requestId = string.IsNullOrWhiteSpace(request.requestId) ? null : request.requestId.Trim();
 
-            var handoverAmount = amount ?? order.CashCollected ?? order.ExpectedCash ?? order.Cash;
-            order.CashHandedOverAt = DateTime.UtcNow;
-            order.CashHandedOverByUserId = actor.UserId;
-            order.CashHandedOverAmount = handoverAmount;
-            order.CashSemanticsNote = CashSemantics.HandedOver;
-            order.UpdatedAt = DateTime.UtcNow;
-
-            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
             {
-                AssignedOrderId = id,
-                ActorUserId = actor.UserId,
-                ActorType = "Admin",
-                PreviousStatus = order.Status,
-                NewStatus = order.Status,
-                Reason = "CashHandover",
-                CashCollected = handoverAmount,
-                CreatedAt = DateTime.UtcNow
-            });
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
 
-            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
-            await _unitOfWork.SaveChangesAsync();
+                if (!string.IsNullOrEmpty(requestId)
+                    && string.Equals(order.HandoverRequestId, requestId, StringComparison.Ordinal))
+                {
+                    await tx.CommitAsync();
+                    var same = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                    return Ok(MapOrderDetail(same), "Cash handover confirmed");
+                }
 
-            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
-            return Ok(MapOrderDetail(fresh), "Cash handover confirmed");
+                if (string.Equals(order.CashSemanticsNote, CashSemantics.LegacyAmbiguous, StringComparison.OrdinalIgnoreCase)
+                    && !order.CashCollected.HasValue)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Legacy cash record must be reconciled before handover");
+                }
+
+                if (!order.CashCollected.HasValue || order.CashCollected.Value <= 0)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("No collected cash available to hand over");
+                }
+
+                var alreadyHanded = order.CashHandedOverAmount ?? 0;
+                var remaining = order.CashCollected.Value - alreadyHanded;
+                if (remaining <= 0)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Collected cash has already been fully handed over");
+                }
+
+                decimal increment;
+                if (request.amount == null)
+                {
+                    increment = remaining;
+                }
+                else
+                {
+                    if (request.amount.Value <= 0)
+                    {
+                        await tx.RollbackAsync();
+                        return Fail<AdminOrderDetailDto>("Handover amount must be positive");
+                    }
+                    if (request.amount.Value > remaining)
+                    {
+                        await tx.RollbackAsync();
+                        return Fail<AdminOrderDetailDto>(
+                            $"Handover amount exceeds remaining collectible balance ({remaining:0.00})");
+                    }
+                    increment = request.amount.Value;
+                }
+
+                var previousHanded = alreadyHanded;
+                order.CashHandedOverAmount = alreadyHanded + increment;
+                order.CashHandedOverAt = DateTime.UtcNow;
+                order.CashHandedOverByUserId = actor.UserId;
+                order.CashSemanticsNote = CashSemantics.HandedOver;
+                order.UpdatedAt = DateTime.UtcNow;
+                if (!string.IsNullOrEmpty(requestId))
+                    order.HandoverRequestId = requestId;
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = order.Status,
+                    NewStatus = order.Status,
+                    Reason = string.IsNullOrWhiteSpace(request.reason)
+                        ? $"CashHandover +{increment:0.00} (was {previousHanded:0.00})"
+                        : request.reason.Trim(),
+                    RequestId = requestId,
+                    CashCollected = increment,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Cash handover confirmed");
+            }
+            catch (Exception)
+            {
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to confirm cash handover");
+            }
         }
 
         public async Task<ApiResponse<List<AdminNotificationDto>>> ListAdminNotificationsAsync(
@@ -925,19 +997,28 @@ namespace Rider.Infrastructure.Services
             => o.ExpectedCash ?? (IsCash(o.PaymentMethod) ? (o.Cash ?? 0) : 0);
 
         /// <summary>
-        /// Outstanding to store: customer-collected (or expected) minus handed over to store.
-        /// If not yet collected by rider, uses expected due; once collected, uses CashCollected - HandedOver.
+        /// Actual cash held by rider for the store: collected minus handed over.
+        /// Does NOT treat expected-but-uncollected COD as cash held (that is a receivable, not held cash).
+        /// Legacy ambiguous rows are excluded from definitive balances.
         /// </summary>
         private static decimal CashOutstandingToStore(AssignedOrder o)
         {
-            if (!IsCash(o.PaymentMethod) && !(o.ExpectedCash > 0))
+            if (string.Equals(o.CashSemanticsNote, CashSemantics.LegacyAmbiguous, StringComparison.OrdinalIgnoreCase))
+                return 0;
+
+            if (!o.CashCollected.HasValue)
                 return 0;
 
             var handed = o.CashHandedOverAmount ?? 0;
-            if (o.CashCollected.HasValue)
-                return Math.Max(0, o.CashCollected.Value - handed);
+            return Math.Max(0, o.CashCollected.Value - handed);
+        }
 
-            return Math.Max(0, ExpectedCashDue(o) - handed);
+        /// <summary>Expected COD due from customer — never OrderTotal for prepaid. Reporting only.</summary>
+        private static decimal ExpectedCashReceivable(AssignedOrder o)
+        {
+            if (o.CashCollected.HasValue)
+                return 0;
+            return ExpectedCashDue(o);
         }
 
         private static bool IsCash(string method)

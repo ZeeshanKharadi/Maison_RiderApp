@@ -19,6 +19,7 @@ namespace Rider.Infrastructure.Extensions
             services.AddScoped<IOpsEventPublisher, NoOpOpsEventPublisher>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IOrderService, OrderService>();
+            services.AddScoped<IRiderFinanceService, RiderFinanceService>();
             services.AddScoped<IAdminService, AdminService>();
             services.AddScoped<IFcmPushService, FcmPushService>();
             services.AddScoped<IUserDeviceTokenService, UserDeviceTokenService>();

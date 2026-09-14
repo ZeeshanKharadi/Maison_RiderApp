@@ -70,6 +70,7 @@ namespace Rider.Application.DTOs.Auth
         public bool isActive { get; set; }
         public bool isVerified { get; set; }
         public bool isAvailableOnline { get; set; }
+        public int tokenVersion { get; set; }
         public string storeId { get; set; }
         public List<string> roles { get; set; } = new();
         public List<string> permissions { get; set; } = new();

@@ -29,8 +29,28 @@ public class OrderLifecycleTests : IDisposable
         _db.Database.EnsureCreated();
 
         _db.Users.AddRange(
-            new AppUser { UserId = _riderA, ThirdPartyEmployeeId = "RD-A", UserName = "A", IsActive = true, IsVerified = true, StoreId = "S1" },
-            new AppUser { UserId = _riderB, ThirdPartyEmployeeId = "RD-B", UserName = "B", IsActive = true, IsVerified = true, StoreId = "S1" });
+            new AppUser
+            {
+                UserId = _riderA,
+                ThirdPartyEmployeeId = "RD-A",
+                UserName = "A",
+                IsActive = true,
+                IsVerified = true,
+                StoreId = "S1",
+                IsAvailableOnline = true,
+                LastSeenAt = DateTime.UtcNow
+            },
+            new AppUser
+            {
+                UserId = _riderB,
+                ThirdPartyEmployeeId = "RD-B",
+                UserName = "B",
+                IsActive = true,
+                IsVerified = true,
+                StoreId = "S1",
+                IsAvailableOnline = true,
+                LastSeenAt = DateTime.UtcNow
+            });
         _db.Stores.Add(new Store { StoreId = "S1", Name = "Store 1", IsActive = true });
         _db.SaveChanges();
 
@@ -178,6 +198,51 @@ public class OrderLifecycleTests : IDisposable
         });
         Assert.False(fail.status);
         Assert.Contains("cashCollectedReason", fail.message);
+    }
+
+    [Fact]
+    public async Task Same_requestId_different_cash_is_conflict()
+    {
+        var id = await SeedAvailableOrderAsync();
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted });
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.InProgress });
+
+        var first = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest
+        {
+            status = OrderStatuses.Completed,
+            cashCollected = 100,
+            requestId = "req-conflict"
+        });
+        Assert.True(first.status, first.message);
+
+        var conflict = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest
+        {
+            status = OrderStatuses.Completed,
+            cashCollected = 80,
+            requestId = "req-conflict"
+        });
+        Assert.False(conflict.status);
+        Assert.Contains("Conflicting", conflict.message);
+
+        var order = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(100m, order.CashCollected);
+    }
+
+    [Fact]
+    public async Task Offline_rider_cannot_accept()
+    {
+        var rider = await _db.Users.FirstAsync(u => u.UserId == _riderA);
+        rider.IsAvailableOnline = false;
+        await _db.SaveChangesAsync();
+
+        var id = await SeedAvailableOrderAsync("OFF1");
+        var fail = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted });
+        Assert.False(fail.status);
+        Assert.Contains("online", fail.message, StringComparison.OrdinalIgnoreCase);
+
+        var order = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(OrderStatuses.Available, order.Status);
+        Assert.Null(order.AcceptedByUserId);
     }
 
     private sealed class NoOpRiderNotifications : IRiderNotificationService

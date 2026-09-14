@@ -39,7 +39,7 @@ type MenuItem = {
 export default function SideMenu() {
   const { isOpen, closeMenu } = useSideMenu();
   const { user, logout } = useAuth();
-  const { isOnline, activeJob, wallet } = useRiderSession();
+  const { isOnline, activeJob } = useRiderSession();
   const { profile, unreadCount } = useAccount();
   const slideAnim = React.useRef(new Animated.Value(-DRAWER_WIDTH)).current;
 
@@ -136,8 +136,11 @@ export default function SideMenu() {
               />
             </View>
             <View style={styles.balanceCard}>
-              <Text style={styles.balanceLabel}>Available balance</Text>
-              <Text style={styles.balanceValue}>{formatMoney(wallet.balance)}</Text>
+              <Text style={styles.balanceLabel}>Finances</Text>
+              <Text style={styles.balanceValue}>Open Wallet tab</Text>
+              <Text style={styles.balanceHint}>
+                Cash held and compensation load from the server
+              </Text>
             </View>
           </View>
 
@@ -233,6 +236,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: colors.primaryDark,
     marginTop: 2,
+  },
+  balanceHint: {
+    ...typography.caption,
+    color: colors.primaryDark,
+    marginTop: spacing.xs,
+    opacity: 0.85,
   },
   menuSection: { flex: 1 },
   menuContent: {

@@ -20,7 +20,7 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason);
         Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id);
         Task<ApiResponse<AdminOrderDetailDto>> SetCashCollectedAsync(AdminActor actor, long id, decimal? cashCollected);
-        Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(AdminActor actor, long id, decimal? amount);
+        Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(AdminActor actor, long id, CashHandoverRequest request);
         Task<ApiResponse<List<AdminNotificationDto>>> ListAdminNotificationsAsync(AdminActor actor, string storeId, int take);
         Task<ApiResponse<bool>> MarkAdminNotificationReadAsync(AdminActor actor, long id);
 

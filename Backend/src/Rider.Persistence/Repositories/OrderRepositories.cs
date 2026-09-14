@@ -177,6 +177,48 @@ namespace Rider.Persistence.Repositories
             }
         }
 
+        public async Task<bool> TryCompleteInProgressAsync(
+            long id,
+            Guid riderUserId,
+            DateTime completedAtUtc,
+            decimal? cashCollected,
+            string? cashCollectedReason,
+            string? cashSemanticsNote)
+        {
+            try
+            {
+                var rows = await _entities
+                    .Where(o => o.Id == id
+                        && o.Status == OrderStatuses.InProgress
+                        && o.AcceptedByUserId == riderUserId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(o => o.Status, OrderStatuses.Completed)
+                        .SetProperty(o => o.CompletedAt, completedAtUtc)
+                        .SetProperty(o => o.UpdatedAt, completedAtUtc)
+                        .SetProperty(o => o.CashCollected, cashCollected)
+                        .SetProperty(o => o.CashCollectedReason, cashCollectedReason)
+                        .SetProperty(o => o.CashSemanticsNote, cashSemanticsNote));
+                return rows == 1;
+            }
+            catch (InvalidOperationException)
+            {
+                var order = await _entities.FirstOrDefaultAsync(o => o.Id == id);
+                if (order == null
+                    || order.Status != OrderStatuses.InProgress
+                    || order.AcceptedByUserId != riderUserId)
+                    return false;
+
+                order.Status = OrderStatuses.Completed;
+                order.CompletedAt = completedAtUtc;
+                order.UpdatedAt = completedAtUtc;
+                order.CashCollected = cashCollected;
+                order.CashCollectedReason = cashCollectedReason;
+                order.CashSemanticsNote = cashSemanticsNote;
+                await _appContext.SaveChangesAsync();
+                return true;
+            }
+        }
+
         public async Task<List<AssignedOrder>> GetHistoryForRiderAsync(Guid riderUserId, int skip, int take)
             => await _entities
                 .AsNoTracking()

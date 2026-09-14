@@ -1,602 +1,314 @@
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   FlatList,
   ListRenderItem,
-  LayoutAnimation,
-  Platform,
-  Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
-  TouchableOpacity,
-  UIManager,
   View,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useFocusEffect } from '@react-navigation/native';
+import { AppState, AppStateStatus } from 'react-native';
 import { useSideMenu } from '../context/SideMenuContext';
-import { useRiderSession } from '../context/RiderSessionContext';
-import { navigate } from '../navigation/RootNavigation';
-import { APP_NAME_SHORT } from '../constants/app';
+import { useAuth } from '../services/AuthContext';
 import {
-  Badge,
   AppHeader,
   EmptyState,
-  SearchBar,
   SectionHeader,
-  StatusPill,
-  SummaryCard,
 } from '../components/ui';
-import { WalletTransaction } from '../delivery/sessionUpdates';
 import {
-  avgDeliveryFee,
-  computeMonthlyWalletSummary,
-  filterWalletTransactions,
-  formatLastUpdated,
-  walletTxTypeLabel,
-} from '../data/walletCenter';
+  fetchFinancePage,
+  RiderFinanceSummary,
+  RiderFinanceTransaction,
+} from '../repositories/financeRepository';
 import { formatMoney } from '../utils/format';
-import {
-  colors,
-  elevation,
-  radius,
-  spacing,
-  TOUCH_TARGET,
-  typography,
-} from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 
-if (
-  Platform.OS === 'android' &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
+type LoadState = 'loading' | 'ready' | 'empty' | 'error' | 'unavailable';
+
+function txLabel(type: string): string {
+  switch (type) {
+    case 'cash_collected':
+      return 'Cash collected';
+    case 'cash_handover':
+      return 'Handed to store';
+    case 'legacy_ambiguous':
+      return 'Legacy (unreconciled)';
+    default:
+      return type;
+  }
 }
 
-type QuickAction = {
-  icon: string;
-  label: string;
-  onPress: () => void;
-};
-
 /**
- * Rider Earnings Center — single source of truth: RiderSessionContext.wallet + stats.
+ * Read-only rider financial summary from the server.
+ * COD cash held ≠ earnings. Compensation is calculated estimate only.
  */
 export default function WalletScreen() {
   const { openMenu } = useSideMenu();
-  const { wallet, stats } = useRiderSession();
-  const [query, setQuery] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [showAllTx, setShowAllTx] = useState(false);
-
-  const transactions = useMemo(
-    () => filterWalletTransactions(wallet.transactions, query),
-    [wallet.transactions, query],
+  const { user } = useAuth();
+  const [summary, setSummary] = useState<RiderFinanceSummary | null>(null);
+  const [transactions, setTransactions] = useState<RiderFinanceTransaction[]>(
+    [],
   );
+  const [state, setState] = useState<LoadState>('loading');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const visibleTx = useMemo(
-    () => (showAllTx ? transactions : transactions.slice(0, 8)),
-    [transactions, showAllTx],
-  );
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setState('loading');
+    setErrorMessage(null);
 
-  const monthly = useMemo(
-    () => computeMonthlyWalletSummary(wallet, stats),
-    [wallet, stats],
-  );
+    const result = await fetchFinancePage({ page: 1, pageSize: 50 });
+    if (!result.ok) {
+      setState('error');
+      setErrorMessage(result.error.message);
+      setSummary(null);
+      setTransactions([]);
+      setRefreshing(false);
+      return;
+    }
 
-  const avgFee = useMemo(() => avgDeliveryFee(stats), [stats]);
-
-  const handleWithdraw = useCallback(() => {
-    Alert.alert(
-      'Withdraw unavailable',
-      'Not available — settlements are managed by admin.',
+    setSummary(result.data.summary);
+    setTransactions(result.data.transactions);
+    setState(
+      result.data.transactions.length === 0 &&
+        result.data.summary.cashCollectedTotal === 0
+        ? 'empty'
+        : 'ready',
     );
+    setRefreshing(false);
   }, []);
 
-  const showInfo = useCallback((title: string, body: string) => {
-    Alert.alert(title, body);
-  }, []);
-
-  const quickActions: QuickAction[] = useMemo(
-    () => [
-      {
-        icon: 'bank-transfer-out',
-        label: 'Withdraw',
-        onPress: handleWithdraw,
-      },
-      {
-        icon: 'history',
-        label: 'History',
-        onPress: () => setShowAllTx(true),
-      },
-      {
-        icon: 'gift-outline',
-        label: 'Bonuses',
-        onPress: () =>
-          showInfo(
-            'Bonuses',
-            `Lifetime bonuses: ${formatMoney(wallet.bonusTotal)}. See the Bonuses section below.`,
-          ),
-      },
-      {
-        icon: 'credit-card-outline',
-        label: 'Payment',
-        onPress: () =>
-          showInfo(
-            'Payment details',
-            'Bank · ****4412 · Maison Delivery Payouts.',
-          ),
-      },
-      {
-        icon: 'file-document-outline',
-        label: 'Statements',
-        onPress: () =>
-          showInfo(
-            'Statements',
-            'Monthly PDF statements will appear here once available for your account.',
-          ),
-      },
-    ],
-    [handleWithdraw, showInfo, wallet.bonusTotal],
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load, user?.id]),
   );
 
-  const toggleExpand = useCallback((id: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedId(prev => (prev === id ? null : id));
-  }, []);
+  useEffect(() => {
+    const onChange = (next: AppStateStatus) => {
+      if (next === 'active') void load(true);
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [load]);
 
-  const renderTx: ListRenderItem<WalletTransaction> = useCallback(
-    ({ item }) => (
-      <TransactionRow
-        item={item}
-        expanded={expandedId === item.id}
-        onToggle={() => toggleExpand(item.id)}
-      />
-    ),
-    [expandedId, toggleExpand],
-  );
-
-  const listHeader = useMemo(
-    () => (
-      <View>
-        {/* Balance */}
-        <View
-          style={styles.balanceCard}
-          accessibilityRole="summary"
-          accessibilityLabel={`Available ${formatMoney(wallet.balance)}, pending ${formatMoney(wallet.pending)}`}>
-          <Text style={styles.balanceLabel}>Local display only</Text>
-          <Text style={styles.balanceAmount}>{formatMoney(wallet.balance)}</Text>
-          <Text style={styles.balanceHint}>
-            Not a server wallet — settlements are managed by admin. Withdraw is
-            unavailable.
-          </Text>
-          <View style={styles.balanceMetaRow}>
-            <View style={styles.balanceMeta}>
-              <Text style={styles.metaLabel}>Pending</Text>
-              <Text style={styles.metaValue}>{formatMoney(wallet.pending)}</Text>
-            </View>
-            <View style={styles.balanceMeta}>
-              <Text style={styles.metaLabel}>Lifetime</Text>
-              <Text style={styles.metaValue}>
-                {formatMoney(wallet.lifetimeEarnings)}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.updated}>
-            {formatLastUpdated(wallet.lastUpdated)}
-          </Text>
-        </View>
-
-        {/* Today's earnings */}
-        <SectionHeader title="Today's earnings" />
-        <SummaryCard
-          variant="surface"
-          items={[
-            {
-              label: 'Earned',
-              value: formatMoney(stats.todayEarnings),
-            },
-            {
-              label: 'Deliveries',
-              value: String(stats.todayDeliveries),
-            },
-            {
-              label: 'Avg fee',
-              value: formatMoney(avgFee),
-            },
-          ]}
-          style={{ marginBottom: spacing.lg }}
-        />
-
-        {/* Pending highlight */}
-        <View style={styles.pendingCard}>
-          <Icon name="timer-sand" size={22} color={colors.warning} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.pendingTitle}>Pending earnings</Text>
-            <Text style={styles.pendingBody}>
-              {formatMoney(wallet.pending)} settling to available balance.
-            </Text>
-          </View>
-        </View>
-
-        {/* Quick actions */}
-        <SectionHeader title="Quick actions" />
-        <ScrollActions actions={quickActions} />
-
-        {/* Bonuses */}
-        <SectionHeader title="Bonuses" />
-        <View style={styles.bonusGrid}>
-          {wallet.bonuses.map(b => (
-            <View
-              key={b.id}
-              style={[styles.bonusCard, !b.unlocked && styles.bonusLocked]}
-              accessibilityLabel={`${b.title}, ${formatMoney(b.amount)}, ${b.unlocked ? 'earned' : 'locked'}`}>
-              <Text style={styles.bonusTitle}>{b.title}</Text>
-              <Text style={styles.bonusAmount}>{formatMoney(b.amount)}</Text>
-              <Text style={styles.bonusPeriod}>{b.period}</Text>
-              <Badge
-                label={b.unlocked ? 'Earned' : 'Locked'}
-                tone={b.unlocked ? 'success' : 'neutral'}
-              />
-            </View>
-          ))}
-        </View>
-
-        {/* Monthly summary */}
-        <SectionHeader title="Monthly summary" />
-        <View style={styles.monthCard}>
-          <MonthRow label="Total earnings" value={formatMoney(monthly.totalEarnings)} />
-          <MonthRow label="Withdrawn" value={formatMoney(monthly.withdrawn)} />
-          <MonthRow label="Pending" value={formatMoney(monthly.pending)} />
-          <MonthRow label="Bonuses" value={formatMoney(monthly.bonuses)} />
-          <MonthRow label="Deliveries" value={String(monthly.deliveries)} />
-          <MonthRow
-            label="Avg per delivery"
-            value={formatMoney(monthly.averagePerDelivery)}
-          />
-        </View>
-
-        <SectionHeader title="Recent transactions" />
-        <SearchBar
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Search transactions…"
-          style={{ marginBottom: spacing.sm }}
-        />
+  const renderTx: ListRenderItem<RiderFinanceTransaction> = ({ item }) => (
+    <View style={styles.txRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.txTitle}>
+          {txLabel(item.type)} · #{item.orderNo || item.orderId}
+        </Text>
+        {item.note ? <Text style={styles.txNote}>{item.note}</Text> : null}
+        <Text style={styles.txMeta}>
+          {new Date(item.at).toLocaleString()}
+        </Text>
       </View>
-    ),
-    [
-      wallet,
-      stats,
-      avgFee,
-      quickActions,
-      monthly,
-      query,
-    ],
+      <Text style={styles.txAmount}>{formatMoney(item.amount)}</Text>
+    </View>
   );
 
   return (
     <View style={styles.container}>
-      <AppHeader
-        title="Wallet"
-        showMenu
-        onMenuPress={openMenu}
-        rightIcon="bell-outline"
-        onRightPress={() =>
-          navigate('MainDrawer', { screen: 'Notifications' })
-        }
-      />
+      <AppHeader title="Finances" showMenu onMenuPress={openMenu} />
 
-      <FlatList
-        data={visibleTx}
-        keyExtractor={item => item.id}
-        renderItem={renderTx}
-        ListHeaderComponent={listHeader}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        initialNumToRender={8}
-        maxToRenderPerBatch={10}
-        windowSize={7}
-        ListEmptyComponent={
-          <EmptyState
-            icon="wallet-outline"
-            title={query ? 'No matching transactions' : 'No transactions yet'}
-            message={
-              query
-                ? 'Try a different search.'
-                : 'Completed deliveries will appear here.'
-            }
-            actionLabel={query ? 'Clear search' : undefined}
-            onAction={query ? () => setQuery('') : undefined}
-          />
-        }
-        ListFooterComponent={
-          !showAllTx && transactions.length > 8 ? (
-            <TouchableOpacity
-              style={styles.viewAll}
-              onPress={() => setShowAllTx(true)}
-              accessibilityRole="button"
-              accessibilityLabel="View all transactions">
-              <Text style={styles.viewAllText}>View all transactions</Text>
-            </TouchableOpacity>
-          ) : null
-        }
-      />
-    </View>
-  );
-}
-
-function ScrollActions({ actions }: { actions: QuickAction[] }) {
-  return (
-    <View style={styles.actionsRow}>
-      {actions.map(a => (
-        <TouchableOpacity
-          key={a.label}
-          style={styles.actionCard}
-          onPress={a.onPress}
-          accessibilityRole="button"
-          accessibilityLabel={a.label}>
-          <View style={styles.actionIcon}>
-            <Icon name={a.icon} size={20} color={colors.primaryDark} />
-          </View>
-          <Text style={styles.actionLabel}>{a.label}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-function MonthRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.monthRow}>
-      <Text style={styles.monthLabel}>{label}</Text>
-      <Text style={styles.monthValue}>{value}</Text>
-    </View>
-  );
-}
-
-const TransactionRow = memo(function TransactionRow({
-  item,
-  expanded,
-  onToggle,
-}: {
-  item: WalletTransaction;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const positive = item.amount >= 0;
-  const statusTone =
-    item.status === 'completed'
-      ? 'success'
-      : item.status === 'pending'
-        ? 'warning'
-        : 'error';
-
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.txCard, pressed && { opacity: 0.96 }]}
-      onPress={onToggle}
-      accessibilityRole="button"
-      accessibilityState={{ expanded }}
-      accessibilityLabel={`${item.label}, ${formatMoney(Math.abs(item.amount))}, ${item.status}`}>
-      <View style={styles.txTop}>
-        <View style={styles.txIcon}>
-          <Icon
-            name={
-              item.type === 'withdrawal'
-                ? 'bank-transfer-out'
-                : item.type === 'bonus'
-                  ? 'gift-outline'
-                  : item.type === 'cod'
-                    ? 'cash'
-                    : 'truck-delivery'
-            }
-            size={18}
-            color={colors.primaryDark}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.txLabel}>{item.label}</Text>
-          <Text style={styles.txDate}>{item.dateLabel}</Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text
-            style={[
-              styles.txAmount,
-              positive ? styles.txPositive : styles.txNegative,
-            ]}>
-            {positive ? '+' : '-'}
-            {formatMoney(Math.abs(item.amount))}
-          </Text>
-          <StatusPill label={item.status} tone={statusTone} />
-        </View>
-      </View>
-      {expanded ? (
-        <View style={styles.txExpanded}>
-          <Text style={styles.txDesc}>{item.description}</Text>
-          <View style={styles.txBadges}>
-            <Badge label={walletTxTypeLabel(item.type)} tone="neutral" />
-          </View>
+      {state === 'loading' && !refreshing ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color={colors.primary} />
+          <Text style={styles.hint}>Loading financial summary…</Text>
         </View>
       ) : null}
-    </Pressable>
+
+      {state === 'error' ? (
+        <EmptyState
+          variant="error"
+          title="Could not load finances"
+          message={errorMessage || 'Try again shortly.'}
+          actionLabel="Retry"
+          onAction={() => void load()}
+        />
+      ) : null}
+
+      {state === 'empty' || state === 'ready' ? (
+        <FlatList
+          data={transactions}
+          keyExtractor={(item, index) =>
+            `${item.type}-${item.assignedOrderId}-${item.at}-${index}`
+          }
+          renderItem={renderTx}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void load(true)}
+            />
+          }
+          ListHeaderComponent={
+            summary ? (
+              <View style={styles.headerBlock}>
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Cash currently held</Text>
+                  <Text style={styles.cardAmount}>
+                    {formatMoney(summary.cashHeld)}
+                  </Text>
+                  <Text style={styles.cardHint}>
+                    Actual collections minus store handovers. Not earnings and
+                    not withdrawable.
+                  </Text>
+                </View>
+
+                <SectionHeader title="COD cash" />
+                <View style={styles.grid}>
+                  <Metric
+                    label="Collected from customers"
+                    value={formatMoney(summary.cashCollectedTotal)}
+                  />
+                  <Metric
+                    label="Handed to store"
+                    value={formatMoney(summary.cashHandedOverTotal)}
+                  />
+                  <Metric
+                    label="COD shortage"
+                    value={formatMoney(summary.codShortageTotal)}
+                  />
+                  <Metric
+                    label="Completed cash orders"
+                    value={String(summary.completedCashOrders)}
+                  />
+                </View>
+
+                {summary.legacyAmbiguousCount > 0 ? (
+                  <Text style={styles.warn}>
+                    {summary.legacyAmbiguousCount} legacy cash record(s)
+                    excluded until reconciled.
+                  </Text>
+                ) : null}
+
+                <SectionHeader title="Calculated compensation" />
+                <View style={styles.card}>
+                  {summary.compensationAvailable &&
+                  summary.calculatedCompensation != null ? (
+                    <>
+                      <Text style={styles.cardAmount}>
+                        {formatMoney(summary.calculatedCompensation)}
+                      </Text>
+                      <Text style={styles.cardHint}>
+                        {summary.compensationNote ||
+                          'Estimate only — not paid and not available for withdrawal.'}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.cardHint}>
+                      {summary.compensationNote ||
+                        'Compensation unavailable — payout settings unresolved.'}
+                    </Text>
+                  )}
+                </View>
+
+                <Text style={styles.updated}>
+                  As of {new Date(summary.asOfUtc).toLocaleString()}
+                  {summary.isPeriodFilter ? ' (filtered period)' : ' (all time)'}
+                </Text>
+
+                <SectionHeader title="Activity" />
+                {state === 'empty' ? (
+                  <Text style={styles.hint}>
+                    No cash collections or handovers yet.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            state === 'ready' ? (
+              <Text style={styles.hint}>No transactions in this view.</Text>
+            ) : null
+          }
+          contentContainerStyle={{ padding: spacing.md, paddingBottom: 40 }}
+        />
+      ) : null}
+    </View>
   );
-});
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  listContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxxl,
-    flexGrow: 1,
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
   },
-  balanceCard: {
-    backgroundColor: colors.primaryDark,
+  headerBlock: { marginBottom: spacing.md },
+  card: {
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
-    padding: spacing.xl,
-    marginBottom: spacing.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
-  balanceLabel: {
-    ...typography.body,
-    color: 'rgba(255,255,255,0.8)',
+  cardLabel: { ...typography.caption, color: colors.textSecondary },
+  cardAmount: {
+    ...typography.title,
+    fontSize: 28,
+    color: colors.textPrimary,
+    marginVertical: spacing.xs,
   },
-  balanceAmount: {
-    ...typography.display,
-    color: colors.textOnPrimary,
-    marginTop: spacing.xxs,
-  },
-  balanceHint: {
-    ...typography.caption,
-    color: 'rgba(255,255,255,0.75)',
-    marginTop: spacing.sm,
-  },
-  balanceMetaRow: {
+  cardHint: { ...typography.caption, color: colors.textSecondary },
+  grid: {
     flexDirection: 'row',
-    marginTop: spacing.md,
-    gap: spacing.md,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  balanceMeta: { flex: 1 },
-  metaLabel: {
+  metric: {
+    width: '47%',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  metricLabel: { ...typography.caption, color: colors.textSecondary },
+  metricValue: {
+    ...typography.subtitle,
+    color: colors.textPrimary,
+    marginTop: 4,
+  },
+  warn: {
     ...typography.caption,
-    color: 'rgba(255,255,255,0.7)',
-  },
-  metaValue: {
-    ...typography.bodyStrong,
-    color: colors.textOnPrimary,
-    marginTop: 2,
+    color: colors.warning,
+    marginBottom: spacing.md,
   },
   updated: {
     ...typography.caption,
-    color: 'rgba(255,255,255,0.65)',
-    marginTop: spacing.md,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
   },
-  pendingCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  pendingTitle: { ...typography.bodyStrong },
-  pendingBody: {
-    ...typography.caption,
+  hint: {
+    ...typography.body,
     color: colors.textSecondary,
-    marginTop: 2,
+    textAlign: 'center',
+    marginVertical: spacing.md,
   },
-  actionsRow: {
+  txRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  actionCard: {
-    width: '30%',
-    flexGrow: 1,
-    minWidth: 96,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    minHeight: TOUCH_TARGET + 24,
-    ...elevation.small,
-  },
-  actionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xs,
-  },
-  actionLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  bonusGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  bonusCard: {
-    width: '47%',
-    flexGrow: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    ...elevation.small,
-  },
-  bonusLocked: { opacity: 0.7 },
-  bonusTitle: { ...typography.bodyStrong, marginBottom: 4 },
-  bonusAmount: {
-    ...typography.title,
-    color: colors.success,
-  },
-  bonusPeriod: {
-    ...typography.caption,
-    marginVertical: spacing.xs,
-  },
-  monthCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    ...elevation.small,
-  },
-  monthRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    minHeight: 36,
-    alignItems: 'center',
-  },
-  monthLabel: { ...typography.body, color: colors.textSecondary },
-  monthValue: { ...typography.bodyStrong },
-  txCard: {
+    alignItems: 'flex-start',
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.sm,
-    ...elevation.small,
+    gap: spacing.sm,
   },
-  txTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  txIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  txLabel: { ...typography.bodyStrong },
-  txDate: { ...typography.caption, marginTop: 2 },
-  txAmount: { ...typography.bodyStrong, marginBottom: 4 },
-  txPositive: { color: colors.success },
-  txNegative: { color: colors.primaryDark },
-  txExpanded: {
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  txDesc: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  txBadges: { flexDirection: 'row' },
-  viewAll: {
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    minHeight: TOUCH_TARGET,
-    justifyContent: 'center',
-  },
-  viewAllText: {
-    ...typography.bodyStrong,
-    color: colors.primaryDark,
-  },
+  txTitle: { ...typography.subtitle, color: colors.textPrimary },
+  txNote: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  txMeta: { ...typography.caption, color: colors.textMuted, marginTop: 4 },
+  txAmount: { ...typography.subtitle, color: colors.textPrimary },
 });

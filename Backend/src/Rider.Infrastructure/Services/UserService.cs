@@ -232,32 +232,80 @@ namespace Rider.Infrastructure.Services
                 return new ApiResponse<string>(false, "Password must be at least 6 characters", string.Empty);
 
             var hash = Sha256Hex(req.resetToken.Trim());
-            var token = await _unitOfWork.Context.Set<PasswordResetToken>()
-                .FirstOrDefaultAsync(t => t.TokenHash == hash && t.UsedAt == null);
+            var now = DateTime.UtcNow;
 
-            if (token == null || token.ExpiresAt < DateTime.UtcNow)
-                return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
-
-            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(token.UserId);
-            if (user == null)
-                return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
-
-            token.UsedAt = DateTime.UtcNow;
-            _passwordVerifier.SetPassword(user, req.password);
-
-            var refreshTokens = _unitOfWork.UserRefreshTokenRepository
-                .GetAll(t => t.UserId == user.UserId && !t.IsRevoked)
-                .ToList();
-            foreach (var rt in refreshTokens)
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
             {
-                rt.IsRevoked = true;
-                await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(rt);
+                // Atomic single-use consumption — concurrent callers: exactly one wins on SQL Server.
+                int consumed;
+                PasswordResetToken? token;
+                if (_unitOfWork.Context.Database.IsRelational())
+                {
+                    consumed = await _unitOfWork.Context.Set<PasswordResetToken>()
+                        .Where(t => t.TokenHash == hash && t.UsedAt == null && t.ExpiresAt >= now)
+                        .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAt, now));
+
+                    if (consumed != 1)
+                    {
+                        await tx.RollbackAsync();
+                        return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+                    }
+
+                    token = await _unitOfWork.Context.Set<PasswordResetToken>()
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(t => t.TokenHash == hash);
+                }
+                else
+                {
+                    // InMemory unit tests only — not concurrency-safe.
+                    token = await _unitOfWork.Context.Set<PasswordResetToken>()
+                        .FirstOrDefaultAsync(t => t.TokenHash == hash && t.UsedAt == null && t.ExpiresAt >= now);
+                    if (token == null)
+                    {
+                        await tx.RollbackAsync();
+                        return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+                    }
+                    token.UsedAt = now;
+                    consumed = 1;
+                }
+
+                if (token == null)
+                {
+                    await tx.RollbackAsync();
+                    return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+                }
+
+                var user = await _unitOfWork.UserRepository.GetByUserIdAsync(token.UserId);
+                if (user == null)
+                {
+                    await tx.RollbackAsync();
+                    return new ApiResponse<string>(false, "Invalid or expired reset token", string.Empty);
+                }
+
+                _passwordVerifier.SetPassword(user, req.password);
+                user.TokenVersion += 1;
+
+                var refreshTokens = _unitOfWork.UserRefreshTokenRepository
+                    .GetAll(t => t.UserId == user.UserId && !t.IsRevoked)
+                    .ToList();
+                foreach (var rt in refreshTokens)
+                {
+                    rt.IsRevoked = true;
+                    await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(rt);
+                }
+
+                await _unitOfWork.UserRepository.UpdateAsync(user);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                return new ApiResponse<string>(true, "Password Updated successfully", string.Empty);
             }
-
-            await _unitOfWork.UserRepository.UpdateAsync(user);
-            await _unitOfWork.SaveChangesAsync();
-
-            return new ApiResponse<string>(true, "Password Updated successfully", string.Empty);
+            catch
+            {
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return new ApiResponse<string>(false, "Unable to update password", string.Empty);
+            }
         }
 
         public async Task<ApiResponse<string>> UpdatePasswordUsingOldPassword(ChangePasswordRequest req)
@@ -425,6 +473,7 @@ namespace Rider.Infrastructure.Services
                 isActive = user.IsActive,
                 isVerified = user.IsVerified,
                 isAvailableOnline = user.IsAvailableOnline,
+                tokenVersion = user.TokenVersion,
                 storeId = user.StoreId,
                 roles = roles,
                 permissions = isAdminPortal
