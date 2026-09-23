@@ -5,6 +5,7 @@ import {
   LogLevel,
 } from '@microsoft/signalr';
 import { getToken } from '../api/client';
+import { apiBase } from '../api/apiBase';
 
 export type OrderChangedPayload = {
   assignedOrderId: number;
@@ -35,8 +36,7 @@ let startPromise: Promise<HubConnection> | null = null;
 const reconnectListeners = new Set<() => void>();
 
 function hubUrl(): string {
-  const env = import.meta.env.VITE_API_URL as string | undefined;
-  const base = env && env.length > 0 ? env.replace(/\/$/, '') : '';
+  const base = apiBase();
   return `${base}/hubs/admin`;
 }
 

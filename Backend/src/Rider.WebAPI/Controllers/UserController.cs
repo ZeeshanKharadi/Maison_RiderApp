@@ -77,7 +77,9 @@ namespace Rider.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during user login");
-                return BadRequest(new ApiResponse<string>(false, "Unable to login", null));
+                // Surface root cause so deploy/config issues are visible (e.g. missing columns).
+                var detail = ex.GetBaseException().Message;
+                return BadRequest(new ApiResponse<string>(false, $"Unable to login: {detail}", null));
             }
         }
 

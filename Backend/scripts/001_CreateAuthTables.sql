@@ -1,2 +1,2 @@
--- Do not run this file.
--- Open and Execute:  Backend\scripts\scripts.sql
+-- Do not run this file alone.
+-- Full install (001–007): open and Execute Backend\scripts\scripts.sql

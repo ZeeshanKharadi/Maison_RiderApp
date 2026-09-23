@@ -7,3 +7,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  /** Set in /config.js for IIS deploys without rebuilding. */
+  __MAISON_API_URL__?: string;
+}

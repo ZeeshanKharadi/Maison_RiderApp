@@ -85,18 +85,15 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
-var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173" };
-
+// Allow any browser origin (portal on IIS, localhost, LAN IPs, etc.).
+// SetIsOriginAllowed + AllowCredentials is required for SignalR; AllowAnyOrigin cannot combine with credentials.
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Portal", policy =>
-        policy.WithOrigins(corsOrigins)
+        policy.SetIsOriginAllowed(_ => true)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials());
-    options.AddPolicy("AllowAll", policy =>
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
 });
 builder.Services.AddHttpContextAccessor();
 
@@ -104,11 +101,13 @@ var app = builder.Build();
 
 app.UseMiddleware<GlobalExceptionHandler>();
 
-if (app.Environment.IsDevelopment())
+if (!app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("Portal");
 app.UseRateLimiter();

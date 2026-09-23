@@ -41,7 +41,7 @@ BEGIN
 END
 GO
 
-F COL_LENGTH('dbo.Stores', 'Latitude') IS NULL
+IF COL_LENGTH('dbo.Stores', 'Latitude') IS NULL
     ALTER TABLE dbo.Stores ADD Latitude FLOAT NULL;
 GO
 
