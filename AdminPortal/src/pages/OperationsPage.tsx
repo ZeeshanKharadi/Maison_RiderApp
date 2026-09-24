@@ -1,14 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { customerName, daysAgoInput, money, OrderListDto, RiderDto, StoreDto, todayInput } from '../api/types';
+import { customerName, daysAgoInput, money, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
 import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
-const STATUSES = ['Available', 'Accepted', 'InProgress', 'Completed', 'Cancelled'];
+const STATUSES = [
+  'Available',
+  'Accepted',
+  'NavigatingToPickup',
+  'ArrivedAtPickup',
+  'InProgress',
+  'OnTheWay',
+  'ArrivedAtCustomer',
+  'Delivered',
+  'Completed',
+  'Cancelled',
+  'Rejected',
+];
+
+const STATUS_LABELS: Record<string, string> = {
+  Available: 'Available',
+  Accepted: 'Accepted',
+  NavigatingToPickup: 'To pickup',
+  ArrivedAtPickup: 'At pickup',
+  InProgress: 'Picked up',
+  OnTheWay: 'On the way',
+  ArrivedAtCustomer: 'At customer',
+  Delivered: 'Delivered',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+  Rejected: 'Rejected',
+};
 
 export default function OperationsPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<OrderListDto[]>([]);
+  const [rejections, setRejections] = useState<OrderRejectionDto[]>([]);
   const [stores, setStores] = useState<StoreDto[]>([]);
   const [riders, setRiders] = useState<RiderDto[]>([]);
   const [storeId, setStoreId] = useState('');
@@ -26,19 +53,27 @@ export default function OperationsPage() {
     const f = filtersRef.current;
     const qs = new URLSearchParams();
     if (f.storeId) qs.set('storeId', f.storeId);
-    if (f.status) qs.set('status', f.status);
+    if (f.status && f.status !== 'Rejected') qs.set('status', f.status);
     if (f.riderId) qs.set('riderId', f.riderId);
     if (f.from) qs.set('from', f.from);
     if (f.to) qs.set('to', f.to);
-    const [o, s, r] = await Promise.all([
+
+    const rejQs = new URLSearchParams();
+    if (f.storeId) rejQs.set('storeId', f.storeId);
+    if (f.from) rejQs.set('from', f.from);
+    if (f.to) rejQs.set('to', f.to);
+
+    const [o, s, r, rej] = await Promise.all([
       api<OrderListDto[]>(`/api/Admin/Orders?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
       api<RiderDto[]>('/api/Admin/Riders'),
+      api<OrderRejectionDto[]>(`/api/Admin/OrderRejections?${rejQs.toString()}`),
     ]);
     if (!o.status) throw new Error(o.message);
     setOrders(o.Data || []);
     setStores(s.Data || []);
     setRiders(r.Data || []);
+    setRejections(rej.status ? rej.Data || [] : []);
     setError(null);
   }, []);
 
@@ -48,14 +83,23 @@ export default function OperationsPage() {
 
   useLiveRefresh(load);
 
+  const filteredRejections = useMemo(() => {
+    let list = rejections;
+    if (riderId) list = list.filter((x) => x.riderUserId === riderId);
+    if (status && status !== 'Rejected') return [];
+    if (status === 'Rejected' || !status) return list;
+    return list;
+  }, [rejections, riderId, status]);
+
   const grouped = useMemo(() => {
     const map: Record<string, OrderListDto[]> = {};
     for (const st of STATUSES) map[st] = [];
     for (const o of orders) {
+      if (status === 'Rejected') continue;
       (map[o.status] ||= []).push(o);
     }
     return map;
-  }, [orders]);
+  }, [orders, status]);
 
   return (
     <div>
@@ -83,7 +127,7 @@ export default function OperationsPage() {
           <label className="form-label">Status</label>
           <select className="form-select form-select-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
           </select>
         </div>
         <div>
@@ -108,15 +152,31 @@ export default function OperationsPage() {
         <div className="board">
           {STATUSES.map((st) => (
             <div className="board-col" key={st}>
-              <h6>{st} · {grouped[st]?.length ?? 0}</h6>
-              {(grouped[st] || []).map((o) => (
-                <div className="order-card" key={o.id} onClick={() => navigate(`/operations/${o.id}`)}>
-                  <div className="fw-semibold">#{o.orderNo || o.orderId}</div>
-                  <div className="small">{customerName(o)}</div>
-                  <div className="small text-muted">{o.storeId} · {money(o.orderTotal)}</div>
-                  {o.acceptedByWorkerId && <div className="small">{o.acceptedByWorkerId}</div>}
-                </div>
-              ))}
+              <h6>
+                {STATUS_LABELS[st] || st} ·{' '}
+                {st === 'Rejected' ? filteredRejections.length : grouped[st]?.length ?? 0}
+              </h6>
+              {st === 'Rejected'
+                ? filteredRejections.map((rej) => (
+                    <div
+                      className="order-card"
+                      key={`rej-${rej.id}`}
+                      onClick={() => navigate(`/operations/${rej.assignedOrderId}`)}
+                    >
+                      <div className="fw-semibold">#{rej.orderId || rej.orderNo}</div>
+                      <div className="small">{rej.riderWorkerId || rej.riderName || 'Rider'}</div>
+                      <div className="small text-muted">{rej.storeId}{rej.reason ? ` · ${rej.reason}` : ''}</div>
+                      <div className="small text-muted">{new Date(rej.createdAt).toLocaleString()}</div>
+                    </div>
+                  ))
+                : (grouped[st] || []).map((o) => (
+                    <div className="order-card" key={o.id} onClick={() => navigate(`/operations/${o.id}`)}>
+                      <div className="fw-semibold">#{o.orderId || o.orderNo}</div>
+                      <div className="small">{customerName(o)}</div>
+                      <div className="small text-muted">{o.storeId} · {money(o.orderTotal)}</div>
+                      {o.acceptedByWorkerId && <div className="small">{o.acceptedByWorkerId}</div>}
+                    </div>
+                  ))}
             </div>
           ))}
         </div>
@@ -136,17 +196,34 @@ export default function OperationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {orders.map((o) => (
-                  <tr key={o.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/operations/${o.id}`)}>
-                    <td>#{o.orderNo || o.orderId}</td>
-                    <td>{o.storeId}</td>
-                    <td>{customerName(o)}</td>
-                    <td><span className={`status-pill status-${o.status}`}>{o.status}</span></td>
-                    <td>{o.acceptedByWorkerId || '—'}</td>
-                    <td>{money(o.orderTotal)}</td>
-                    <td>{o.paymentMethod || '—'}</td>
-                  </tr>
-                ))}
+                {status !== 'Rejected' &&
+                  orders.map((o) => (
+                    <tr key={o.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/operations/${o.id}`)}>
+                      <td>#{o.orderId || o.orderNo}</td>
+                      <td>{o.storeId}</td>
+                      <td>{customerName(o)}</td>
+                      <td><span className={`status-pill status-${o.status}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
+                      <td>{o.acceptedByWorkerId || '—'}</td>
+                      <td>{money(o.orderTotal)}</td>
+                      <td>{o.paymentMethod || '—'}</td>
+                    </tr>
+                  ))}
+                {(status === 'Rejected' || !status) &&
+                  filteredRejections.map((rej) => (
+                    <tr
+                      key={`rej-${rej.id}`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => navigate(`/operations/${rej.assignedOrderId}`)}
+                    >
+                      <td>#{rej.orderId || rej.orderNo}</td>
+                      <td>{rej.storeId}</td>
+                      <td>—</td>
+                      <td><span className="status-pill status-Rejected">Rejected</span></td>
+                      <td>{rej.riderWorkerId || rej.riderName || '—'}</td>
+                      <td>—</td>
+                      <td>{rej.reason || '—'}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

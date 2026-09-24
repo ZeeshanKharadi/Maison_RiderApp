@@ -210,9 +210,15 @@ body {
 
 .status-Available { background: #e3f2fd; color: #1565c0; }
 .status-Accepted { background: #fff3e0; color: #e65100; }
+.status-NavigatingToPickup { background: #e0f7fa; color: #00838f; }
+.status-ArrivedAtPickup { background: #fff8e1; color: #f9a825; }
 .status-InProgress { background: #f3e8ff; color: #6d28d9; }
+.status-OnTheWay { background: #e8eaf6; color: #3949ab; }
+.status-ArrivedAtCustomer { background: #fce4ec; color: #c2185b; }
+.status-Delivered { background: #e0f2f1; color: #00695c; }
 .status-Completed { background: #e8f5e9; color: #2e7d32; }
 .status-Cancelled { background: #ffecec; color: #c62828; }
+.status-Rejected { background: #efebe9; color: #5d4037; }
 
 .dot {
   width: 8px;
@@ -263,9 +269,10 @@ body {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  grid-template-columns: repeat(11, minmax(150px, 1fr));
   gap: 12px;
   overflow-x: auto;
+  padding-bottom: 8px;
 }
 
 .board-col {

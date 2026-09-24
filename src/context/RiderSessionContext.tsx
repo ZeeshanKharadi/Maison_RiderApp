@@ -12,6 +12,7 @@ import { DeliveryHistoryItem } from '../data/deliveryHistory';
 import {
   ActiveDeliveryJob,
   advanceJob,
+  backendStatusForAdvance,
   buildDeliveryTimeline,
   createJobFromOrder,
   isInProgressTransition,
@@ -35,6 +36,7 @@ import {
   isCancelledBackendStatus,
 } from '../api/mappers/orderMapper';
 import * as ordersRepository from '../repositories/ordersRepository';
+import type { OrderStatusPayload } from '../repositories/ordersRepository';
 import * as authRepository from '../repositories/authRepository';
 import { useAuth } from '../services/AuthContext';
 
@@ -340,41 +342,45 @@ export function RiderSessionProvider({
 
     const jobId = activeJob.id;
     const backendId = activeJob.backendId;
+    const backendStatus = backendStatusForAdvance(next);
+    if (!backendStatus) return false;
 
-    if (isInProgressTransition(activeJob.state, next)) {
-      setLifecyclePending(true);
-      setLastLifecycleError(null);
+    setLifecyclePending(true);
+    setLastLifecycleError(null);
+    updateJobInList(jobId, prev => ({
+      ...prev,
+      pendingAction: isInProgressTransition(activeJob.state, next)
+        ? 'pickup'
+        : 'advance',
+      lastError: null,
+    }));
+
+    const result = await ordersRepository.updateOrderStatus(backendId, {
+      status: backendStatus as OrderStatusPayload['status'],
+    });
+
+    setLifecyclePending(false);
+    if (!result.ok) {
+      setLastLifecycleError(result.error.message);
       updateJobInList(jobId, prev => ({
         ...prev,
-        pendingAction: 'pickup',
-        lastError: null,
-      }));
-      const result = await ordersRepository.updateOrderStatus(backendId, {
-        status: 'InProgress',
-      });
-      setLifecyclePending(false);
-      if (!result.ok) {
-        setLastLifecycleError(result.error.message);
-        updateJobInList(jobId, prev => ({
-          ...prev,
-          pendingAction: null,
-          lastError: result.error.message,
-        }));
-        Alert.alert('Pickup failed', result.error.message);
-        return false;
-      }
-      const now = new Date().toISOString();
-      updateJobInList(jobId, prev => ({
-        ...advanceJob(prev),
-        backendStatus: 'InProgress',
-        pickedUpAt: now,
         pendingAction: null,
-        lastError: null,
+        lastError: result.error.message,
       }));
-      return true;
+      Alert.alert('Update failed', result.error.message);
+      return false;
     }
 
-    updateJobInList(jobId, prev => advanceJob(prev));
+    const now = new Date().toISOString();
+    updateJobInList(jobId, prev => ({
+      ...advanceJob(prev),
+      backendStatus,
+      ...(isInProgressTransition(activeJob.state, next)
+        ? { pickedUpAt: now }
+        : {}),
+      pendingAction: null,
+      lastError: null,
+    }));
     return true;
   }, [activeJob, updateJobInList]);
 

@@ -67,7 +67,7 @@ namespace Rider.Domain.Entities
         [MaxLength(50)]
         public string OrderTime { get; set; }
 
-        /// <summary>Available | Accepted | InProgress | Completed | Cancelled</summary>
+        /// <summary>Available | Accepted | NavigatingToPickup | ArrivedAtPickup | InProgress | OnTheWay | ArrivedAtCustomer | Delivered | Completed | Cancelled</summary>
         [MaxLength(30)]
         public string Status { get; set; } = "Available";
 

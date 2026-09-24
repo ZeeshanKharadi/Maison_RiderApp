@@ -162,9 +162,9 @@ function colorForId(key: string): string {
  */
 export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
   const displayId = (
+    dto.orderId ||
     dto.displayOrderNo ||
     dto.orderNo ||
-    dto.orderId ||
     String(dto.id)
   ).trim();
   const customerName = joinParts(dto.firstName, dto.lastName) || 'Customer';
@@ -255,10 +255,57 @@ export function mapBackendStatusToDeliveryState(
   status?: string | null,
 ): DeliveryState {
   const raw = (status ?? '').trim().toLowerCase();
-  if (raw === 'completed') return 'COMPLETED';
-  if (raw === 'inprogress' || raw === 'in_progress') return 'ON_THE_WAY';
-  if (raw === 'accepted') return 'ACCEPTED';
-  return 'ACCEPTED';
+  switch (raw) {
+    case 'completed':
+      return 'COMPLETED';
+    case 'delivered':
+      return 'DELIVERED';
+    case 'arrivedatcustomer':
+    case 'arrived_at_customer':
+      return 'ARRIVED_AT_DESTINATION';
+    case 'ontheway':
+    case 'on_the_way':
+      return 'ON_THE_WAY';
+    case 'inprogress':
+    case 'in_progress':
+      return 'PICKUP_CONFIRMED';
+    case 'arrivedatpickup':
+    case 'arrived_at_pickup':
+      return 'ARRIVED_AT_PICKUP';
+    case 'navigatingtopickup':
+    case 'navigating_to_pickup':
+      return 'NAVIGATE_TO_PICKUP';
+    case 'accepted':
+      return 'ACCEPTED';
+    default:
+      return 'ACCEPTED';
+  }
+}
+
+/** Local delivery UI state → server AssignedOrders.Status. */
+export function mapDeliveryStateToBackendStatus(
+  state: DeliveryState,
+): string {
+  switch (state) {
+    case 'ACCEPTED':
+      return 'Accepted';
+    case 'NAVIGATE_TO_PICKUP':
+      return 'NavigatingToPickup';
+    case 'ARRIVED_AT_PICKUP':
+      return 'ArrivedAtPickup';
+    case 'PICKUP_CONFIRMED':
+      return 'InProgress';
+    case 'ON_THE_WAY':
+      return 'OnTheWay';
+    case 'ARRIVED_AT_DESTINATION':
+      return 'ArrivedAtCustomer';
+    case 'DELIVERED':
+      return 'Delivered';
+    case 'COMPLETED':
+      return 'Completed';
+    default:
+      return 'Accepted';
+  }
 }
 
 export function isCancelledBackendStatus(status?: string | null): boolean {

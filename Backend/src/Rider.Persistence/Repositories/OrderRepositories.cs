@@ -127,7 +127,7 @@ namespace Rider.Persistence.Repositories
         public Task<int> CountActiveForRiderAsync(Guid riderUserId)
             => _entities.CountAsync(o =>
                 o.AcceptedByUserId == riderUserId
-                && (o.Status == OrderStatuses.Accepted || o.Status == OrderStatuses.InProgress));
+                && OrderStatuses.ActiveStatuses.Contains(o.Status));
 
         public async Task<List<AssignedOrder>> GetActiveForRiderAsync(Guid riderUserId)
             => await _entities
@@ -136,7 +136,7 @@ namespace Rider.Persistence.Repositories
                 .Include(o => o.Batch)
                     .ThenInclude(b => b.Store)
                 .Where(o => o.AcceptedByUserId == riderUserId
-                    && (o.Status == OrderStatuses.Accepted || o.Status == OrderStatuses.InProgress))
+                    && OrderStatuses.ActiveStatuses.Contains(o.Status))
                 .OrderByDescending(o => o.AcceptedAt ?? o.CreatedAt)
                 .ToListAsync();
 
@@ -189,7 +189,7 @@ namespace Rider.Persistence.Repositories
             {
                 var rows = await _entities
                     .Where(o => o.Id == id
-                        && o.Status == OrderStatuses.InProgress
+                        && OrderStatuses.CompletablesStatuses.Contains(o.Status)
                         && o.AcceptedByUserId == riderUserId)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(o => o.Status, OrderStatuses.Completed)
@@ -204,7 +204,7 @@ namespace Rider.Persistence.Repositories
             {
                 var order = await _entities.FirstOrDefaultAsync(o => o.Id == id);
                 if (order == null
-                    || order.Status != OrderStatuses.InProgress
+                    || !OrderStatuses.IsCompletableStatus(order.Status)
                     || order.AcceptedByUserId != riderUserId)
                     return false;
 

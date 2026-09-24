@@ -16,6 +16,7 @@ namespace Rider.Application.Interfaces
 
         Task<ApiResponse<LiveBoardSummaryDto>> GetLiveSummaryAsync(AdminActor actor, string storeId);
         Task<ApiResponse<List<AdminOrderListDto>>> ListOrdersAsync(AdminActor actor, AdminOrderQuery query);
+        Task<ApiResponse<List<AdminOrderRejectionDto>>> ListOrderRejectionsAsync(AdminActor actor, string storeId, DateTime? from, DateTime? to);
         Task<ApiResponse<AdminOrderDetailDto>> GetOrderAsync(AdminActor actor, long id);
         Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason);
         Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id);

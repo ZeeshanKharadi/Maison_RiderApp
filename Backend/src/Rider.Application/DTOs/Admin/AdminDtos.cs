@@ -107,6 +107,16 @@ namespace Rider.Application.DTOs.Admin
         public string orderTime { get; set; }
         public string batchTime { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
+        public List<AdminOrderLifecycleEventDto> statusHistory { get; set; } = new();
+    }
+
+    public class AdminOrderLifecycleEventDto
+    {
+        public string status { get; set; }
+        public string previousStatus { get; set; }
+        public string actorType { get; set; }
+        public string reason { get; set; }
+        public DateTime at { get; set; }
     }
 
     public class AdminOrderQuery
@@ -266,5 +276,20 @@ namespace Rider.Application.DTOs.Admin
         public int cancelledToday { get; set; }
         public int onlineRiders { get; set; }
         public decimal cashToCollectToday { get; set; }
+    }
+
+    public class AdminOrderRejectionDto
+    {
+        public long id { get; set; }
+        public long assignedOrderId { get; set; }
+        public string orderId { get; set; }
+        public string orderNo { get; set; }
+        public string storeId { get; set; }
+        public Guid riderUserId { get; set; }
+        public string riderWorkerId { get; set; }
+        public string riderName { get; set; }
+        public string reason { get; set; }
+        public bool isDirectAssignment { get; set; }
+        public DateTime createdAt { get; set; }
     }
 }

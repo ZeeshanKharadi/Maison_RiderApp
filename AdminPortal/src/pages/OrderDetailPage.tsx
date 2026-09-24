@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { customerName, dt, money, OrderDetailDto } from '../api/types';
+import { customerName, dt, money, OrderDetailDto, OrderLifecycleEventDto } from '../api/types';
 import {
   ensureAdminHub,
   isAdminHubConnected,
@@ -10,6 +10,33 @@ import {
 } from '../realtime/adminHub';
 
 const POLL_MS = 30_000;
+
+const STATUS_LABELS: Record<string, string> = {
+  Available: 'Available',
+  Accepted: 'Accepted',
+  NavigatingToPickup: 'To pickup',
+  ArrivedAtPickup: 'At pickup',
+  InProgress: 'Picked up',
+  OnTheWay: 'On the way',
+  ArrivedAtCustomer: 'At customer',
+  Delivered: 'Delivered',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+  Rejected: 'Rejected',
+};
+
+function statusLabel(status?: string | null) {
+  if (!status) return '—';
+  return STATUS_LABELS[status] || status;
+}
+
+function fallbackHistory(order: OrderDetailDto): OrderLifecycleEventDto[] {
+  const rows: OrderLifecycleEventDto[] = [];
+  if (order.acceptedAt) rows.push({ status: 'Accepted', at: order.acceptedAt });
+  if (order.pickedUpAt) rows.push({ status: 'InProgress', at: order.pickedUpAt });
+  if (order.completedAt) rows.push({ status: 'Completed', at: order.completedAt });
+  return rows;
+}
 
 export default function OrderDetailPage() {
   const { id } = useParams();
@@ -72,7 +99,7 @@ export default function OrderDetailPage() {
         setError(res.message);
         return;
       }
-      setOrder(res.Data);
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Action failed');
     } finally {
@@ -145,8 +172,17 @@ export default function OrderDetailPage() {
     .filter(Boolean)
     .join(', ');
 
-  const canCancel =
-    order.status === 'Available' || order.status === 'Accepted' || order.status === 'InProgress';
+  const ACTIVE_STATUSES = new Set([
+    'Available',
+    'Accepted',
+    'NavigatingToPickup',
+    'ArrivedAtPickup',
+    'InProgress',
+    'OnTheWay',
+    'ArrivedAtCustomer',
+    'Delivered',
+  ]);
+  const canCancel = ACTIVE_STATUSES.has(order.status);
   const canRequeue = order.status === 'Available' || order.status === 'Cancelled';
   const handedOver = !!order.cashHandedOverAt;
   const showLegacyNote = order.cashSemanticsNote === 'LegacyCashCollected_Ambiguous';
@@ -163,8 +199,8 @@ export default function OrderDetailPage() {
       <Link to="/operations" className="small text-muted text-decoration-none">← Live operations</Link>
       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mt-2">
         <div>
-          <h1 className="page-title">Order #{order.orderNo || order.orderId}</h1>
-          <p className="page-sub">{order.storeId} · <span className={`status-pill status-${order.status}`}>{order.status}</span></p>
+          <h1 className="page-title">Order #{order.orderId || order.orderNo}</h1>
+          <p className="page-sub">{order.storeId} · <span className={`status-pill status-${order.status}`}>{statusLabel(order.status)}</span></p>
         </div>
         <div className="d-flex gap-2">
           {canCancel && (
@@ -272,11 +308,20 @@ export default function OrderDetailPage() {
           </div>
           <div className="panel">
             <h2 className="h6">Rider &amp; timestamps</h2>
-            <p className="mb-1">Rider {order.acceptedByWorkerId || 'Unassigned'} {order.acceptedByName ? `· ${order.acceptedByName}` : ''}</p>
+            <p className="mb-2">
+              Rider {order.acceptedByWorkerId || 'Unassigned'}
+              {order.acceptedByName ? ` · ${order.acceptedByName}` : ''}
+            </p>
             <p className="mb-1 small">Created {dt(order.createdAt)}</p>
-            <p className="mb-1 small">Accepted {dt(order.acceptedAt)}</p>
-            <p className="mb-1 small">Picked up {dt(order.pickedUpAt)}</p>
-            <p className="mb-0 small">Completed {dt(order.completedAt)}</p>
+            {(order.statusHistory && order.statusHistory.length > 0
+              ? order.statusHistory
+              : fallbackHistory(order)
+            ).map((ev, i) => (
+              <p className="mb-1 small" key={`${ev.status}-${ev.at}-${i}`}>
+                {statusLabel(ev.status)} {dt(ev.at)}
+                {ev.reason ? <span className="text-muted"> · {ev.reason}</span> : null}
+              </p>
+            ))}
           </div>
         </div>
       </div>

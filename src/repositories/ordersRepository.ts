@@ -9,7 +9,15 @@ import {
 import { ApiResult, fail, ok } from './types';
 
 export type OrderStatusPayload = {
-  status: 'Accepted' | 'InProgress' | 'Completed';
+  status:
+    | 'Accepted'
+    | 'NavigatingToPickup'
+    | 'ArrivedAtPickup'
+    | 'InProgress'
+    | 'OnTheWay'
+    | 'ArrivedAtCustomer'
+    | 'Delivered'
+    | 'Completed';
   cashCollected?: number;
   cashCollectedReason?: string;
   requestId?: string;

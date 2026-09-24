@@ -116,7 +116,7 @@ namespace Rider.Application.DTOs.Orders
 
     public class UpdateOrderStatusRequest
     {
-        /// <summary>Accepted | InProgress | Completed</summary>
+        /// <summary>Accepted | NavigatingToPickup | ArrivedAtPickup | InProgress | OnTheWay | ArrivedAtCustomer | Delivered | Completed</summary>
         [Required]
         public string status { get; set; }
 

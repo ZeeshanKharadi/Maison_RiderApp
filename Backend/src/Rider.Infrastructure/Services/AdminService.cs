@@ -238,11 +238,12 @@ namespace Rider.Infrastructure.Services
 
             var dto = new LiveBoardSummaryDto
             {
-                available = orders.Count(o => o.Status == "Available"),
-                accepted = orders.Count(o => o.Status == "Accepted"),
-                inProgress = orders.Count(o => o.Status == "InProgress"),
-                completedToday = orders.Count(o => o.Status == "Completed" && (o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt) >= today),
-                cancelledToday = orders.Count(o => o.Status == "Cancelled" && (o.UpdatedAt ?? o.CreatedAt) >= today),
+                available = orders.Count(o => o.Status == OrderStatuses.Available),
+                accepted = orders.Count(o => o.Status == OrderStatuses.Accepted),
+                inProgress = orders.Count(o =>
+                    OrderStatuses.IsActiveStatus(o.Status) && o.Status != OrderStatuses.Accepted),
+                completedToday = orders.Count(o => o.Status == OrderStatuses.Completed && (o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt) >= today),
+                cancelledToday = orders.Count(o => o.Status == OrderStatuses.Cancelled && (o.UpdatedAt ?? o.CreatedAt) >= today),
                 onlineRiders = riders.Count(r => r.IsActive && r.IsAvailableOnline
                     && r.LastSeenAt.HasValue && r.LastSeenAt.Value >= onlineCutoff),
                 cashToCollectToday = orders
@@ -260,11 +261,59 @@ namespace Rider.Infrastructure.Services
             if (scoped.denied)
                 return Fail<List<AdminOrderListDto>>(scoped.message);
 
+            // Rejected is an event column on Live Ops, not an AssignedOrders.Status value.
+            if (string.Equals(query.status, OrderStatuses.Rejected, StringComparison.OrdinalIgnoreCase))
+                return Ok(new List<AdminOrderListDto>(), "Orders");
+
             var (fromUtc, toUtc) = NormalizeRange(query.from, query.to);
             var orders = await _unitOfWork.AssignedOrderRepository
                 .QueryForAdminAsync(scoped.storeId, query.status, query.riderId, fromUtc, toUtc);
 
             return Ok(orders.Select(MapOrderList).ToList(), "Orders");
+        }
+
+        public async Task<ApiResponse<List<AdminOrderRejectionDto>>> ListOrderRejectionsAsync(
+            AdminActor actor, string storeId, DateTime? from, DateTime? to)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<List<AdminOrderRejectionDto>>(scoped.message);
+
+            var (fromUtc, toUtc) = NormalizeRange(from, to, defaultDays: 7);
+
+            var q = _unitOfWork.Context.Set<OrderRejection>()
+                .AsNoTracking()
+                .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                .Include(r => r.Rider)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(scoped.storeId))
+                q = q.Where(r => r.Order != null && r.Order.Batch != null
+                    && r.Order.Batch.StoreId == scoped.storeId);
+
+            if (fromUtc.HasValue)
+                q = q.Where(r => r.CreatedAt >= fromUtc.Value);
+            if (toUtc.HasValue)
+                q = q.Where(r => r.CreatedAt < toUtc.Value);
+
+            var rows = await q.OrderByDescending(r => r.CreatedAt).Take(500).ToListAsync();
+
+            var list = rows.Select(r => new AdminOrderRejectionDto
+            {
+                id = r.Id,
+                assignedOrderId = r.AssignedOrderId,
+                orderId = r.Order?.OrderId,
+                orderNo = r.Order?.OrderNo,
+                storeId = r.Order?.Batch?.StoreId,
+                riderUserId = r.RiderUserId,
+                riderWorkerId = r.Rider?.ThirdPartyEmployeeId,
+                riderName = r.Rider?.UserName,
+                reason = r.Reason,
+                isDirectAssignment = r.IsDirectAssignment,
+                createdAt = r.CreatedAt
+            }).ToList();
+
+            return Ok(list, "Order rejections");
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> GetOrderAsync(AdminActor actor, long id)
@@ -273,7 +322,24 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            return Ok(MapOrderDetail(order), "Success");
+            var dto = MapOrderDetail(order);
+            var audits = await _unitOfWork.Context.Set<OrderLifecycleAudit>()
+                .AsNoTracking()
+                .Where(a => a.AssignedOrderId == id)
+                .OrderBy(a => a.CreatedAt)
+                .ThenBy(a => a.Id)
+                .ToListAsync();
+
+            dto.statusHistory = audits.Select(a => new AdminOrderLifecycleEventDto
+            {
+                status = a.NewStatus,
+                previousStatus = a.PreviousStatus,
+                actorType = a.ActorType,
+                reason = a.Reason,
+                at = a.CreatedAt
+            }).ToList();
+
+            return Ok(dto, "Success");
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason)
@@ -285,7 +351,7 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            if (order.Status is "Completed")
+            if (order.Status is OrderStatuses.Completed)
                 return Fail<AdminOrderDetailDto>("Completed orders cannot be cancelled");
 
             var previous = order.Status;
@@ -326,7 +392,7 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            if (order.Status is "Completed" or "InProgress" or "Accepted")
+            if (order.Status is not (OrderStatuses.Available or OrderStatuses.Cancelled))
                 return Fail<AdminOrderDetailDto>("Only Available or Cancelled orders can be requeued");
 
             var previous = order.Status;
@@ -627,8 +693,9 @@ namespace Rider.Infrastructure.Services
                     name = g.Key.Name,
                     completed = g.Count(x => x.Status == "Completed"),
                     cancelled = g.Count(x => x.Status == "Cancelled"),
-                    accepted = g.Count(x => x.Status == "Accepted"),
-                    inProgress = g.Count(x => x.Status == "InProgress")
+                    accepted = g.Count(x => x.Status == OrderStatuses.Accepted),
+                    inProgress = g.Count(x =>
+                        OrderStatuses.IsActiveStatus(x.Status) && x.Status != OrderStatuses.Accepted)
                 })
                 .OrderByDescending(x => x.date)
                 .ThenBy(x => x.workerId)
@@ -638,11 +705,12 @@ namespace Rider.Infrastructure.Services
             {
                 status = new StatusSummaryDto
                 {
-                    available = orders.Count(o => o.Status == "Available"),
-                    accepted = orders.Count(o => o.Status == "Accepted"),
-                    inProgress = orders.Count(o => o.Status == "InProgress"),
-                    completed = orders.Count(o => o.Status == "Completed"),
-                    cancelled = orders.Count(o => o.Status == "Cancelled"),
+                    available = orders.Count(o => o.Status == OrderStatuses.Available),
+                    accepted = orders.Count(o => o.Status == OrderStatuses.Accepted),
+                    inProgress = orders.Count(o =>
+                        OrderStatuses.IsActiveStatus(o.Status) && o.Status != OrderStatuses.Accepted),
+                    completed = orders.Count(o => o.Status == OrderStatuses.Completed),
+                    cancelled = orders.Count(o => o.Status == OrderStatuses.Cancelled),
                     total = orders.Count
                 },
                 avgDeliveryTime = new AvgDeliveryTimeDto

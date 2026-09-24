@@ -48,6 +48,20 @@ export type OrderListDto = {
   updatedAt?: string | null;
 };
 
+export type OrderRejectionDto = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  riderUserId: string;
+  riderWorkerId?: string | null;
+  riderName?: string | null;
+  reason?: string | null;
+  isDirectAssignment: boolean;
+  createdAt: string;
+};
+
 export type OrderItemDto = {
   itemId: number;
   description: string;
@@ -69,6 +83,15 @@ export type OrderDetailDto = OrderListDto & {
   orderTime?: string;
   batchTime?: string;
   items: OrderItemDto[];
+  statusHistory?: OrderLifecycleEventDto[];
+};
+
+export type OrderLifecycleEventDto = {
+  status: string;
+  previousStatus?: string | null;
+  actorType?: string | null;
+  reason?: string | null;
+  at: string;
 };
 
 export type AdminNotificationDto = {
@@ -93,32 +116,29 @@ export type LiveSummary = {
   cashToCollectToday: number;
 };
 
-export type RiderSettlement = {
-  riderId: string;
-  workerId: string;
-  name: string;
-  storeId: string;
-  deliveryCount: number;
-  cancelledCount: number;
-  cashHeld: number;
-  payoutDue: number;
-  salesTotal: number;
-};
-
 export type PaymentsDashboard = {
   from: string;
   to: string;
-  storeId?: string;
-  orderCount: number;
+  storeId?: string | null;
   totalSales: number;
-  cashTotal: number;
-  cardTotal: number;
-  otherTotal: number;
+  cashSales: number;
+  cardSales: number;
+  otherSales: number;
   cashToCollect: number;
   cashCollected: number;
   byDay: { date: string; orderCount: number; total: number; cash: number; card: number; other: number }[];
   byStore: { storeId: string; orderCount: number; total: number; cash: number; card: number; other: number }[];
-  byRider: RiderSettlement[];
+  byRider: {
+    riderId: string;
+    workerId: string;
+    name: string;
+    storeId: string;
+    deliveryCount: number;
+    cancelledCount: number;
+    cashHeld: number;
+    sales: number;
+    payoutDue: number;
+  }[];
 };
 
 export type ReportsDto = {
@@ -130,7 +150,10 @@ export type ReportsDto = {
     cancelled: number;
     total: number;
   };
-  avgDeliveryTime: { sampleCount: number; avgMinutes?: number | null };
+  avgDeliveryTime: {
+    sampleCount: number;
+    avgMinutes?: number | null;
+  };
   perRiderPerDay: {
     date: string;
     riderId: string;

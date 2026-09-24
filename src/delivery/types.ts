@@ -5,7 +5,7 @@ import {
   getNextState,
   getStateConfig,
 } from './stateMachine';
-import { mapBackendStatusToDeliveryState } from '../api/mappers/orderMapper';
+import { mapBackendStatusToDeliveryState, mapDeliveryStateToBackendStatus } from '../api/mappers/orderMapper';
 
 export type DeliveryTimelineStep = {
   state: DeliveryState;
@@ -40,7 +40,7 @@ export type ActiveDeliveryJob = {
   backendStatus?: string;
   cashCollectedAmount?: number | null;
   cashCollectedReason?: string | null;
-  pendingAction?: 'accept' | 'pickup' | 'complete' | null;
+  pendingAction?: 'accept' | 'pickup' | 'advance' | 'complete' | null;
   lastError?: string | null;
   packageInfo: string;
   items: number;
@@ -193,7 +193,13 @@ export function estimateDurationMin(job: ActiveDeliveryJob): number {
   return Math.max(1, Math.round((end - start) / 60000));
 }
 
-/** First local step that requires backend InProgress. */
+/** First local step that requires backend InProgress (pickup confirmed). */
 export function isInProgressTransition(from: DeliveryState, to: DeliveryState): boolean {
   return from === 'ARRIVED_AT_PICKUP' && to === 'PICKUP_CONFIRMED';
+}
+
+/** Every advance (except terminal) maps to a server status for Live Ops. */
+export function backendStatusForAdvance(to: DeliveryState): string | null {
+  if (to === 'DELIVERED' || to === 'COMPLETED') return null;
+  return mapDeliveryStateToBackendStatus(to);
 }

@@ -416,8 +416,11 @@ namespace Rider.Infrastructure.Services
                 return new ApiResponse<AvailableOrderDto>(false, "status is required", null);
 
             var next = request.status.Trim();
-            if (next is not (OrderStatuses.Accepted or OrderStatuses.InProgress or OrderStatuses.Completed))
-                return new ApiResponse<AvailableOrderDto>(false, "Unsupported status. Use Accepted, InProgress, or Completed", null);
+            if (!OrderStatuses.IsRiderWritableStatus(next))
+                return new ApiResponse<AvailableOrderDto>(
+                    false,
+                    "Unsupported status. Use Accepted, NavigatingToPickup, ArrivedAtPickup, InProgress, OnTheWay, ArrivedAtCustomer, Delivered, or Completed",
+                    null);
 
             var requestId = string.IsNullOrWhiteSpace(request.requestId) ? null : request.requestId.Trim();
             if (!string.IsNullOrEmpty(requestId))
@@ -553,34 +556,46 @@ namespace Rider.Infrastructure.Services
                         }
                         break;
                     }
+                    case OrderStatuses.NavigatingToPickup:
+                    case OrderStatuses.ArrivedAtPickup:
                     case OrderStatuses.InProgress:
+                    case OrderStatuses.OnTheWay:
+                    case OrderStatuses.ArrivedAtCustomer:
+                    case OrderStatuses.Delivered:
                     {
-                        if (order.Status != OrderStatuses.Accepted && order.Status != OrderStatuses.InProgress)
-                        {
-                            await tx.RollbackAsync();
-                            return new ApiResponse<AvailableOrderDto>(false, "Order must be Accepted first", null);
-                        }
                         if (order.AcceptedByUserId != riderUserId)
                         {
                             await tx.RollbackAsync();
                             return new ApiResponse<AvailableOrderDto>(false, "This order is assigned to another rider", null);
                         }
-                        order.Status = OrderStatuses.InProgress;
-                        order.PickedUpAt ??= now;
+                        if (!OrderStatuses.CanRiderAdvance(order.Status, next))
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(
+                                false,
+                                order.Status == OrderStatuses.Available || order.Status == OrderStatuses.Accepted
+                                    ? "Order must be Accepted first"
+                                    : $"Cannot move from {order.Status} to {next}",
+                                null);
+                        }
+
+                        order.Status = next;
+                        if (OrderStatuses.ProgressionIndex(next) >= OrderStatuses.ProgressionIndex(OrderStatuses.InProgress))
+                            order.PickedUpAt ??= now;
                         order.UpdatedAt = now;
                         break;
                     }
                     case OrderStatuses.Completed:
                     {
-                        if (order.Status != OrderStatuses.InProgress)
-                        {
-                            await tx.RollbackAsync();
-                            return new ApiResponse<AvailableOrderDto>(false, "Pickup (InProgress) is required before Completed", null);
-                        }
                         if (order.AcceptedByUserId != riderUserId)
                         {
                             await tx.RollbackAsync();
                             return new ApiResponse<AvailableOrderDto>(false, "This order is assigned to another rider", null);
+                        }
+                        if (!OrderStatuses.CanRiderAdvance(order.Status, next))
+                        {
+                            await tx.RollbackAsync();
+                            return new ApiResponse<AvailableOrderDto>(false, "Pickup (InProgress) is required before Completed", null);
                         }
 
                         var expected = order.ExpectedCash ?? (IsCashMethod(order.PaymentMethod) ? order.Cash : null);
@@ -789,7 +804,7 @@ namespace Rider.Infrastructure.Services
 
                 try
                 {
-                    await SafePublishOrderChanged(order.Batch?.StoreId, order.Id, order.OrderId, order.Status);
+                    await SafePublishOrderChanged(order.Batch?.StoreId, order.Id, order.OrderId, OrderStatuses.Rejected);
                     await _opsEvents.PublishAdminNotificationCreatedAsync(notif.StoreId, notif.Id, notif.Title);
                 }
                 catch (Exception ex)
@@ -994,7 +1009,7 @@ namespace Rider.Infrastructure.Services
             id = o.Id,
             orderId = o.OrderId,
             orderNo = o.OrderNo,
-            displayOrderNo = string.IsNullOrWhiteSpace(o.OrderNo) ? o.OrderId : o.OrderNo,
+            displayOrderNo = string.IsNullOrWhiteSpace(o.OrderId) ? o.OrderNo : o.OrderId,
             storeId = o.Batch?.StoreId,
             storeLat = o.Batch?.Store?.Latitude,
             storeLng = o.Batch?.Store?.Longitude,

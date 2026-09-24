@@ -99,7 +99,7 @@ export default function WalletScreen() {
     <View style={styles.txRow}>
       <View style={{ flex: 1 }}>
         <Text style={styles.txTitle}>
-          {txLabel(item.type)} · #{item.orderNo || item.orderId}
+          {txLabel(item.type)} · #{item.orderId || item.orderNo}
         </Text>
         {item.note ? <Text style={styles.txNote}>{item.note}</Text> : null}
         <Text style={styles.txMeta}>

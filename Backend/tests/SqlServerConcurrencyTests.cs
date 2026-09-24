@@ -254,7 +254,7 @@ public class SqlServerConcurrencyTests
         await using var verify = new ApplicationDbContext(Options());
         var active = await verify.AssignedOrders.CountAsync(o =>
             o.AcceptedByUserId == riderA
-            && (o.Status == OrderStatuses.Accepted || o.Status == OrderStatuses.InProgress));
+            && OrderStatuses.ActiveStatuses.Contains(o.Status));
         Assert.True(active <= OrderStatuses.MaxActiveDeliveries);
     }
 

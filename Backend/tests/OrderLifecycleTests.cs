@@ -245,6 +245,85 @@ public class OrderLifecycleTests : IDisposable
         Assert.Null(order.AcceptedByUserId);
     }
 
+    [Fact]
+    public async Task Fine_grained_forward_transitions_succeed()
+    {
+        var id = await SeedAvailableOrderAsync("FG1");
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+
+        string[] steps =
+        {
+            OrderStatuses.NavigatingToPickup,
+            OrderStatuses.ArrivedAtPickup,
+            OrderStatuses.InProgress,
+            OrderStatuses.OnTheWay,
+            OrderStatuses.ArrivedAtCustomer,
+            OrderStatuses.Delivered
+        };
+        foreach (var step in steps)
+        {
+            var r = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = step });
+            Assert.True(r.status, $"{step}: {r.message}");
+            var row = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+            Assert.Equal(step, row.Status);
+        }
+
+        var complete = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest
+        {
+            status = OrderStatuses.Completed,
+            cashCollected = 100
+        });
+        Assert.True(complete.status, complete.message);
+    }
+
+    [Fact]
+    public async Task Fine_grained_backward_fails()
+    {
+        var id = await SeedAvailableOrderAsync("FG2");
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted });
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.OnTheWay });
+
+        var back = await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest
+        {
+            status = OrderStatuses.NavigatingToPickup
+        });
+        Assert.False(back.status);
+        var row = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(OrderStatuses.OnTheWay, row.Status);
+    }
+
+    [Fact]
+    public async Task Active_count_includes_fine_grained_statuses()
+    {
+        var id = await SeedAvailableOrderAsync("FG3");
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted });
+        await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.ArrivedAtCustomer });
+
+        var active = await _orders.GetActiveOrdersAsync(_riderA);
+        Assert.True(active.status);
+        Assert.Contains(active.Data!, o => o.id == id);
+        Assert.Equal(OrderStatuses.ArrivedAtCustomer, active.Data!.First(o => o.id == id).status);
+    }
+
+    [Fact]
+    public async Task Reject_leaves_pool_available_and_records_rejection()
+    {
+        var id = await SeedAvailableOrderAsync("RJ1");
+        var reject = await _orders.RejectOrderAsync(id, _riderA, new RejectOrderRequest { reason = "too far" });
+        Assert.True(reject.status, reject.message);
+
+        var order = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(OrderStatuses.Available, order.Status);
+
+        var rej = await _db.OrderRejections.AsNoTracking().FirstOrDefaultAsync(r => r.AssignedOrderId == id);
+        Assert.NotNull(rej);
+        Assert.Equal(_riderA, rej!.RiderUserId);
+
+        var audit = await _db.OrderLifecycleAudits.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.AssignedOrderId == id && a.NewStatus == OrderStatuses.Rejected);
+        Assert.NotNull(audit);
+    }
+
     private sealed class NoOpRiderNotifications : IRiderNotificationService
     {
         public Task NotifyDirectAssignmentAsync(Guid riderUserId, string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
