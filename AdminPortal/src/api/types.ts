@@ -120,10 +120,11 @@ export type PaymentsDashboard = {
   from: string;
   to: string;
   storeId?: string | null;
+  orderCount?: number;
   totalSales: number;
-  cashSales: number;
-  cardSales: number;
-  otherSales: number;
+  cashTotal: number;
+  cardTotal: number;
+  otherTotal: number;
   cashToCollect: number;
   cashCollected: number;
   byDay: { date: string; orderCount: number; total: number; cash: number; card: number; other: number }[];
@@ -136,7 +137,7 @@ export type PaymentsDashboard = {
     deliveryCount: number;
     cancelledCount: number;
     cashHeld: number;
-    sales: number;
+    salesTotal: number;
     payoutDue: number;
   }[];
 };

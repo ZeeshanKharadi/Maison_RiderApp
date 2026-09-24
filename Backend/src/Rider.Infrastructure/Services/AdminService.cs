@@ -68,6 +68,57 @@ namespace Rider.Infrastructure.Services
             return Ok(list, "Riders");
         }
 
+        public async Task<ApiResponse<List<AdminLiveRiderDto>>> ListLiveMapRidersAsync(AdminActor actor, string storeId)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<List<AdminLiveRiderDto>>(scoped.message);
+
+            const int staleSeconds = 90;
+
+            var riders = await _unitOfWork.UserRepository.ListRidersAsync(scoped.storeId);
+            var stores = await StoreLookupAsync();
+            var onlineCutoff = DateTime.UtcNow - OnlineWindow;
+            var staleBefore = DateTime.UtcNow.AddSeconds(-staleSeconds);
+
+            var result = new List<AdminLiveRiderDto>();
+            foreach (var u in riders.Where(r => r.IsActive))
+            {
+                var active = await _unitOfWork.AssignedOrderRepository.GetActiveForRiderAsync(u.UserId);
+                if (active.Count == 0)
+                    continue;
+
+                var primary = active
+                    .OrderByDescending(o => OrderStatuses.ProgressionIndex(o.Status))
+                    .First();
+
+                var hasLocation = u.LastLatitude.HasValue && u.LastLongitude.HasValue && u.LocationUpdatedAt.HasValue;
+                var isStale = !hasLocation || u.LocationUpdatedAt < staleBefore;
+
+                result.Add(new AdminLiveRiderDto
+                {
+                    riderUserId = u.UserId,
+                    workerId = u.ThirdPartyEmployeeId,
+                    name = u.UserName,
+                    storeId = u.StoreId,
+                    storeName = stores.TryGetValue(u.StoreId ?? "", out var sn) ? sn : u.StoreId,
+                    isOnline = u.IsAvailableOnline
+                        && u.LastSeenAt.HasValue
+                        && u.LastSeenAt.Value >= onlineCutoff,
+                    activeOrderCount = active.Count,
+                    deliveryStatus = primary.Status,
+                    latitude = u.LastLatitude,
+                    longitude = u.LastLongitude,
+                    locationUpdatedAt = u.LocationUpdatedAt,
+                    hasLocation = hasLocation,
+                    isStale = isStale,
+                    staleAfterSeconds = staleSeconds
+                });
+            }
+
+            return Ok(result.OrderBy(r => r.workerId).ToList(), "Live map riders");
+        }
+
         public async Task<ApiResponse<AdminRiderDto>> GetRiderAsync(AdminActor actor, Guid riderId)
         {
             var rider = await _unitOfWork.UserRepository.GetByUserIdAsync(riderId);

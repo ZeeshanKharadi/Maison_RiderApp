@@ -409,6 +409,134 @@ namespace Rider.Infrastructure.Services
             return new ApiResponse<bool>(true, isOnline ? "You are online" : "You are offline", isOnline);
         }
 
+        public async Task<ApiResponse<RiderLocationDto>> UpdateRiderLocationAsync(
+            Guid riderUserId, UpdateRiderLocationRequest request)
+        {
+            if (request == null)
+                return new ApiResponse<RiderLocationDto>(false, "Body is required", null);
+
+            if (request.latitude is < -90 or > 90 || request.longitude is < -180 or > 180)
+                return new ApiResponse<RiderLocationDto>(false, "Invalid coordinates", null);
+
+            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(riderUserId);
+            if (user == null || !user.IsActive)
+                return new ApiResponse<RiderLocationDto>(false, "Rider account is inactive", null);
+
+            var activeOrders = await _unitOfWork.AssignedOrderRepository.GetActiveForRiderAsync(riderUserId);
+            if (activeOrders.Count == 0)
+                return new ApiResponse<RiderLocationDto>(false, "No active deliveries — location tracking is off", null);
+
+            var now = DateTime.UtcNow;
+            // Drop duplicate bursts (same rider reconnect / parallel uploads).
+            if (user.LocationUpdatedAt.HasValue
+                && (now - user.LocationUpdatedAt.Value).TotalSeconds < 2
+                && user.LastLatitude.HasValue
+                && user.LastLongitude.HasValue
+                && Math.Abs(user.LastLatitude.Value - request.latitude) < 0.00001
+                && Math.Abs(user.LastLongitude.Value - request.longitude) < 0.00001)
+            {
+                return new ApiResponse<RiderLocationDto>(true, "Location unchanged", new RiderLocationDto
+                {
+                    riderUserId = riderUserId,
+                    storeId = user.StoreId,
+                    latitude = user.LastLatitude.Value,
+                    longitude = user.LastLongitude.Value,
+                    locationUpdatedAt = user.LocationUpdatedAt.Value,
+                    activeOrderCount = activeOrders.Count,
+                    deliveryStatus = PrimaryDeliveryStatus(activeOrders)
+                });
+            }
+
+            var recordedAt = request.recordedAt.HasValue && request.recordedAt.Value <= now.AddMinutes(1)
+                ? DateTime.SpecifyKind(request.recordedAt.Value, DateTimeKind.Utc)
+                : now;
+
+            user.LastLatitude = request.latitude;
+            user.LastLongitude = request.longitude;
+            user.LocationUpdatedAt = recordedAt;
+            user.LastSeenAt = now;
+            await _unitOfWork.UserRepository.UpdateAsync(user);
+            await _unitOfWork.SaveChangesAsync();
+
+            var status = PrimaryDeliveryStatus(activeOrders);
+            try
+            {
+                await _opsEvents.PublishRiderLocationChangedAsync(
+                    user.StoreId,
+                    riderUserId,
+                    user.LastLatitude,
+                    user.LastLongitude,
+                    user.LocationUpdatedAt,
+                    activeOrders.Count,
+                    status,
+                    cleared: false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Ops event publish failed after location update");
+            }
+
+            return new ApiResponse<RiderLocationDto>(true, "Location updated", new RiderLocationDto
+            {
+                riderUserId = riderUserId,
+                storeId = user.StoreId,
+                latitude = user.LastLatitude!.Value,
+                longitude = user.LastLongitude!.Value,
+                locationUpdatedAt = user.LocationUpdatedAt!.Value,
+                activeOrderCount = activeOrders.Count,
+                deliveryStatus = status
+            });
+        }
+
+        public async Task ClearRiderLocationAsync(Guid riderUserId, string? reason = null)
+        {
+            var user = await _unitOfWork.UserRepository.GetByUserIdAsync(riderUserId);
+            if (user == null)
+                return;
+            if (!user.LastLatitude.HasValue && !user.LastLongitude.HasValue && !user.LocationUpdatedAt.HasValue)
+                return;
+
+            user.LastLatitude = null;
+            user.LastLongitude = null;
+            user.LocationUpdatedAt = null;
+            await _unitOfWork.UserRepository.UpdateAsync(user);
+            await _unitOfWork.SaveChangesAsync();
+
+            try
+            {
+                await _opsEvents.PublishRiderLocationChangedAsync(
+                    user.StoreId,
+                    riderUserId,
+                    null,
+                    null,
+                    null,
+                    activeOrderCount: 0,
+                    deliveryStatus: null,
+                    cleared: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Ops event publish failed after clearing location ({Reason})", reason);
+            }
+        }
+
+        private async Task ClearLocationIfNoActiveAsync(Guid riderUserId)
+        {
+            var active = await _unitOfWork.AssignedOrderRepository.CountActiveForRiderAsync(riderUserId);
+            if (active == 0)
+                await ClearRiderLocationAsync(riderUserId, "NoActiveDeliveries");
+        }
+
+        private static string PrimaryDeliveryStatus(List<AssignedOrder> activeOrders)
+        {
+            if (activeOrders == null || activeOrders.Count == 0)
+                return null;
+            return activeOrders
+                .OrderByDescending(o => OrderStatuses.ProgressionIndex(o.Status))
+                .Select(o => o.Status)
+                .FirstOrDefault();
+        }
+
         public async Task<ApiResponse<AvailableOrderDto>> UpdateRiderStatusAsync(
             long id, Guid riderUserId, UpdateOrderStatusRequest request)
         {
@@ -673,6 +801,9 @@ namespace Rider.Infrastructure.Services
                     _logger.LogWarning(ex, "Ops event publish failed after status update");
                 }
 
+                if (next == OrderStatuses.Completed)
+                    await ClearLocationIfNoActiveAsync(riderUserId);
+
                 return new ApiResponse<AvailableOrderDto>(true, "Status updated", MapOrder(fresh!));
             }
             catch (Exception ex)
@@ -811,6 +942,8 @@ namespace Rider.Infrastructure.Services
                 {
                     _logger.LogWarning(ex, "Post-reject publish failed");
                 }
+
+                await ClearLocationIfNoActiveAsync(riderUserId);
 
                 var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
                 return new ApiResponse<AvailableOrderDto>(true, "Order rejected", MapOrder(fresh!));

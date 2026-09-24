@@ -16,6 +16,8 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<AvailableOrderDto>> UpdateRiderStatusAsync(long id, Guid riderUserId, UpdateOrderStatusRequest request);
         Task<ApiResponse<AvailableOrderDto>> RejectOrderAsync(long id, Guid riderUserId, RejectOrderRequest request);
         Task<ApiResponse<bool>> SetAvailabilityAsync(Guid riderUserId, bool isOnline);
+        Task<ApiResponse<RiderLocationDto>> UpdateRiderLocationAsync(Guid riderUserId, UpdateRiderLocationRequest request);
+        Task ClearRiderLocationAsync(Guid riderUserId, string? reason = null);
         Task TouchLastSeenAsync(Guid userId);
     }
 }

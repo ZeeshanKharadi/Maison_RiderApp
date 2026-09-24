@@ -14,6 +14,7 @@ export const API_PATHS = {
   orderHistory: '/api/Order/History',
   orderPerformance: '/api/Order/Performance',
   availability: '/api/Order/availability',
+  riderLocation: '/api/Order/location',
   finance: '/api/Order/Finance',
   financeSummary: '/api/Order/Finance/summary',
   orderById: (id: number | string) => `/api/Order/${id}`,

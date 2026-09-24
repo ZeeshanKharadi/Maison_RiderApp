@@ -39,6 +39,8 @@ import * as ordersRepository from '../repositories/ordersRepository';
 import type { OrderStatusPayload } from '../repositories/ordersRepository';
 import * as authRepository from '../repositories/authRepository';
 import { useAuth } from '../services/AuthContext';
+import { useDeliveryLocationTracking } from '../hooks/useDeliveryLocationTracking';
+import { stopNativeLocationTracking } from '../services/locationTrackingNative';
 
 const MAX_ACTIVE_JOBS = 5;
 
@@ -125,6 +127,9 @@ export function RiderSessionProvider({
     () => pickSelectedJob(activeJobs, selectedJobId),
     [activeJobs, selectedJobId],
   );
+
+  const trackingEnabled = !!user && activeJobs.some(isActiveJob);
+  useDeliveryLocationTracking(trackingEnabled, user?.id ?? null);
 
   const setOnline = useCallback(async (online: boolean): Promise<boolean> => {
     setLifecyclePending(true);
@@ -278,6 +283,7 @@ export function RiderSessionProvider({
   // Clear rider-scoped UI state on logout / account switch
   useEffect(() => {
     if (user) return;
+    void stopNativeLocationTracking();
     setIsOnline(false);
     setShiftStartedAt(null);
     setActiveJobs([]);

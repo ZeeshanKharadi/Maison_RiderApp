@@ -76,6 +76,7 @@ public class AuthResetTests : IDisposable
             new FakeJwt(),
             _otp,
             config,
+            new NoOpOpsEventPublisher(),
             NullLogger<UserService>.Instance);
     }
 

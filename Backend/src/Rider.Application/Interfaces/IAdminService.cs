@@ -8,6 +8,7 @@ namespace Rider.Application.Interfaces
         Task<AdminActor> ResolveActorAsync(string userId);
 
         Task<ApiResponse<List<AdminRiderDto>>> ListRidersAsync(AdminActor actor, string storeId);
+        Task<ApiResponse<List<AdminLiveRiderDto>>> ListLiveMapRidersAsync(AdminActor actor, string storeId);
         Task<ApiResponse<AdminRiderDto>> GetRiderAsync(AdminActor actor, Guid riderId);
         Task<ApiResponse<AdminRiderDto>> CreateRiderAsync(AdminActor actor, CreateRiderRequest request);
         Task<ApiResponse<AdminRiderDto>> UpdateRiderAsync(AdminActor actor, Guid riderId, UpdateRiderRequest request);

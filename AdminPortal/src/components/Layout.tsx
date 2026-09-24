@@ -12,6 +12,7 @@ import {
 const NAV = [
   { to: '/', label: 'Overview', icon: 'bi-grid-1x2', end: true },
   { to: '/operations', label: 'Live operations', icon: 'bi-broadcast', end: false },
+  { to: '/live-map', label: 'Live map', icon: 'bi-geo-alt', end: false },
   { to: '/riders', label: 'Riders', icon: 'bi-people', end: false },
   { to: '/payments', label: 'Payments', icon: 'bi-cash-stack', end: false },
   { to: '/reports', label: 'Reports', icon: 'bi-graph-up', end: false },

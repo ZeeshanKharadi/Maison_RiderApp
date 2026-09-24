@@ -29,6 +29,18 @@ export type AdminNotificationCreatedPayload = {
   at?: string;
 };
 
+export type RiderLocationChangedPayload = {
+  riderUserId: string;
+  storeId?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationUpdatedAt?: string | null;
+  activeOrderCount?: number;
+  deliveryStatus?: string | null;
+  cleared?: boolean;
+  at?: string;
+};
+
 type AnyHandler = (...args: unknown[]) => void;
 
 let connection: HubConnection | null = null;
@@ -144,6 +156,12 @@ export function subscribeAdminNotificationCreated(
   handler: (payload: AdminNotificationCreatedPayload) => void,
 ): () => void {
   return subscribeEvent('AdminNotificationCreated', handler as AnyHandler);
+}
+
+export function subscribeRiderLocationChanged(
+  handler: (payload: RiderLocationChangedPayload) => void,
+): () => void {
+  return subscribeEvent('RiderLocationChanged', handler as AnyHandler);
 }
 
 /**

@@ -324,6 +324,43 @@ public class OrderLifecycleTests : IDisposable
         Assert.NotNull(audit);
     }
 
+    [Fact]
+    public async Task Location_update_requires_active_delivery_and_clears_after_complete()
+    {
+        var denied = await _orders.UpdateRiderLocationAsync(_riderA, new UpdateRiderLocationRequest
+        {
+            latitude = 24.86,
+            longitude = 67.00
+        });
+        Assert.False(denied.status);
+
+        var id = await SeedAvailableOrderAsync("LOC1");
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+
+        var ok = await _orders.UpdateRiderLocationAsync(_riderA, new UpdateRiderLocationRequest
+        {
+            latitude = 24.861,
+            longitude = 67.002
+        });
+        Assert.True(ok.status, ok.message);
+        Assert.Equal(24.861, ok.Data!.latitude, 3);
+
+        var user = await _db.Users.AsNoTracking().FirstAsync(u => u.UserId == _riderA);
+        Assert.NotNull(user.LastLatitude);
+        Assert.NotNull(user.LocationUpdatedAt);
+
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.InProgress })).status);
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest
+        {
+            status = OrderStatuses.Completed,
+            cashCollected = 100
+        })).status);
+
+        user = await _db.Users.AsNoTracking().FirstAsync(u => u.UserId == _riderA);
+        Assert.Null(user.LastLatitude);
+        Assert.Null(user.LocationUpdatedAt);
+    }
+
     private sealed class NoOpRiderNotifications : IRiderNotificationService
     {
         public Task NotifyDirectAssignmentAsync(Guid riderUserId, string orderId, long? assignedOrderId, string storeId, decimal orderTotal)

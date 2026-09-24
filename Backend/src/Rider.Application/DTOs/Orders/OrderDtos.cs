@@ -137,6 +137,25 @@ namespace Rider.Application.DTOs.Orders
         public bool isOnline { get; set; }
     }
 
+    public class UpdateRiderLocationRequest
+    {
+        public double latitude { get; set; }
+        public double longitude { get; set; }
+        public double? accuracyMeters { get; set; }
+        public DateTime? recordedAt { get; set; }
+    }
+
+    public class RiderLocationDto
+    {
+        public Guid riderUserId { get; set; }
+        public string storeId { get; set; }
+        public double latitude { get; set; }
+        public double longitude { get; set; }
+        public DateTime locationUpdatedAt { get; set; }
+        public int activeOrderCount { get; set; }
+        public string deliveryStatus { get; set; }
+    }
+
     public class RiderPerformanceDto
     {
         public int completedCount { get; set; }

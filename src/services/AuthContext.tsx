@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as authRepository from '../repositories/authRepository';
 import { clearTokens, getAccessToken } from '../api/tokenStorage';
 import notificationService from './NotificationService';
+import { stopNativeLocationTracking } from './locationTrackingNative';
 import { loginUser } from './UserService';
 
 export interface User {
@@ -98,6 +99,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    try {
+      await stopNativeLocationTracking();
+    } catch {
+      /* ignore */
+    }
     try {
       await authRepository.logout();
     } catch {

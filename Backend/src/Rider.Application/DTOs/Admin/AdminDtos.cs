@@ -14,6 +14,24 @@ namespace Rider.Application.DTOs.Admin
         public bool IsManager => Roles.Contains("Manager");
     }
 
+    public class AdminLiveRiderDto
+    {
+        public Guid riderUserId { get; set; }
+        public string workerId { get; set; }
+        public string name { get; set; }
+        public string storeId { get; set; }
+        public string storeName { get; set; }
+        public bool isOnline { get; set; }
+        public int activeOrderCount { get; set; }
+        public string deliveryStatus { get; set; }
+        public double? latitude { get; set; }
+        public double? longitude { get; set; }
+        public DateTime? locationUpdatedAt { get; set; }
+        public bool hasLocation { get; set; }
+        public bool isStale { get; set; }
+        public int staleAfterSeconds { get; set; }
+    }
+
     public class AdminRiderDto
     {
         public Guid userId { get; set; }

@@ -1370,6 +1370,27 @@ GO
 PRINT 'Completed section: 007_Phase1Corrections.sql';
 GO
 
-PRINT 'All sections 001–007 applied (combined scripts.sql).';
+
+-- =============================================================================
+-- RiderManagement — Rider live GPS fields on Users
+-- Safe to re-run.
+-- =============================================================================
+USE RiderManagement;
+GO
+
+IF COL_LENGTH('dbo.Users', 'LastLatitude') IS NULL
+    ALTER TABLE dbo.Users ADD LastLatitude FLOAT NULL;
+GO
+
+IF COL_LENGTH('dbo.Users', 'LastLongitude') IS NULL
+    ALTER TABLE dbo.Users ADD LastLongitude FLOAT NULL;
+GO
+
+IF COL_LENGTH('dbo.Users', 'LocationUpdatedAt') IS NULL
+    ALTER TABLE dbo.Users ADD LocationUpdatedAt DATETIME2 NULL;
+GO
+
+
+PRINT 'All sections 001–008 applied (combined scripts.sql).';
 GO
 

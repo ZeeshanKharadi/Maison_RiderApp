@@ -24,6 +24,7 @@ namespace Rider.Infrastructure.Services
         private readonly IJwtTokenHandler _jwtTokenHandler;
         private readonly IOtpNotifier _otpNotifier;
         private readonly IConfiguration _configuration;
+        private readonly IOpsEventPublisher _opsEvents;
         private readonly ILogger<UserService> _logger;
 
         public UserService(
@@ -32,6 +33,7 @@ namespace Rider.Infrastructure.Services
             IJwtTokenHandler jwtTokenHandler,
             IOtpNotifier otpNotifier,
             IConfiguration configuration,
+            IOpsEventPublisher opsEvents,
             ILogger<UserService> logger)
         {
             _unitOfWork = unitOfWork;
@@ -39,6 +41,7 @@ namespace Rider.Infrastructure.Services
             _jwtTokenHandler = jwtTokenHandler;
             _otpNotifier = otpNotifier;
             _configuration = configuration;
+            _opsEvents = opsEvents;
             _logger = logger;
         }
 
@@ -346,8 +349,26 @@ namespace Rider.Infrastructure.Services
                     await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(token);
                 }
 
-                if (tokens.Count > 0)
-                    await _unitOfWork.SaveChangesAsync();
+                var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
+                if (user != null
+                    && (user.LastLatitude.HasValue || user.LastLongitude.HasValue || user.LocationUpdatedAt.HasValue))
+                {
+                    user.LastLatitude = null;
+                    user.LastLongitude = null;
+                    user.LocationUpdatedAt = null;
+                    await _unitOfWork.UserRepository.UpdateAsync(user);
+                    try
+                    {
+                        await _opsEvents.PublishRiderLocationChangedAsync(
+                            user.StoreId, uid, null, null, null, 0, null, cleared: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Location clear publish failed on logout");
+                    }
+                }
+
+                await _unitOfWork.SaveChangesAsync();
             }
 
             return new ApiResponse<string>(true, "", "");

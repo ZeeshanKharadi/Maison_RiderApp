@@ -124,6 +124,20 @@ namespace Rider.WebAPI.Controllers
             return Ok(result);
         }
 
+        [HttpPut("location")]
+        [Authorize]
+        [EnableRateLimiting("location")]
+        public async Task<IActionResult> UpdateLocation([FromBody] UpdateRiderLocationRequest request)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _orderService.UpdateRiderLocationAsync(uid, request ?? new UpdateRiderLocationRequest());
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
         [HttpPost("{id}/reject")]
         [Authorize]
         public async Task<IActionResult> Reject(string id, [FromBody] RejectOrderRequest request)
