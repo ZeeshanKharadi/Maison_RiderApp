@@ -179,7 +179,7 @@ class NotificationService {
 
   setupNotificationListeners(options: {
     incrementUnreadCount: () => void;
-    onOrderNotification?: () => void;
+    onOrderNotification?: (data?: Record<string, string>) => void;
   }): () => void {
     if (this.listenersSetup) {
       return () => {};
@@ -202,7 +202,15 @@ class NotificationService {
       options.incrementUnreadCount();
 
       if (remoteMessage.data?.category === 'orders') {
-        options.onOrderNotification?.();
+        const data: Record<string, string> = {};
+        const raw = remoteMessage.data || {};
+        for (const [k, v] of Object.entries(raw)) {
+          if (v != null) data[k] = String(v);
+        }
+        if (remoteMessage.notification?.title) {
+          data.title = String(remoteMessage.notification.title);
+        }
+        options.onOrderNotification?.(data);
       }
     });
 

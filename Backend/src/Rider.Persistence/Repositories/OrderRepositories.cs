@@ -31,6 +31,16 @@ namespace Rider.Persistence.Repositories
 
         public async Task<List<AssignedOrder>> GetAvailableWithItemsAsync(Guid riderUserId)
         {
+            var riderStoreId = await _appContext.Users
+                .AsNoTracking()
+                .Where(u => u.UserId == riderUserId && u.DeletedAt == null)
+                .Select(u => u.StoreId)
+                .FirstOrDefaultAsync();
+
+            // Riders without a store assignment must not see the open pool.
+            if (string.IsNullOrWhiteSpace(riderStoreId))
+                return new List<AssignedOrder>();
+
             var rejectedIds = await _appContext.OrderRejections
                 .AsNoTracking()
                 .Where(r => r.RiderUserId == riderUserId)
@@ -43,6 +53,8 @@ namespace Rider.Persistence.Repositories
                 .Include(o => o.Batch)
                     .ThenInclude(b => b.Store)
                 .Where(o => o.Status == OrderStatuses.Available
+                    && o.Batch != null
+                    && o.Batch.StoreId == riderStoreId
                     && !rejectedIds.Contains(o.Id)
                     && (
                         // Open pool: not direct-held, unreserved
@@ -138,6 +150,19 @@ namespace Rider.Persistence.Repositories
                 .Where(o => o.AcceptedByUserId == riderUserId
                     && OrderStatuses.ActiveStatuses.Contains(o.Status))
                 .OrderByDescending(o => o.AcceptedAt ?? o.CreatedAt)
+                .ToListAsync();
+
+        public async Task<List<AssignedOrder>> GetRecentlyCancelledForRiderAsync(
+            Guid riderUserId, DateTime sinceUtcInclusive)
+            => await _entities
+                .AsNoTracking()
+                .Include(o => o.Items)
+                .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
+                .Where(o => o.AcceptedByUserId == riderUserId
+                    && o.Status == OrderStatuses.Cancelled
+                    && (o.UpdatedAt ?? o.CreatedAt) >= sinceUtcInclusive)
+                .OrderByDescending(o => o.UpdatedAt ?? o.CreatedAt)
                 .ToListAsync();
 
         public async Task<bool> TryAcceptAvailableAsync(long id, Guid riderUserId, DateTime acceptedAtUtc)

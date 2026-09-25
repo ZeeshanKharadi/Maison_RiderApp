@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useAccount } from '../context/AccountContext';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
+import { useRiderSession } from '../context/RiderSessionContext';
 import * as notificationsRepository from '../repositories/notificationsRepository';
 import {
   shouldAlertNotification,
@@ -17,6 +18,7 @@ const POLL_MS = 8_000;
 export function useRiderNotificationPoll(enabled: boolean) {
   const { settings, syncNotifications, notifications } = useAccount();
   const { refreshOrders } = useAvailableOrders();
+  const { restoreActiveDeliveries } = useRiderSession();
   const alertedRef = useRef<Set<string>>(new Set());
   const notificationsRef = useRef(notifications);
 
@@ -53,11 +55,21 @@ export function useRiderNotificationPoll(enabled: boolean) {
         if (!shouldAlertNotification(n, settings.pushNotifications)) continue;
 
         alertedRef.current.add(n.id);
-        void showOrderNotificationAlert(n.title, n.description, {
-          category: n.category,
-        });
         if (n.category === 'orders') {
           void refreshOrders();
+          if (/cancel/i.test(n.title) || /cancel/i.test(n.description)) {
+            // One rider-facing Alert comes from restore (or FCM). Avoid a second
+            // local notification + Alert stack for the same cancel.
+            void restoreActiveDeliveries();
+          } else {
+            void showOrderNotificationAlert(n.title, n.description, {
+              category: n.category,
+            });
+          }
+        } else {
+          void showOrderNotificationAlert(n.title, n.description, {
+            category: n.category,
+          });
         }
       }
     };
@@ -73,5 +85,11 @@ export function useRiderNotificationPoll(enabled: boolean) {
       clearInterval(interval);
       sub.remove();
     };
-  }, [enabled, settings.pushNotifications, syncNotifications, refreshOrders]);
+  }, [
+    enabled,
+    settings.pushNotifications,
+    syncNotifications,
+    refreshOrders,
+    restoreActiveDeliveries,
+  ]);
 }

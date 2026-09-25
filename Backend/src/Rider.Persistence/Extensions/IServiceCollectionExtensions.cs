@@ -32,8 +32,10 @@ namespace Rider.Persistence.Extensions
         /// </summary>
         private static void AddJwtAuthentication(this IServiceCollection services, IConfiguration configuration)
         {
-            var key = configuration["Jwt:Key"]
-                ?? "vOaVRG1GcJtMNf1Cw9REPgAnMLA8OYFx9aRKM7Pg+oj3RAIVFGJm4iItG5VmjhJr8uU+ddvnXfM=";
+            var key = configuration["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(key))
+                throw new InvalidOperationException(
+                    "Jwt:Key is not configured. Set via environment variable Jwt__Key or appsettings.Local.json.");
 
             services.AddAuthentication(options =>
             {

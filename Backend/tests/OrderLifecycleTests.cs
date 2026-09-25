@@ -369,6 +369,10 @@ public class OrderLifecycleTests : IDisposable
         public Task NotifyOpenPoolOrderAsync(string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
             => Task.CompletedTask;
 
+        public Task NotifyOrderCancelledAsync(
+            Guid riderUserId, string orderId, long? assignedOrderId, string? cancelReason)
+            => Task.CompletedTask;
+
         public Task<ApiResponse<List<RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50)
             => throw new NotImplementedException();
 

@@ -17,6 +17,16 @@ namespace Rider.Application.Interfaces
         Task NotifyOpenPoolOrderAsync(
             string orderId, long? assignedOrderId, string storeId, decimal orderTotal);
 
+        /// <summary>
+        /// Admin cancelled an order assigned to this rider.
+        /// Inbox + FCM only for the affected rider (not store-wide).
+        /// </summary>
+        Task NotifyOrderCancelledAsync(
+            Guid riderUserId,
+            string orderId,
+            long? assignedOrderId,
+            string? cancelReason);
+
         /// <summary>Admin/Swagger test: send inbox + FCM to one user.</summary>
         Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(SendNotificationRequest request);
 

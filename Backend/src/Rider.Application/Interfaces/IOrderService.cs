@@ -9,6 +9,12 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<AssignOrderToRiderResultDto>> AssignOrderToRiderAsync(AssignOrderToRiderRequest request);
         Task<ApiResponse<List<AvailableOrderDto>>> GetAvailableOrdersAsync(Guid riderUserId);
         Task<ApiResponse<List<AvailableOrderDto>>> GetActiveOrdersAsync(Guid riderUserId);
+        /// <summary>
+        /// Recently cancelled orders for this rider (restore/reconnect awareness).
+        /// Not included in Active.
+        /// </summary>
+        Task<ApiResponse<List<AvailableOrderDto>>> GetRecentlyCancelledOrdersAsync(
+            Guid riderUserId, int withinMinutes = 180);
         Task<ApiResponse<List<AvailableOrderDto>>> GetOrderHistoryAsync(Guid riderUserId, int page, int pageSize);
         Task<ApiResponse<RiderPerformanceDto>> GetPerformanceAsync(Guid riderUserId, DateTime? from, DateTime? to);
         Task<ApiResponse<AvailableOrderDto>> GetOrderByIdAsync(long id, Guid? riderUserId = null);

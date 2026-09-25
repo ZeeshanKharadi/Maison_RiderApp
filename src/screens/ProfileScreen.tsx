@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -35,6 +35,7 @@ import {
 import { APP_VERSION } from '../constants/app';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
+import * as ordersRepository from '../repositories/ordersRepository';
 
 function docTone(status: DocumentStatus): 'success' | 'warning' | 'error' | 'neutral' {
   if (status === 'verified') return 'success';
@@ -58,7 +59,7 @@ type EditDraft = Pick<
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const { openMenu } = useSideMenu();
-  const { isOnline, activeJob, stats } = useRiderSession();
+  const { isOnline, activeJob } = useRiderSession();
   const { profile, documents, updateProfile } = useAccount();
 
   const [editOpen, setEditOpen] = useState(false);
@@ -70,6 +71,7 @@ export default function ProfileScreen() {
     language: profile.language,
   });
   const [saving, setSaving] = useState(false);
+  const [completedCount, setCompletedCount] = useState<number | null>(null);
 
   const displayName = user?.name || profile.fullName || 'Rider';
   const shiftLabel = activeJob
@@ -78,10 +80,17 @@ export default function ProfileScreen() {
       ? 'On shift'
       : 'Off shift';
 
-  const lifetimeDeliveries = useMemo(
-    () => Math.max(stats.monthlyDeliveries, stats.weeklyDeliveries),
-    [stats.monthlyDeliveries, stats.weeklyDeliveries],
-  );
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const result = await ordersRepository.fetchPerformance();
+      if (!alive) return;
+      if (result.ok) setCompletedCount(result.data.completedCount);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const openEdit = () => {
     setDraft({
@@ -103,7 +112,10 @@ export default function ProfileScreen() {
         return;
       }
       setEditOpen(false);
-      Alert.alert('Profile updated', 'Your changes have been saved.');
+      Alert.alert(
+        'Saved on this device',
+        'Profile edits are stored on this phone only and are not synced to the server yet.',
+      );
     } finally {
       setSaving(false);
     }
@@ -191,16 +203,14 @@ export default function ProfileScreen() {
         </View>
 
         <SectionHeader title="Performance snapshot" style={styles.sectionGap} />
+        <Text style={styles.docNotice}>
+          Last 7 days completed deliveries from the server (API default window).
+          Ratings are not tracked in this app.
+        </Text>
         <View style={styles.statsRow}>
           <StatCard
-            label="Rating"
-            value={stats.todayRating.toFixed(1)}
-            icon="star"
-            style={styles.stat}
-          />
-          <StatCard
-            label="Deliveries"
-            value={String(lifetimeDeliveries)}
+            label="Last 7 days completed"
+            value={completedCount == null ? '—' : String(completedCount)}
             icon="package-variant"
             style={styles.stat}
           />

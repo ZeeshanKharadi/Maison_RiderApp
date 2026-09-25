@@ -89,6 +89,11 @@ public class SqlServerConcurrencyTests
             crypto,
             new PasswordVerifier(crypto),
             new NoOpOps(),
+            new NoOpRiderNotifications(),
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Location:StaleSeconds"] = "90"
+            }).Build(),
             NullLogger<AdminService>.Instance);
     }
 
@@ -606,6 +611,11 @@ public class SqlServerConcurrencyTests
             => Task.CompletedTask;
         public Task NotifyOpenPoolOrderAsync(string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
             => Task.CompletedTask;
+
+        public Task NotifyOrderCancelledAsync(
+            Guid riderUserId, string orderId, long? assignedOrderId, string? cancelReason)
+            => Task.CompletedTask;
+
         public Task<ApiResponse<List<Rider.Application.DTOs.Notifications.RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50)
             => throw new NotImplementedException();
         public Task<ApiResponse<string>> MarkReadAsync(Guid userId, long notificationId) => throw new NotImplementedException();

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -36,6 +36,7 @@ import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import * as ordersRepository from '../repositories/ordersRepository';
+import type { RiderPerformance } from '../repositories/ordersRepository';
 import {
   colors,
   elevation,
@@ -55,8 +56,15 @@ function goStack(screen: string) {
   navigate('MainDrawer', { screen });
 }
 
+function startOfLocalDay(d = new Date()): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
 /**
- * Rider command center — answers: online? active job? earned today? what's next?
+ * Rider command center — answers: online? active job? what's next?
+ * Summary metrics come from GET /api/Order/Performance (not session-local estimates).
  */
 export default function DashboardScreen() {
   const navigation = useNavigation();
@@ -68,12 +76,43 @@ export default function DashboardScreen() {
     setOnline,
     shiftStartedAt,
     activeJob,
-    stats,
   } = useRiderSession();
   const { notifications, profile, unreadCount } = useAccount();
   const { orders } = useAvailableOrders();
 
   const [now] = useState(() => new Date());
+  const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
+  const [weekPerf, setWeekPerf] = useState<RiderPerformance | null>(null);
+
+  const loadPerformance = useCallback(async () => {
+    const end = new Date();
+    const dayStart = startOfLocalDay(end);
+    const weekStart = new Date(dayStart);
+    weekStart.setDate(weekStart.getDate() - 6);
+
+    const [today, week] = await Promise.all([
+      ordersRepository.fetchPerformance({ from: dayStart, to: end }),
+      ordersRepository.fetchPerformance({ from: weekStart, to: end }),
+    ]);
+    // Clear on failure so we never show another rider's (or stale) values.
+    setTodayPerf(today.ok ? today.data : null);
+    setWeekPerf(week.ok ? week.data : null);
+  }, []);
+
+  useEffect(() => {
+    setTodayPerf(null);
+    setWeekPerf(null);
+    void loadPerformance();
+  }, [user?.id, loadPerformance]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener?.('focus', () => {
+      void loadPerformance();
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [navigation, loadPerformance]);
 
   const greeting = useMemo(() => getGreeting(now), [now]);
   const dateLabel = useMemo(() => formatDashboardDate(now), [now]);
@@ -241,32 +280,41 @@ export default function DashboardScreen() {
           ) : null}
         </View>
 
-        {/* 3. Today's Summary */}
+        {/* 3. Today's Summary — server Performance API (not session estimates) */}
         <SectionHeader title="Today" />
+        <Text style={styles.summaryHint}>
+          From server records. COD collected is cash in hand, not earnings.
+        </Text>
         <View style={styles.statsRow}>
           <StatCard
             icon="package-variant"
             label="Deliveries"
-            value={String(stats.todayDeliveries)}
+            value={todayPerf ? String(todayPerf.completedCount) : '—'}
           />
           <StatCard
             icon="cash"
-            label="Earnings"
-            value={formatMoney(stats.todayEarnings)}
+            label="COD collected"
+            value={
+              todayPerf ? formatMoney(todayPerf.codCollected) : '—'
+            }
           />
         </View>
         <View style={styles.statsRow}>
           <StatCard
-            icon="star"
-            label="Avg rating"
-            value={stats.todayRating.toFixed(1)}
-            iconColor={colors.star}
+            icon="timer-outline"
+            label="Online hours"
+            value={
+              todayPerf ? `${todayPerf.onlineHours.toFixed(1)}h` : '—'
+            }
+            iconColor={colors.info}
           />
           <StatCard
-            icon="timer-outline"
-            label="Hours worked"
-            value={`${stats.hoursWorked}h`}
-            iconColor={colors.info}
+            icon="wallet-outline"
+            label="COD outstanding"
+            value={
+              todayPerf ? formatMoney(todayPerf.codOutstanding) : '—'
+            }
+            iconColor={colors.warning}
           />
         </View>
 
@@ -413,20 +461,24 @@ export default function DashboardScreen() {
         />
         <View style={styles.perfCard}>
           <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>{stats.weeklyDeliveries}</Text>
-            <Text style={styles.perfLabel}>Weekly deliveries</Text>
+            <Text style={styles.perfValue}>
+              {weekPerf ? String(weekPerf.completedCount) : '—'}
+            </Text>
+            <Text style={styles.perfLabel}>7-day deliveries</Text>
           </View>
           <View style={styles.perfDivider} />
           <View style={styles.perfItem}>
             <Text style={styles.perfValue}>
-              {Math.round(stats.completionRate)}%
+              {weekPerf ? `${weekPerf.onlineHours.toFixed(1)}h` : '—'}
             </Text>
-            <Text style={styles.perfLabel}>Completion</Text>
+            <Text style={styles.perfLabel}>7-day online</Text>
           </View>
           <View style={styles.perfDivider} />
           <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>#{stats.ranking}</Text>
-            <Text style={styles.perfLabel}>City rank</Text>
+            <Text style={styles.perfValue}>
+              {weekPerf ? formatMoney(weekPerf.codCollected) : '—'}
+            </Text>
+            <Text style={styles.perfLabel}>7-day COD</Text>
           </View>
         </View>
 
@@ -605,6 +657,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginBottom: spacing.sm,
+  },
+  summaryHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+    marginTop: -spacing.xs,
   },
   activeCard: {
     backgroundColor: colors.surface,

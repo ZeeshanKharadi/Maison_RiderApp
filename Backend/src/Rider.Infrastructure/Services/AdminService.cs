@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Rider.Application.DTOs.Admin;
 using Rider.Application.DTOs.Orders;
@@ -21,6 +22,8 @@ namespace Rider.Infrastructure.Services
         private readonly IPasswordCrypto _passwordCrypto;
         private readonly PasswordVerifier _passwordVerifier;
         private readonly IOpsEventPublisher _opsEvents;
+        private readonly IRiderNotificationService _riderNotifications;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<AdminService> _logger;
 
         public AdminService(
@@ -28,12 +31,16 @@ namespace Rider.Infrastructure.Services
             IPasswordCrypto passwordCrypto,
             PasswordVerifier passwordVerifier,
             IOpsEventPublisher opsEvents,
+            IRiderNotificationService riderNotifications,
+            IConfiguration configuration,
             ILogger<AdminService> logger)
         {
             _unitOfWork = unitOfWork;
             _passwordCrypto = passwordCrypto;
             _passwordVerifier = passwordVerifier;
             _opsEvents = opsEvents;
+            _riderNotifications = riderNotifications;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -74,7 +81,9 @@ namespace Rider.Infrastructure.Services
             if (scoped.denied)
                 return Fail<List<AdminLiveRiderDto>>(scoped.message);
 
-            const int staleSeconds = 90;
+            var staleSeconds = int.TryParse(_configuration["Location:StaleSeconds"], out var ss) && ss > 0
+                ? ss
+                : 90;
 
             var riders = await _unitOfWork.UserRepository.ListRidersAsync(scoped.storeId);
             var stores = await StoreLookupAsync();
@@ -424,6 +433,10 @@ namespace Rider.Infrastructure.Services
             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
             await _unitOfWork.SaveChangesAsync();
 
+            var assignedRiderId = order.AcceptedByUserId;
+            var notifyRider = assignedRiderId.HasValue
+                && OrderStatuses.IsActiveStatus(previous);
+
             try
             {
                 await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Cancelled);
@@ -431,6 +444,24 @@ namespace Rider.Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Ops publish after cancel failed");
+            }
+
+            // Notify only the assigned rider (not the whole store). Skip if cancel
+            // applied to an unassigned Available order, or if previous state was not active.
+            if (notifyRider)
+            {
+                try
+                {
+                    await _riderNotifications.NotifyOrderCancelledAsync(
+                        assignedRiderId!.Value,
+                        order.OrderId,
+                        order.Id,
+                        reason.Trim());
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Rider cancel notification failed for order {OrderId}", order.OrderId);
+                }
             }
 
             var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);

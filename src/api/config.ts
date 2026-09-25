@@ -11,6 +11,7 @@ export const API_PATHS = {
   updatePassword: '/api/User/UpdatePassword',
   availableOrders: '/api/Order/Available',
   activeOrders: '/api/Order/Active',
+  recentCancellations: '/api/Order/RecentCancellations',
   orderHistory: '/api/Order/History',
   orderPerformance: '/api/Order/Performance',
   availability: '/api/Order/availability',

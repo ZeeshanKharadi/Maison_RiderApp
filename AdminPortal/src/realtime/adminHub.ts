@@ -165,8 +165,9 @@ export function subscribeRiderLocationChanged(
 }
 
 /**
- * Optional store group join. Server already adds Hoffice + claim storeId on connect.
- * Call when filtering a store not on the JWT claims.
+ * Optional store group join for HO admins filtering a specific store.
+ * Managers are already limited to their JWT storeId on the server;
+ * JoinStore(otherStoreId) is denied server-side.
  */
 export async function joinStore(storeId: string): Promise<void> {
   if (!storeId.trim()) return;

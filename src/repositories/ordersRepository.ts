@@ -129,6 +129,31 @@ export async function fetchActiveOrders(): Promise<ApiResult<AvailableOrder[]>> 
   }
 }
 
+/** Recently cancelled jobs for this rider (restore/reconnect awareness). */
+export async function fetchRecentCancellations(
+  withinMinutes = 180,
+): Promise<ApiResult<AvailableOrder[]>> {
+  try {
+    const qs = `?withinMinutes=${encodeURIComponent(String(withinMinutes))}`;
+    const envelope = await apiEnvelope<ApiAvailableOrder[]>(
+      `${API_PATHS.recentCancellations}${qs}`,
+      { auth: true },
+    );
+
+    if (!envelope.status) {
+      return fail(
+        'RECENT_CANCELLATIONS_FAILED',
+        envelope.message || 'Failed to load cancellations',
+      );
+    }
+
+    const rows = Array.isArray(envelope.Data) ? envelope.Data : [];
+    return ok(rows.map(mapApiOrderToAvailable));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to reach cancellations API');
+  }
+}
+
 export async function fetchOrderHistory(
   page = 1,
   pageSize = 20,
@@ -154,10 +179,25 @@ export async function fetchOrderHistory(
   }
 }
 
-export async function fetchPerformance(): Promise<ApiResult<RiderPerformance>> {
+export async function fetchPerformance(opts?: {
+  from?: Date | string | null;
+  to?: Date | string | null;
+}): Promise<ApiResult<RiderPerformance>> {
   try {
+    const qs = new URLSearchParams();
+    if (opts?.from) {
+      const from =
+        opts.from instanceof Date ? opts.from.toISOString() : String(opts.from);
+      qs.set('from', from);
+    }
+    if (opts?.to) {
+      const to =
+        opts.to instanceof Date ? opts.to.toISOString() : String(opts.to);
+      qs.set('to', to);
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const envelope = await apiEnvelope<ApiRiderPerformance>(
-      API_PATHS.orderPerformance,
+      `${API_PATHS.orderPerformance}${suffix}`,
       { auth: true },
     );
 

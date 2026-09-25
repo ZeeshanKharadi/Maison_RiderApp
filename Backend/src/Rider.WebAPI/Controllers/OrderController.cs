@@ -91,6 +91,20 @@ namespace Rider.WebAPI.Controllers
             return Ok(await _orderService.GetActiveOrdersAsync(uid));
         }
 
+        /// <summary>
+        /// Recently cancelled orders attributed to this rider (for restore/reconnect alerts).
+        /// Cancelled orders are intentionally excluded from Active.
+        /// </summary>
+        [HttpGet("RecentCancellations")]
+        [Authorize]
+        public async Task<IActionResult> GetRecentCancellations([FromQuery] int withinMinutes = 180)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            return Ok(await _orderService.GetRecentlyCancelledOrdersAsync(uid, withinMinutes));
+        }
+
         [HttpGet("History")]
         [Authorize]
         public async Task<IActionResult> GetHistory([FromQuery] int page = 1, [FromQuery] int pageSize = 20)

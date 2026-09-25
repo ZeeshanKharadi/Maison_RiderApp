@@ -38,6 +38,8 @@ import {
 import * as ordersRepository from '../repositories/ordersRepository';
 import type { OrderStatusPayload } from '../repositories/ordersRepository';
 import * as authRepository from '../repositories/authRepository';
+import * as cancellationAckRepository from '../repositories/cancellationAckRepository';
+import { planCancellationAlerts } from '../utils/cancellationAlertPlan';
 import { useAuth } from '../services/AuthContext';
 import { useDeliveryLocationTracking } from '../hooks/useDeliveryLocationTracking';
 import { stopNativeLocationTracking } from '../services/locationTrackingNative';
@@ -95,7 +97,10 @@ type RiderSessionContextValue = {
   wallet: WalletState;
   stats: SessionStats;
   withdrawFunds: (amount: number) => boolean;
-  restoreActiveDeliveries: () => Promise<void>;
+  restoreActiveDeliveries: (opts?: {
+    /** Skip cancel Alert (caller already showed one). Still persists ack for new cancels. */
+    suppressCancelAlert?: boolean;
+  }) => Promise<void>;
   lifecyclePending: boolean;
   lastLifecycleError: string | null;
 };
@@ -221,64 +226,139 @@ export function RiderSessionProvider({
     setSelectedJobId(job.id);
   }, []);
 
-  const restoreActiveDeliveries = useCallback(async () => {
-    if (restoringRef.current) return;
-    restoringRef.current = true;
-    setLifecyclePending(true);
-    try {
-      const result = await ordersRepository.fetchActiveOrders();
-      if (!result.ok) {
-        setLastLifecycleError(result.error.message);
-        return;
-      }
+  const restoreActiveDeliveries = useCallback(
+    async (opts?: { suppressCancelAlert?: boolean }) => {
+      if (restoringRef.current) return;
+      restoringRef.current = true;
+      setLifecyclePending(true);
+      try {
+        const [activeResult, cancelledResult] = await Promise.all([
+          ordersRepository.fetchActiveOrders(),
+          ordersRepository.fetchRecentCancellations(180),
+        ]);
 
-      const cancelled: AvailableOrder[] = [];
-      const active: AvailableOrder[] = [];
-      for (const order of result.data) {
-        if (isCancelledBackendStatus(order.backendStatus)) {
-          cancelled.push(order);
-        } else if (
-          order.backendStatus &&
-          /completed/i.test(order.backendStatus)
-        ) {
-          // Completed should not appear in Active; skip if it does.
-        } else {
-          active.push(order);
+        if (!activeResult.ok) {
+          setLastLifecycleError(activeResult.error.message);
+          return;
         }
-      }
 
-      if (cancelled.length > 0) {
-        const labels = cancelled.map(o => o.id).join(', ');
-        Alert.alert(
-          'Order cancelled',
-          cancelled.length === 1
-            ? `Order ${labels} was cancelled.`
-            : `Orders cancelled: ${labels}`,
-        );
-      }
+        const cancelledFromApi =
+          cancelledResult.ok && Array.isArray(cancelledResult.data)
+            ? cancelledResult.data
+            : [];
 
-      const jobs: ActiveDeliveryJob[] = [];
-      for (const order of active) {
-        try {
-          jobs.push(createJobFromOrder(order, { restore: true }));
-        } catch {
-          // Skip rows missing backendId
+        // Also honor cancelled rows if Active ever returns them (legacy / edge).
+        const cancelledFromActive: AvailableOrder[] = [];
+        const active: AvailableOrder[] = [];
+        for (const order of activeResult.data) {
+          if (isCancelledBackendStatus(order.backendStatus)) {
+            cancelledFromActive.push(order);
+          } else if (
+            order.backendStatus &&
+            /completed/i.test(order.backendStatus)
+          ) {
+            // Completed should not appear in Active; skip if it does.
+          } else {
+            active.push(order);
+          }
         }
-      }
 
-      setActiveJobs(jobs);
-      setSelectedJobId(prev => {
-        if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
-          return prev;
+        const cancelledByKey = new Map<string, AvailableOrder>();
+        for (const order of [...cancelledFromApi, ...cancelledFromActive]) {
+          const eventKey = cancellationAckRepository.cancellationEventKey({
+            backendId: order.backendId,
+            externalOrderId: order.externalOrderId,
+            id: order.id,
+          });
+          if (!eventKey) continue;
+          cancelledByKey.set(eventKey, order);
         }
-        return jobs.find(isActiveJob)?.id ?? null;
-      });
-      setLastLifecycleError(null);
-    } finally {
-      setLifecyclePending(false);
-      restoringRef.current = false;
-    }
-  }, []);
+
+        // Always restore Active jobs even if cancel-ack storage fails.
+        const jobs: ActiveDeliveryJob[] = [];
+        for (const order of active) {
+          try {
+            jobs.push(createJobFromOrder(order, { restore: true }));
+          } catch {
+            // Skip rows missing backendId
+          }
+        }
+
+        setActiveJobs(jobs);
+        setSelectedJobId(prev => {
+          if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
+            return prev;
+          }
+          return jobs.find(isActiveJob)?.id ?? null;
+        });
+        setLastLifecycleError(null);
+
+        const riderKey = user?.id ? String(user.id) : '';
+        if (cancelledByKey.size > 0 && riderKey) {
+          try {
+            let durableAcked = new Set<string>();
+            try {
+              durableAcked =
+                await cancellationAckRepository.loadAcknowledgedCancellationKeys(
+                  riderKey,
+                );
+            } catch {
+              durableAcked = new Set();
+            }
+
+            const sessionAlerted =
+              cancellationAckRepository.getSessionCancellationAlerts(riderKey);
+            const plan = planCancellationAlerts({
+              eventKeys: [...cancelledByKey.keys()],
+              durableAcked,
+              sessionAlerted,
+              suppressUiAlert: Boolean(opts?.suppressCancelAlert),
+            });
+
+            if (plan.keysToShowAlert.length > 0) {
+              const labels = plan.keysToShowAlert
+                .map(k => {
+                  const o = cancelledByKey.get(k);
+                  return o?.externalOrderId || o?.id || k;
+                })
+                .join(', ');
+              Alert.alert(
+                'Order cancelled',
+                plan.keysToShowAlert.length === 1
+                  ? `Order ${labels} was cancelled.`
+                  : `Orders cancelled: ${labels}`,
+              );
+              cancellationAckRepository.markSessionCancellationAlerts(
+                riderKey,
+                plan.keysToShowAlert,
+              );
+            }
+
+            // FCM/poll may suppress UI but still must record session+durable ack.
+            if (opts?.suppressCancelAlert && plan.keysNeedingAck.length > 0) {
+              cancellationAckRepository.markSessionCancellationAlerts(
+                riderKey,
+                plan.keysNeedingAck,
+              );
+            }
+
+            if (plan.keysNeedingAck.length > 0) {
+              await cancellationAckRepository.acknowledgeCancellationKeys(
+                riderKey,
+                plan.keysNeedingAck,
+              );
+            }
+          } catch {
+            // Ack/storage failures must not undo Active job restore above.
+          }
+        }
+      } finally {
+        setLifecyclePending(false);
+        restoringRef.current = false;
+      }
+    },
+    [user?.id],
+  );
 
   // Clear rider-scoped UI state on logout / account switch
   useEffect(() => {

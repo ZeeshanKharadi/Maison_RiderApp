@@ -60,10 +60,11 @@ namespace Rider.Infrastructure.Services
             if (needsUpgrade)
                 _passwordVerifier.SetPassword(user, req.password);
 
-            if (!user.IsActive && req.userid != "000000")
+            // Production rule: every account must be active + verified. No employee-id bypass.
+            if (!user.IsActive)
                 return new ApiResponse<LoginUser>(false, "User account is inactive. Contact admin.", null);
 
-            if (!user.IsVerified && req.userid != "000000")
+            if (!user.IsVerified)
                 return new ApiResponse<LoginUser>(false, "Please verify your account first via admin approval.", null);
 
             var dto = MapUser(user);
@@ -289,14 +290,11 @@ namespace Rider.Infrastructure.Services
                 _passwordVerifier.SetPassword(user, req.password);
                 user.TokenVersion += 1;
 
-                var refreshTokens = _unitOfWork.UserRefreshTokenRepository
-                    .GetAll(t => t.UserId == user.UserId && !t.IsRevoked)
-                    .ToList();
+                var refreshTokens = await _unitOfWork.Context.Set<UserRefreshToken>()
+                    .Where(t => t.UserId == user.UserId && !t.IsRevoked)
+                    .ToListAsync();
                 foreach (var rt in refreshTokens)
-                {
                     rt.IsRevoked = true;
-                    await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(rt);
-                }
 
                 await _unitOfWork.UserRepository.UpdateAsync(user);
                 await _unitOfWork.SaveChangesAsync();
@@ -330,6 +328,14 @@ namespace Rider.Infrastructure.Services
                 return new ApiResponse<string>(false, "Password must be at least 6 characters", string.Empty);
 
             _passwordVerifier.SetPassword(user, req.newPassword);
+            user.TokenVersion += 1;
+
+            var refreshTokens = await _unitOfWork.Context.Set<UserRefreshToken>()
+                .Where(t => t.UserId == user.UserId && !t.IsRevoked)
+                .ToListAsync();
+            foreach (var rt in refreshTokens)
+                rt.IsRevoked = true;
+
             await _unitOfWork.UserRepository.UpdateAsync(user);
             await _unitOfWork.SaveChangesAsync();
             return new ApiResponse<string>(true, "Password Updated successfully", string.Empty);
@@ -339,36 +345,37 @@ namespace Rider.Infrastructure.Services
         {
             if (Guid.TryParse(userId, out var uid))
             {
-                var tokens = _unitOfWork.UserRefreshTokenRepository
-                    .GetAll(t => t.UserId == uid && !t.IsRevoked)
-                    .ToList();
-
-                foreach (var token in tokens)
-                {
-                    token.IsRevoked = true;
-                    await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(token);
-                }
-
                 var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
-                if (user != null
-                    && (user.LastLatitude.HasValue || user.LastLongitude.HasValue || user.LocationUpdatedAt.HasValue))
+                if (user != null)
                 {
-                    user.LastLatitude = null;
-                    user.LastLongitude = null;
-                    user.LocationUpdatedAt = null;
-                    await _unitOfWork.UserRepository.UpdateAsync(user);
-                    try
-                    {
-                        await _opsEvents.PublishRiderLocationChangedAsync(
-                            user.StoreId, uid, null, null, null, 0, null, cleared: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Location clear publish failed on logout");
-                    }
-                }
+                    // Invalidate access JWTs (OnTokenValidated checks token_version).
+                    user.TokenVersion += 1;
 
-                await _unitOfWork.SaveChangesAsync();
+                    var tokens = await _unitOfWork.Context.Set<UserRefreshToken>()
+                        .Where(t => t.UserId == uid && !t.IsRevoked)
+                        .ToListAsync();
+                    foreach (var token in tokens)
+                        token.IsRevoked = true;
+
+                    if (user.LastLatitude.HasValue || user.LastLongitude.HasValue || user.LocationUpdatedAt.HasValue)
+                    {
+                        user.LastLatitude = null;
+                        user.LastLongitude = null;
+                        user.LocationUpdatedAt = null;
+                        try
+                        {
+                            await _opsEvents.PublishRiderLocationChangedAsync(
+                                user.StoreId, uid, null, null, null, 0, null, cleared: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Location clear publish failed on logout");
+                        }
+                    }
+
+                    await _unitOfWork.UserRepository.UpdateAsync(user);
+                    await _unitOfWork.SaveChangesAsync();
+                }
             }
 
             return new ApiResponse<string>(true, "", "");

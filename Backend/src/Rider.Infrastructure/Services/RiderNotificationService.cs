@@ -78,6 +78,32 @@ namespace Rider.Infrastructure.Services
             }
         }
 
+        public async Task NotifyOrderCancelledAsync(
+            Guid riderUserId,
+            string orderId,
+            long? assignedOrderId,
+            string? cancelReason)
+        {
+            var reason = string.IsNullOrWhiteSpace(cancelReason)
+                ? "Cancelled by admin"
+                : cancelReason.Trim();
+            var body = $"Order {orderId} was cancelled. {reason}";
+
+            await CreateAndPushAsync(
+                riderUserId,
+                "orders",
+                "Order cancelled",
+                body,
+                orderId,
+                assignedOrderId,
+                "high",
+                extraData: new Dictionary<string, string>
+                {
+                    ["event"] = "order_cancelled",
+                    ["assignedOrderId"] = assignedOrderId?.ToString() ?? ""
+                });
+        }
+
         public async Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(
             SendNotificationRequest request)
         {
@@ -159,7 +185,8 @@ namespace Rider.Infrastructure.Services
             string description,
             string orderId,
             long? assignedOrderId,
-            string priority)
+            string priority,
+            IReadOnlyDictionary<string, string>? extraData = null)
         {
             var row = await CreateAsync(
                 userId,
@@ -170,16 +197,19 @@ namespace Rider.Infrastructure.Services
                 assignedOrderId,
                 priority);
 
-            await _fcm.SendToUserAsync(
-                userId,
-                title,
-                description,
-                new Dictionary<string, string>
-                {
-                    ["category"] = category,
-                    ["orderId"] = orderId ?? "",
-                    ["notificationId"] = row.Id.ToString()
-                });
+            var data = new Dictionary<string, string>
+            {
+                ["category"] = category,
+                ["orderId"] = orderId ?? "",
+                ["notificationId"] = row.Id.ToString()
+            };
+            if (extraData != null)
+            {
+                foreach (var kv in extraData)
+                    data[kv.Key] = kv.Value ?? "";
+            }
+
+            await _fcm.SendToUserAsync(userId, title, description, data);
         }
 
         private async Task<RiderNotification> CreateAsync(

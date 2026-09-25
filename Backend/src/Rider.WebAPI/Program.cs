@@ -14,6 +14,11 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Optional local override (gitignored). Prefer env vars in production.
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+ValidateRequiredSecrets(builder.Configuration);
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateLogger();
@@ -40,7 +45,7 @@ builder.Services.AddSwaggerGen(c =>
     c.AddSecurityDefinition("PosApiKey", new OpenApiSecurityScheme
     {
         Description =
-            "POS integration key. Value must match PosIntegration:ApiKey in appsettings. Header name: X-POS-Api-Key",
+            "POS integration key. Value must match PosIntegration:ApiKey (env / Local config). Header name: X-POS-Api-Key",
         Name = "X-POS-Api-Key",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey
@@ -163,5 +168,26 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+static void ValidateRequiredSecrets(IConfiguration configuration)
+{
+    var missing = new List<string>();
+    if (string.IsNullOrWhiteSpace(configuration["Jwt:Key"]))
+        missing.Add("Jwt:Key (env Jwt__Key)");
+    if (string.IsNullOrWhiteSpace(configuration["EncryptionKey:key"]))
+        missing.Add("EncryptionKey:key (env EncryptionKey__key)");
+    if (string.IsNullOrWhiteSpace(configuration["PosIntegration:ApiKey"]))
+        missing.Add("PosIntegration:ApiKey (env PosIntegration__ApiKey)");
+    if (string.IsNullOrWhiteSpace(configuration.GetConnectionString("DefaultConnection")))
+        missing.Add("ConnectionStrings:DefaultConnection");
+
+    if (missing.Count == 0)
+        return;
+
+    throw new InvalidOperationException(
+        "Missing required configuration secrets (not stored in source control). " +
+        "Set environment variables or create gitignored appsettings.Local.json. See SECRETS.example.env. Missing: "
+        + string.Join("; ", missing));
+}
 
 public partial class Program { }

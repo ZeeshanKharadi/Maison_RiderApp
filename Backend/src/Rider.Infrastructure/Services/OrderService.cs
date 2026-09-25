@@ -629,9 +629,10 @@ namespace Rider.Infrastructure.Services
                             await tx.RollbackAsync();
                             return new ApiResponse<AvailableOrderDto>(false, "You previously rejected this order", null!);
                         }
-                        if (!string.IsNullOrWhiteSpace(rider.StoreId)
-                            && order.Batch != null
-                            && !string.Equals(rider.StoreId, order.Batch.StoreId, StringComparison.OrdinalIgnoreCase))
+                        // Store scope is mandatory for accepts (no empty-StoreId bypass).
+                        if (string.IsNullOrWhiteSpace(rider.StoreId)
+                            || order.Batch == null
+                            || !string.Equals(rider.StoreId, order.Batch.StoreId, StringComparison.OrdinalIgnoreCase))
                         {
                             await tx.RollbackAsync();
                             return new ApiResponse<AvailableOrderDto>(false, "Order is not available for your store", null!);
@@ -824,11 +825,13 @@ namespace Rider.Infrastructure.Services
             {
                 var prior = await _unitOfWork.Context.Set<OrderLifecycleAudit>()
                     .AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.RequestId == requestId);
+                    .FirstOrDefaultAsync(a => a.RequestId == requestId && a.AssignedOrderId == id && a.ActorUserId == riderUserId);
                 if (prior != null)
                 {
                     var existing = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
-                    return new ApiResponse<AvailableOrderDto>(true, "Order rejected", existing == null ? null : MapOrder(existing));
+                    if (existing == null || !await RiderCanSeeOrderAsync(existing, riderUserId))
+                        return new ApiResponse<AvailableOrderDto>(false, "Order not found", null);
+                    return new ApiResponse<AvailableOrderDto>(true, "Order rejected", MapOrder(existing));
                 }
             }
 
@@ -838,6 +841,17 @@ namespace Rider.Infrastructure.Services
                 var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
                 if (order == null)
                     return new ApiResponse<AvailableOrderDto>(false, "Order not found", null);
+
+                var rider = await _unitOfWork.UserRepository.GetByUserIdAsync(riderUserId);
+                if (rider == null
+                    || string.IsNullOrWhiteSpace(rider.StoreId)
+                    || order.Batch == null
+                    || !string.Equals(rider.StoreId, order.Batch.StoreId, StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync();
+                    // Same message as get-by-id to avoid cross-store enumeration.
+                    return new ApiResponse<AvailableOrderDto>(false, "Order not found", null);
+                }
 
                 if (order.Status != OrderStatuses.Available
                     && !(order.Status == OrderStatuses.Accepted && order.AcceptedByUserId == riderUserId))
@@ -974,6 +988,20 @@ namespace Rider.Infrastructure.Services
             return new ApiResponse<List<AvailableOrderDto>>(true, "Active orders", orders.Select(MapOrder).ToList());
         }
 
+        public async Task<ApiResponse<List<AvailableOrderDto>>> GetRecentlyCancelledOrdersAsync(
+            Guid riderUserId, int withinMinutes = 180)
+        {
+            if (withinMinutes < 1) withinMinutes = 1;
+            if (withinMinutes > 24 * 60) withinMinutes = 24 * 60;
+            var since = DateTime.UtcNow.AddMinutes(-withinMinutes);
+            var orders = await _unitOfWork.AssignedOrderRepository
+                .GetRecentlyCancelledForRiderAsync(riderUserId, since);
+            return new ApiResponse<List<AvailableOrderDto>>(
+                true,
+                "Recently cancelled orders",
+                orders.Select(MapOrder).ToList());
+        }
+
         public async Task<ApiResponse<List<AvailableOrderDto>>> GetOrderHistoryAsync(Guid riderUserId, int page, int pageSize)
         {
             if (page < 1) page = 1;
@@ -1077,6 +1105,15 @@ namespace Rider.Infrastructure.Services
 
             if (order.Status == OrderStatuses.Available)
             {
+                var rider = await _unitOfWork.UserRepository.GetByUserIdAsync(riderUserId);
+                if (rider == null
+                    || string.IsNullOrWhiteSpace(rider.StoreId)
+                    || order.Batch == null
+                    || !string.Equals(rider.StoreId, order.Batch.StoreId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
                 if (await _unitOfWork.AssignedOrderRepository.HasRiderRejectedAsync(order.Id, riderUserId))
                     return false;
                 if (order.IsDirectAssignment && order.AcceptedByUserId == null)

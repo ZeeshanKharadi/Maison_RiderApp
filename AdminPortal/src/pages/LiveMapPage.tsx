@@ -12,6 +12,7 @@ import {
   RiderLocationChangedPayload,
 } from '../realtime/adminHub';
 import { useLiveRefresh } from '../realtime/useLiveRefresh';
+import { computeGpsIsStale } from '../realtime/gpsStale';
 
 export type LiveRiderDto = {
   riderUserId: string;
@@ -81,6 +82,32 @@ export default function LiveMapPage() {
 
   useLiveRefresh(load);
 
+  // Recompute Fresh/Stale from locationUpdatedAt while hub stays connected.
+  useEffect(() => {
+    const recompute = () => {
+      const now = Date.now();
+      setRiders((prev) => {
+        let changed = false;
+        const next = prev.map((r) => {
+          const isStale = computeGpsIsStale({
+            hasLocation: r.hasLocation,
+            locationUpdatedAt: r.locationUpdatedAt,
+            staleAfterSeconds: r.staleAfterSeconds,
+            nowMs: now,
+          });
+          if (r.isStale === isStale) return r;
+          changed = true;
+          return { ...r, isStale };
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    recompute();
+    const id = window.setInterval(recompute, 5_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => {
     void ensureAdminHub().catch(() => {});
     const unsub = subscribeRiderLocationChanged((payload: RiderLocationChangedPayload) => {
@@ -89,19 +116,20 @@ export default function LiveMapPage() {
         if (payload.cleared) {
           return prev.filter((r) => r.riderUserId.toLowerCase() !== id);
         }
-        const idx = prev.findIndex((r) => r.riderUserId.toLowerCase() === id);
-        if (idx < 0) {
-          // New rider with location — refresh list for full metadata
+        const found = prev.findIndex((r) => r.riderUserId.toLowerCase() === id);
+        if (found < 0) {
           void load().catch(() => {});
           return prev;
         }
         const next = [...prev];
-        const cur = next[idx];
-        next[idx] = {
+        const cur = next[found];
+        const locationUpdatedAt =
+          payload.locationUpdatedAt ?? payload.at ?? cur.locationUpdatedAt;
+        next[found] = {
           ...cur,
           latitude: payload.latitude ?? cur.latitude,
           longitude: payload.longitude ?? cur.longitude,
-          locationUpdatedAt: payload.locationUpdatedAt ?? payload.at ?? cur.locationUpdatedAt,
+          locationUpdatedAt,
           activeOrderCount: payload.activeOrderCount ?? cur.activeOrderCount,
           deliveryStatus: payload.deliveryStatus ?? cur.deliveryStatus,
           hasLocation: payload.latitude != null && payload.longitude != null,

@@ -14,8 +14,10 @@ namespace Rider.Infrastructure.Helpers
 
         public PasswordCrypto(IConfiguration configuration)
         {
-            _keyString = configuration["EncryptionKey:key"]
-                ?? "r3Bq4w7Q8M8y1lP2zF+0x9vX0pF4oZk8sY6Hk9Qv8cE=";
+            _keyString = configuration["EncryptionKey:key"];
+            if (string.IsNullOrWhiteSpace(_keyString))
+                throw new InvalidOperationException(
+                    "EncryptionKey:key is not configured. Set via environment variable EncryptionKey__key or appsettings.Local.json.");
         }
 
         public byte[]? Encrypt(string plainText)
