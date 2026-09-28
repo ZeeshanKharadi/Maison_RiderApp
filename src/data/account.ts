@@ -65,7 +65,7 @@ export const DEFAULT_PROFILE: RiderProfile = {
   fullName: '',
   phone: '',
   email: '',
-  vehicle: 'Scooter · Honda Activa',
+  vehicle: '',
   vehicleNumber: '',
   licenseNumber: '',
   emergencyContact: '',

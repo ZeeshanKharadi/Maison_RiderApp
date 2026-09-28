@@ -67,7 +67,7 @@ namespace Rider.Infrastructure.Services
             if (!user.IsVerified)
                 return new ApiResponse<LoginUser>(false, "Please verify your account first via admin approval.", null);
 
-            var dto = MapUser(user);
+            var dto = await MapUserAsync(user);
             var accessToken = _jwtTokenHandler.GenerateAccessToken(dto);
             var refreshToken = _jwtTokenHandler.GenerateRefreshToken();
 
@@ -390,7 +390,7 @@ namespace Rider.Infrastructure.Services
             if (user == null)
                 return new ApiResponse<GetUserResponse>(false, "User not found", null);
 
-            return new ApiResponse<GetUserResponse>(true, "Success", MapUser(user));
+            return new ApiResponse<GetUserResponse>(true, "Success", await MapUserAsync(user));
         }
 
         public async Task<ApiResponse<LoginUser>> RefreshToken(RefreshTokenRequest req)
@@ -410,7 +410,7 @@ namespace Rider.Infrastructure.Services
             stored.IsRevoked = true;
             await _unitOfWork.UserRefreshTokenRepository.UpdateAsync(stored);
 
-            var dto = MapUser(user);
+            var dto = await MapUserAsync(user);
             var accessToken = _jwtTokenHandler.GenerateAccessToken(dto);
             var refreshToken = _jwtTokenHandler.GenerateRefreshToken();
             var refreshDays = int.TryParse(_configuration["Jwt:RefreshExpiryDays"], out var d) ? d : 7;
@@ -434,29 +434,117 @@ namespace Rider.Infrastructure.Services
 
         public async Task<ApiResponse<GetUserResponse>> UpdateProfile(UpdateProfileRequest req, string userId)
         {
-            if (!Guid.TryParse(userId, out var uid))
+            // Legacy PUT: only phone (and emergency via Patch). Admin-controlled fields rejected.
+            if (!string.IsNullOrWhiteSpace(req?.name)
+                || !string.IsNullOrWhiteSpace(req?.email)
+                || !string.IsNullOrWhiteSpace(req?.department)
+                || !string.IsNullOrWhiteSpace(req?.profilePicture))
+            {
+                return new ApiResponse<GetUserResponse>(
+                    false,
+                    "Name, email, department, and photo are managed by your administrator",
+                    null);
+            }
+
+            return await PatchRiderProfileAsync(userId, new PatchRiderProfileRequest
+            {
+                phoneNumber = req?.phoneNumber
+            });
+        }
+
+        public async Task<ApiResponse<GetUserResponse>> PatchRiderProfileAsync(
+            string jwtUserId, PatchRiderProfileRequest req)
+        {
+            if (!Guid.TryParse(jwtUserId, out var uid))
                 return new ApiResponse<GetUserResponse>(false, "User not found", null);
+
+            if (req == null)
+                return new ApiResponse<GetUserResponse>(false, "Request body is required", null);
+
+            var hasPhone = req.phoneNumber != null;
+            var hasEmergencyNumber = req.emergencyContactNumber != null;
+            var hasEmergencyName = req.emergencyContactName != null;
+            if (!hasPhone && !hasEmergencyNumber && !hasEmergencyName)
+                return new ApiResponse<GetUserResponse>(false, "No profile fields to update", null);
+
+            string? phone = null;
+            if (hasPhone)
+            {
+                var phoneErr = ValidateContactValue(req.phoneNumber!, "Phone number", required: true);
+                if (phoneErr != null)
+                    return new ApiResponse<GetUserResponse>(false, phoneErr, null);
+                phone = NormalizeContact(req.phoneNumber!);
+            }
+
+            string? emergencyNumber = null;
+            if (hasEmergencyNumber)
+            {
+                var trimmed = req.emergencyContactNumber!.Trim();
+                if (trimmed.Length == 0)
+                {
+                    emergencyNumber = "";
+                }
+                else
+                {
+                    var emErr = ValidateContactValue(trimmed, "Emergency contact number", required: false);
+                    if (emErr != null)
+                        return new ApiResponse<GetUserResponse>(false, emErr, null);
+                    emergencyNumber = NormalizeContact(trimmed);
+                }
+            }
+
+            string? emergencyName = null;
+            if (hasEmergencyName)
+            {
+                emergencyName = req.emergencyContactName!.Trim();
+                if (emergencyName.Length > 200)
+                    return new ApiResponse<GetUserResponse>(false, "Emergency contact name must be at most 200 characters", null);
+            }
 
             var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
             if (user == null)
                 return new ApiResponse<GetUserResponse>(false, "User not found", null);
 
-            if (!string.IsNullOrWhiteSpace(req?.name))
-                user.UserName = req.name.Trim();
-            if (!string.IsNullOrWhiteSpace(req?.email))
-                user.Email = req.email.Trim();
-            if (!string.IsNullOrWhiteSpace(req?.phoneNumber))
-                user.PhoneNumber = req.phoneNumber.Trim();
-            if (!string.IsNullOrWhiteSpace(req?.department))
-                user.Department = req.department.Trim();
-            if (!string.IsNullOrWhiteSpace(req?.profilePicture))
-                user.ProfileImageUrl = req.profilePicture;
+            var tokenBefore = user.TokenVersion;
+
+            if (hasPhone)
+                user.PhoneNumber = phone;
+            if (hasEmergencyNumber)
+                user.EmergencyContactNumber = string.IsNullOrEmpty(emergencyNumber) ? null : emergencyNumber;
+            if (hasEmergencyName)
+                user.EmergencyContactName = string.IsNullOrEmpty(emergencyName) ? null : emergencyName;
 
             await _unitOfWork.UserRepository.UpdateAsync(user);
             await _unitOfWork.SaveChangesAsync();
 
-            return new ApiResponse<GetUserResponse>(true, "Profile updated", MapUser(user));
+            // Profile edits must not invalidate sessions.
+            if (user.TokenVersion != tokenBefore)
+                return new ApiResponse<GetUserResponse>(false, "Unexpected token change", null);
+
+            return new ApiResponse<GetUserResponse>(true, "Profile updated", await MapUserAsync(user));
         }
+
+        /// <summary>Phone-like contact: digits, spaces, +, -, (), max 50.</summary>
+        private static string? ValidateContactValue(string raw, string label, bool required)
+        {
+            var v = (raw ?? "").Trim();
+            if (v.Length == 0)
+                return required ? $"{label} is required" : null;
+            if (v.Length > 50)
+                return $"{label} must be at most 50 characters";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(v, @"^[\d\s+\-().]+$"))
+                return $"{label} contains invalid characters";
+            var digits = 0;
+            foreach (var c in v)
+            {
+                if (char.IsDigit(c)) digits++;
+            }
+            if (digits < 7)
+                return $"{label} must include at least 7 digits";
+            return null;
+        }
+
+        private static string NormalizeContact(string raw) => raw.Trim();
 
         public Task<ApiResponse<bool>> ValidateToken(string userId)
         {
@@ -468,6 +556,25 @@ namespace Rider.Infrastructure.Services
         {
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
             return Convert.ToHexString(bytes);
+        }
+
+        private async Task<GetUserResponse> MapUserAsync(AppUser user)
+        {
+            var dto = MapUser(user);
+            if (!user.IsAvailableOnline)
+            {
+                dto.currentOnlineStartedAt = null;
+                return dto;
+            }
+
+            // Earliest open interval only — never invent a start when none exists.
+            dto.currentOnlineStartedAt = await _unitOfWork.Context.Set<RiderAvailabilityInterval>()
+                .AsNoTracking()
+                .Where(i => i.UserId == user.UserId && i.EndedAt == null)
+                .OrderBy(i => i.StartedAt)
+                .Select(i => (DateTime?)i.StartedAt)
+                .FirstOrDefaultAsync();
+            return dto;
         }
 
         private static GetUserResponse MapUser(AppUser user)
@@ -490,6 +597,8 @@ namespace Rider.Infrastructure.Services
                 name = user.UserName,
                 email = user.Email,
                 phoneNumber = user.PhoneNumber,
+                emergencyContactNumber = user.EmergencyContactNumber,
+                emergencyContactName = user.EmergencyContactName,
                 department = user.Department,
                 position = user.Position,
                 costCenter = user.CostCenter,
@@ -501,6 +610,7 @@ namespace Rider.Infrastructure.Services
                 isActive = user.IsActive,
                 isVerified = user.IsVerified,
                 isAvailableOnline = user.IsAvailableOnline,
+                currentOnlineStartedAt = null,
                 tokenVersion = user.TokenVersion,
                 storeId = user.StoreId,
                 roles = roles,

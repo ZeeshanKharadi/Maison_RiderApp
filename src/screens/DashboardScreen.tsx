@@ -76,13 +76,25 @@ export default function DashboardScreen() {
     setOnline,
     shiftStartedAt,
     activeJob,
+    restoreActiveDeliveries,
   } = useRiderSession();
   const { notifications, profile, unreadCount } = useAccount();
-  const { orders } = useAvailableOrders();
+  const { orders, refreshOrders } = useAvailableOrders();
 
-  const [now] = useState(() => new Date());
+  const [now, setNow] = useState(() => new Date());
   const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
   const [weekPerf, setWeekPerf] = useState<RiderPerformance | null>(null);
+
+  // Tick working-hours clock while online (stops when offline).
+  useEffect(() => {
+    if (!isOnline || !shiftStartedAt) {
+      setNow(new Date());
+      return;
+    }
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [isOnline, shiftStartedAt]);
 
   const loadPerformance = useCallback(async () => {
     const end = new Date();
@@ -108,11 +120,23 @@ export default function DashboardScreen() {
   useEffect(() => {
     const unsub = navigation.addListener?.('focus', () => {
       void loadPerformance();
+      // Pull admin-driven status changes (cancel, return-to-store, requeue, etc.).
+      void restoreActiveDeliveries({ suppressCancelAlert: true });
+      void refreshOrders();
     });
     return () => {
       if (typeof unsub === 'function') unsub();
     };
-  }, [navigation, loadPerformance]);
+  }, [navigation, loadPerformance, restoreActiveDeliveries, refreshOrders]);
+
+  // Keep syncing while a job is active OR briefly after it drops (requeue/cancel).
+  useEffect(() => {
+    const id = setInterval(() => {
+      void restoreActiveDeliveries({ suppressCancelAlert: true });
+      void refreshOrders();
+    }, 15_000);
+    return () => clearInterval(id);
+  }, [restoreActiveDeliveries, refreshOrders]);
 
   const greeting = useMemo(() => getGreeting(now), [now]);
   const dateLabel = useMemo(() => formatDashboardDate(now), [now]);
@@ -372,8 +396,19 @@ export default function DashboardScreen() {
             </View>
 
             <AppButton
-              label="Continue delivery"
-              icon="navigation-variant"
+              label={
+                activeJob.state === 'RETURNING_TO_STORE'
+                  ? 'Return to store'
+                  : activeJob.state === 'AWAITING_STORE_RECEIPT'
+                    ? 'Awaiting store receipt'
+                    : 'Continue delivery'
+              }
+              icon={
+                activeJob.state === 'RETURNING_TO_STORE' ||
+                activeJob.state === 'AWAITING_STORE_RECEIPT'
+                  ? 'store-marker'
+                  : 'navigation-variant'
+              }
               fullWidth
               onPress={handleContinueDelivery}
               accessibilityLabel="Continue active delivery"

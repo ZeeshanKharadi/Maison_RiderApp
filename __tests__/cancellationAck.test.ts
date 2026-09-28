@@ -96,6 +96,28 @@ describe('planCancellationAlerts dedupe', () => {
     expect(plan.keysNeedingAck).toEqual([]);
   });
 
+  test('second device without local ack still surfaces until server clears', () => {
+    // Device B has empty local durable; server still returns ao:9 until ack.
+    const plan = planCancellationAlerts({
+      eventKeys: ['ao:9'],
+      durableAcked: new Set(),
+      sessionAlerted: new Set(),
+      suppressUiAlert: false,
+    });
+    expect(plan.keysToShowAlert).toEqual(['ao:9']);
+  });
+
+  test('after local+session markers, restore retry does not re-alert', () => {
+    const plan = planCancellationAlerts({
+      eventKeys: ['ao:9'],
+      durableAcked: new Set(['ao:9']),
+      sessionAlerted: new Set(['ao:9']),
+      suppressUiAlert: false,
+    });
+    expect(plan.keysToShowAlert).toEqual([]);
+    expect(plan.keysNeedingAck).toEqual([]);
+  });
+
   test('storage read failure treated as empty durable → still surfaces cancel', () => {
     const plan = planCancellationAlerts({
       eventKeys: ['ao:11'],

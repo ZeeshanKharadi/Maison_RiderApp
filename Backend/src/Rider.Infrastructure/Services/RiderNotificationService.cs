@@ -92,7 +92,7 @@ namespace Rider.Infrastructure.Services
             await CreateAndPushAsync(
                 riderUserId,
                 "orders",
-                "Order cancelled",
+                RiderNotificationTitles.OrderCancelled,
                 body,
                 orderId,
                 assignedOrderId,

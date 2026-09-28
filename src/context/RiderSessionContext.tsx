@@ -34,12 +34,14 @@ import {
 import { AvailableOrder } from '../data/orders';
 import {
   isCancelledBackendStatus,
+  isLiveRiderActiveStatus,
 } from '../api/mappers/orderMapper';
 import * as ordersRepository from '../repositories/ordersRepository';
 import type { OrderStatusPayload } from '../repositories/ordersRepository';
 import * as authRepository from '../repositories/authRepository';
 import * as cancellationAckRepository from '../repositories/cancellationAckRepository';
 import { planCancellationAlerts } from '../utils/cancellationAlertPlan';
+import { applyServerAvailability } from '../utils/shiftAvailability';
 import { useAuth } from '../services/AuthContext';
 import { useDeliveryLocationTracking } from '../hooks/useDeliveryLocationTracking';
 import { stopNativeLocationTracking } from '../services/locationTrackingNative';
@@ -59,7 +61,15 @@ type CompleteResult = {
 };
 
 function isActiveJob(job: ActiveDeliveryJob): boolean {
-  return !isTerminalState(job.state);
+  if (isTerminalState(job.state)) return false;
+  // Drop jobs that admin finished / requeued (Available/Failed/Cancelled/…).
+  if (
+    job.backendStatus != null &&
+    !isLiveRiderActiveStatus(job.backendStatus)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function pickSelectedJob(
@@ -127,6 +137,10 @@ export function RiderSessionProvider({
     null,
   );
   const restoringRef = useRef(false);
+  const restoreQueuedRef = useRef(false);
+  const restoreOptsRef = useRef<{ suppressCancelAlert?: boolean } | undefined>(
+    undefined,
+  );
 
   const activeJob = useMemo(
     () => pickSelectedJob(activeJobs, selectedJobId),
@@ -142,16 +156,17 @@ export function RiderSessionProvider({
     const result = await ordersRepository.setAvailability(online);
     setLifecyclePending(false);
     if (!result.ok) {
+      // Network / JWT failure: do not invent online state or shift start.
       setLastLifecycleError(result.error.message);
       Alert.alert('Availability', result.error.message);
       return false;
     }
-    setIsOnline(online);
-    if (online) {
-      setShiftStartedAt(prev => prev ?? new Date());
-    } else {
-      setShiftStartedAt(null);
-    }
+    const applied = applyServerAvailability({
+      isOnline: result.data.isOnline,
+      currentOnlineStartedAt: result.data.currentOnlineStartedAt,
+    });
+    setIsOnline(applied.isOnline);
+    setShiftStartedAt(applied.shiftStartedAt);
     return true;
   }, []);
 
@@ -228,133 +243,160 @@ export function RiderSessionProvider({
 
   const restoreActiveDeliveries = useCallback(
     async (opts?: { suppressCancelAlert?: boolean }) => {
-      if (restoringRef.current) return;
+      if (opts?.suppressCancelAlert) {
+        restoreOptsRef.current = { suppressCancelAlert: true };
+      } else if (!restoringRef.current) {
+        restoreOptsRef.current = opts;
+      }
+
+      if (restoringRef.current) {
+        restoreQueuedRef.current = true;
+        return;
+      }
+
       restoringRef.current = true;
       setLifecyclePending(true);
       try {
-        const [activeResult, cancelledResult] = await Promise.all([
-          ordersRepository.fetchActiveOrders(),
-          ordersRepository.fetchRecentCancellations(180),
-        ]);
+        do {
+          restoreQueuedRef.current = false;
+          const runOpts = restoreOptsRef.current;
+          restoreOptsRef.current = undefined;
 
-        if (!activeResult.ok) {
-          setLastLifecycleError(activeResult.error.message);
-          return;
-        }
+          const [activeResult, cancelledResult] = await Promise.all([
+            ordersRepository.fetchActiveOrders(),
+            ordersRepository.fetchRecentCancellations(),
+          ]);
 
-        const cancelledFromApi =
-          cancelledResult.ok && Array.isArray(cancelledResult.data)
-            ? cancelledResult.data
-            : [];
-
-        // Also honor cancelled rows if Active ever returns them (legacy / edge).
-        const cancelledFromActive: AvailableOrder[] = [];
-        const active: AvailableOrder[] = [];
-        for (const order of activeResult.data) {
-          if (isCancelledBackendStatus(order.backendStatus)) {
-            cancelledFromActive.push(order);
-          } else if (
-            order.backendStatus &&
-            /completed/i.test(order.backendStatus)
-          ) {
-            // Completed should not appear in Active; skip if it does.
-          } else {
-            active.push(order);
+          if (!activeResult.ok) {
+            setLastLifecycleError(activeResult.error.message);
+            continue;
           }
-        }
 
-        const cancelledByKey = new Map<string, AvailableOrder>();
-        for (const order of [...cancelledFromApi, ...cancelledFromActive]) {
-          const eventKey = cancellationAckRepository.cancellationEventKey({
-            backendId: order.backendId,
-            externalOrderId: order.externalOrderId,
-            id: order.id,
-          });
-          if (!eventKey) continue;
-          cancelledByKey.set(eventKey, order);
-        }
+          const cancelledFromApi =
+            cancelledResult.ok && Array.isArray(cancelledResult.data)
+              ? cancelledResult.data
+              : [];
 
-        // Always restore Active jobs even if cancel-ack storage fails.
-        const jobs: ActiveDeliveryJob[] = [];
-        for (const order of active) {
-          try {
-            jobs.push(createJobFromOrder(order, { restore: true }));
-          } catch {
-            // Skip rows missing backendId
-          }
-        }
-
-        setActiveJobs(jobs);
-        setSelectedJobId(prev => {
-          if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
-            return prev;
-          }
-          return jobs.find(isActiveJob)?.id ?? null;
-        });
-        setLastLifecycleError(null);
-
-        const riderKey = user?.id ? String(user.id) : '';
-        if (cancelledByKey.size > 0 && riderKey) {
-          try {
-            let durableAcked = new Set<string>();
-            try {
-              durableAcked =
-                await cancellationAckRepository.loadAcknowledgedCancellationKeys(
-                  riderKey,
-                );
-            } catch {
-              durableAcked = new Set();
+          // Also honor cancelled rows if Active ever returns them (legacy / edge).
+          const cancelledFromActive: AvailableOrder[] = [];
+          const active: AvailableOrder[] = [];
+          for (const order of activeResult.data) {
+            if (isCancelledBackendStatus(order.backendStatus)) {
+              cancelledFromActive.push(order);
+            } else if (!isLiveRiderActiveStatus(order.backendStatus)) {
+              // Available / Completed / Failed / requeued — leave Active list.
+            } else {
+              active.push(order);
             }
+          }
 
-            const sessionAlerted =
-              cancellationAckRepository.getSessionCancellationAlerts(riderKey);
-            const plan = planCancellationAlerts({
-              eventKeys: [...cancelledByKey.keys()],
-              durableAcked,
-              sessionAlerted,
-              suppressUiAlert: Boolean(opts?.suppressCancelAlert),
+          const cancelledByKey = new Map<string, AvailableOrder>();
+          for (const order of [...cancelledFromApi, ...cancelledFromActive]) {
+            const eventKey = cancellationAckRepository.cancellationEventKey({
+              backendId: order.backendId,
+              externalOrderId: order.externalOrderId,
+              id: order.id,
             });
-
-            if (plan.keysToShowAlert.length > 0) {
-              const labels = plan.keysToShowAlert
-                .map(k => {
-                  const o = cancelledByKey.get(k);
-                  return o?.externalOrderId || o?.id || k;
-                })
-                .join(', ');
-              Alert.alert(
-                'Order cancelled',
-                plan.keysToShowAlert.length === 1
-                  ? `Order ${labels} was cancelled.`
-                  : `Orders cancelled: ${labels}`,
-              );
-              cancellationAckRepository.markSessionCancellationAlerts(
-                riderKey,
-                plan.keysToShowAlert,
-              );
-            }
-
-            // FCM/poll may suppress UI but still must record session+durable ack.
-            if (opts?.suppressCancelAlert && plan.keysNeedingAck.length > 0) {
-              cancellationAckRepository.markSessionCancellationAlerts(
-                riderKey,
-                plan.keysNeedingAck,
-              );
-            }
-
-            if (plan.keysNeedingAck.length > 0) {
-              await cancellationAckRepository.acknowledgeCancellationKeys(
-                riderKey,
-                plan.keysNeedingAck,
-              );
-            }
-          } catch {
-            // Ack/storage failures must not undo Active job restore above.
+            if (!eventKey) continue;
+            cancelledByKey.set(eventKey, order);
           }
-        }
+
+          // Always restore Active jobs even if cancel-ack storage fails.
+          const jobs: ActiveDeliveryJob[] = [];
+          for (const order of active) {
+            try {
+              jobs.push(createJobFromOrder(order, { restore: true }));
+            } catch {
+              // Skip rows missing backendId
+            }
+          }
+
+          setActiveJobs(jobs);
+          setSelectedJobId(prev => {
+            if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
+              return prev;
+            }
+            return jobs.find(isActiveJob)?.id ?? null;
+          });
+          setLastLifecycleError(null);
+
+          const riderKey = user?.id ? String(user.id) : '';
+          if (cancelledByKey.size > 0 && riderKey) {
+            try {
+              let durableAcked = new Set<string>();
+              try {
+                durableAcked =
+                  await cancellationAckRepository.loadAcknowledgedCancellationKeys(
+                    riderKey,
+                  );
+              } catch {
+                durableAcked = new Set();
+              }
+
+              const sessionAlerted =
+                cancellationAckRepository.getSessionCancellationAlerts(riderKey);
+              const plan = planCancellationAlerts({
+                eventKeys: [...cancelledByKey.keys()],
+                durableAcked,
+                sessionAlerted,
+                suppressUiAlert: Boolean(runOpts?.suppressCancelAlert),
+              });
+
+              if (plan.keysToShowAlert.length > 0) {
+                const labels = plan.keysToShowAlert
+                  .map(k => {
+                    const o = cancelledByKey.get(k);
+                    return o?.externalOrderId || o?.id || k;
+                  })
+                  .join(', ');
+                Alert.alert(
+                  'Order cancelled',
+                  plan.keysToShowAlert.length === 1
+                    ? `Order ${labels} was cancelled.`
+                    : `Orders cancelled: ${labels}`,
+                );
+                cancellationAckRepository.markSessionCancellationAlerts(
+                  riderKey,
+                  plan.keysToShowAlert,
+                );
+              }
+
+              if (runOpts?.suppressCancelAlert && plan.keysNeedingAck.length > 0) {
+                cancellationAckRepository.markSessionCancellationAlerts(
+                  riderKey,
+                  plan.keysNeedingAck,
+                );
+              }
+
+              if (plan.keysNeedingAck.length > 0) {
+                await cancellationAckRepository.acknowledgeCancellationKeys(
+                  riderKey,
+                  plan.keysNeedingAck,
+                );
+              }
+
+              const aoIds = [...cancelledByKey.values()]
+                .map(o => o.backendId)
+                .filter((id): id is number => typeof id === 'number' && id > 0);
+              if (aoIds.length > 0) {
+                try {
+                  await ordersRepository.acknowledgeCancellations(aoIds);
+                } catch {
+                  // ignore
+                }
+              }
+            } catch {
+              // Ack/storage failures must not undo Active job restore above.
+            }
+          }
+        } while (restoreQueuedRef.current);
       } finally {
         setLifecyclePending(false);
         restoringRef.current = false;
+        if (restoreQueuedRef.current) {
+          restoreQueuedRef.current = false;
+          void restoreActiveDeliveries(restoreOptsRef.current);
+        }
       }
     },
     [user?.id],
@@ -391,12 +433,12 @@ export function RiderSessionProvider({
       const me = await authRepository.fetchCurrentUser();
       if (cancelled) return;
       if (me.ok && typeof me.data.isAvailableOnline === 'boolean') {
-        setIsOnline(me.data.isAvailableOnline);
-        if (me.data.isAvailableOnline) {
-          setShiftStartedAt(prev => prev ?? new Date());
-        } else {
-          setShiftStartedAt(null);
-        }
+        const applied = applyServerAvailability({
+          isOnline: me.data.isAvailableOnline,
+          currentOnlineStartedAt: me.data.currentOnlineStartedAt,
+        });
+        setIsOnline(applied.isOnline);
+        setShiftStartedAt(applied.shiftStartedAt);
       }
       await restoreActiveDeliveries();
     })();
@@ -405,13 +447,23 @@ export function RiderSessionProvider({
     };
   }, [authLoading, user, restoreActiveDeliveries]);
 
-  // Refresh active jobs when app returns to foreground
+  // Refresh active jobs + server online interval when app returns to foreground
   useEffect(() => {
     if (!user) return;
     const onChange = (state: AppStateStatus) => {
-      if (state === 'active') {
-        void restoreActiveDeliveries();
-      }
+      if (state !== 'active') return;
+      void (async () => {
+        const me = await authRepository.fetchCurrentUser();
+        if (me.ok && typeof me.data.isAvailableOnline === 'boolean') {
+          const applied = applyServerAvailability({
+            isOnline: me.data.isAvailableOnline,
+            currentOnlineStartedAt: me.data.currentOnlineStartedAt,
+          });
+          setIsOnline(applied.isOnline);
+          setShiftStartedAt(applied.shiftStartedAt);
+        }
+        await restoreActiveDeliveries();
+      })();
     };
     const sub = AppState.addEventListener('change', onChange);
     return () => sub.remove();

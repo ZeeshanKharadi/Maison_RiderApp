@@ -112,6 +112,38 @@ namespace Rider.Application.DTOs.Orders
         public bool isDirectAssignment { get; set; }
         public Guid? acceptedByUserId { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
+        /// <summary>Rider-safe issue reports for this order (no internal admin notes).</summary>
+        public List<DeliveryIssueReportDto> issueReports { get; set; } = new();
+
+        /// <summary>Controlled failed-delivery request (independent of issue triage Close).</summary>
+        public OrderFailureDto? failure { get; set; }
+    }
+
+    /// <summary>Failed-delivery / return-to-store progress for rider and admin UIs.</summary>
+    public class OrderFailureDto
+    {
+        public string? requestStatus { get; set; }
+        public string? reasonCode { get; set; }
+        public string? reasonLabel { get; set; }
+        public string? note { get; set; }
+        public string? requestId { get; set; }
+        public long? issueReportId { get; set; }
+        public DateTime? requestedAt { get; set; }
+        public DateTime? decidedAt { get; set; }
+        public string? decisionNote { get; set; }
+        public string? statusBeforeReturn { get; set; }
+        public DateTime? riderReturnedAt { get; set; }
+        public DateTime? storeReceivedAt { get; set; }
+        /// <summary>True when cash was collected — manager must use cash handover, not treat as earnings.</summary>
+        public bool cashCollectedWarning { get; set; }
+        public decimal? cashCollected { get; set; }
+        public decimal? expectedCash { get; set; }
+    }
+
+    /// <summary>POST /api/Order/AcknowledgeCancellations — durable cancel catch-up ack.</summary>
+    public class AcknowledgeCancellationsRequest
+    {
+        public List<long> assignedOrderIds { get; set; } = new();
     }
 
     public class UpdateOrderStatusRequest
@@ -132,9 +164,64 @@ namespace Rider.Application.DTOs.Orders
         public string? requestId { get; set; }
     }
 
+    /// <summary>POST /api/Order/{id}/report-issue</summary>
+    public class ReportDeliveryIssueRequest
+    {
+        /// <summary>CustomerUnreachable | CustomerRefused | AddressIssue | Other</summary>
+        [Required]
+        public string reason { get; set; } = "";
+
+        /// <summary>Required when reason is Other; optional otherwise.</summary>
+        public string? note { get; set; }
+
+        public string? requestId { get; set; }
+    }
+
+    /// <summary>POST /api/Order/{id}/request-failed-delivery — same reasons as report-issue; starts controlled failure flow.</summary>
+    public class RequestFailedDeliveryRequest
+    {
+        [Required]
+        public string reason { get; set; } = "";
+
+        public string? note { get; set; }
+
+        public string? requestId { get; set; }
+    }
+
+    public class DeliveryIssueReportDto
+    {
+        public long id { get; set; }
+        public long assignedOrderId { get; set; }
+        public string orderId { get; set; } = "";
+        public string orderNo { get; set; } = "";
+        public string storeId { get; set; } = "";
+        public string reasonCode { get; set; } = "";
+        public string reasonLabel { get; set; } = "";
+        public string? note { get; set; }
+        public Guid riderUserId { get; set; }
+        public string? requestId { get; set; }
+        public DateTime createdAt { get; set; }
+        /// <summary>Order status at report time (unchanged by the report).</summary>
+        public string orderStatus { get; set; } = "";
+        /// <summary>New | Acknowledged | Closed — triage only; not delivery status.</summary>
+        public string status { get; set; } = "";
+        public string statusLabel { get; set; } = "";
+        public DateTime? acknowledgedAt { get; set; }
+        public DateTime? closedAt { get; set; }
+        // Intentionally no internalNote — riders must never see admin notes.
+    }
+
     public class SetAvailabilityRequest
     {
         public bool isOnline { get; set; }
+    }
+
+    /// <summary>Result of POST /api/Order/availability for the JWT rider only.</summary>
+    public class RiderAvailabilityDto
+    {
+        public bool isOnline { get; set; }
+        /// <summary>UTC start of the open availability interval when online; null when offline.</summary>
+        public DateTime? currentOnlineStartedAt { get; set; }
     }
 
     public class UpdateRiderLocationRequest

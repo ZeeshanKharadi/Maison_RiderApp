@@ -53,7 +53,7 @@ function docLabel(status: DocumentStatus): string {
 
 type EditDraft = Pick<
   RiderProfile,
-  'phone' | 'emergencyContact' | 'vehicle' | 'vehicleNumber' | 'language'
+  'phone' | 'emergencyContact' | 'language'
 >;
 
 export default function ProfileScreen() {
@@ -66,8 +66,6 @@ export default function ProfileScreen() {
   const [draft, setDraft] = useState<EditDraft>({
     phone: profile.phone,
     emergencyContact: profile.emergencyContact,
-    vehicle: profile.vehicle,
-    vehicleNumber: profile.vehicleNumber,
     language: profile.language,
   });
   const [saving, setSaving] = useState(false);
@@ -96,8 +94,6 @@ export default function ProfileScreen() {
     setDraft({
       phone: profile.phone,
       emergencyContact: profile.emergencyContact,
-      vehicle: profile.vehicle,
-      vehicleNumber: profile.vehicleNumber,
       language: profile.language,
     });
     setEditOpen(true);
@@ -106,16 +102,21 @@ export default function ProfileScreen() {
   const saveEdit = async () => {
     setSaving(true);
     try {
-      const ok = await updateProfile(draft);
-      if (!ok) {
-        Alert.alert('Couldn’t save', 'Please try again.');
+      const result = await updateProfile(draft);
+      if (!result.ok) {
+        Alert.alert('Couldn’t save', result.message || 'Please try again.');
         return;
       }
       setEditOpen(false);
-      Alert.alert(
-        'Saved on this device',
-        'Profile edits are stored on this phone only and are not synced to the server yet.',
-      );
+      if (result.localOnly && !result.serverSynced) {
+        Alert.alert(
+          'Saved on this device',
+          result.message ||
+            'Language preference is stored on this phone only.',
+        );
+      } else {
+        Alert.alert('Profile updated', result.message || 'Changes saved to your account.');
+      }
     } finally {
       setSaving(false);
     }
@@ -188,17 +189,25 @@ export default function ProfileScreen() {
         </View>
 
         <SectionHeader title="Vehicle" style={styles.sectionGap} />
+        <Text style={styles.docNotice}>
+          Vehicle details are not stored on the server yet and cannot be edited
+          in the app. Ask your administrator if this should be added.
+        </Text>
         <View style={styles.card}>
-          <InfoRow icon="moped" label="Vehicle" value={profile.vehicle} />
+          <InfoRow
+            icon="moped"
+            label="Vehicle"
+            value={profile.vehicle?.trim() || '—'}
+          />
           <InfoRow
             icon="card-text-outline"
             label="Vehicle Number"
-            value={profile.vehicleNumber}
+            value={profile.vehicleNumber?.trim() || '—'}
           />
           <InfoRow
             icon="card-account-details-outline"
             label="License Number"
-            value={profile.licenseNumber}
+            value={profile.licenseNumber?.trim() || '—'}
           />
         </View>
 
@@ -306,18 +315,7 @@ export default function ProfileScreen() {
           onChangeText={t => setDraft(d => ({ ...d, emergencyContact: t }))}
           keyboardType="phone-pad"
         />
-        <Field
-          label="Vehicle"
-          value={draft.vehicle}
-          onChangeText={t => setDraft(d => ({ ...d, vehicle: t }))}
-        />
-        <Field
-          label="Vehicle Number"
-          value={draft.vehicleNumber}
-          onChangeText={t => setDraft(d => ({ ...d, vehicleNumber: t }))}
-          autoCapitalize="characters"
-        />
-        <Text style={styles.fieldLabel}>Language</Text>
+        <Text style={styles.fieldLabel}>Language (this device only)</Text>
         <View style={styles.langRow}>
           {(Object.keys(LANGUAGE_LABELS) as AppLanguage[]).map(code => (
             <FilterChip

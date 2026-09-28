@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Rider.Application.Interfaces.Repositories;
+using Rider.Domain.Common;
 using Rider.Domain.Entities;
 using Rider.Persistence.Contexts;
 
@@ -21,5 +22,43 @@ namespace Rider.Persistence.Repositories
 
         public async Task<RiderNotification> GetForUserAsync(Guid userId, long id)
             => await _entities.FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
+
+        public async Task<List<RiderNotification>> ListUnreadOrderCancellationsAsync(Guid userId, int take = 100)
+        {
+            if (take < 1) take = 1;
+            if (take > 200) take = 200;
+            return await _entities
+                .AsNoTracking()
+                .Where(n => n.UserId == userId
+                    && !n.IsRead
+                    && n.Title == RiderNotificationTitles.OrderCancelled
+                    && n.AssignedOrderId != null)
+                .OrderByDescending(n => n.CreatedAt)
+                .Take(take)
+                .ToListAsync();
+        }
+
+        public async Task<int> MarkOrderCancellationsReadAsync(
+            Guid userId, IReadOnlyCollection<long> assignedOrderIds)
+        {
+            if (assignedOrderIds == null || assignedOrderIds.Count == 0)
+                return 0;
+
+            var ids = assignedOrderIds.Where(id => id > 0).Distinct().ToList();
+            if (ids.Count == 0) return 0;
+
+            var rows = await _entities
+                .Where(n => n.UserId == userId
+                    && !n.IsRead
+                    && n.Title == RiderNotificationTitles.OrderCancelled
+                    && n.AssignedOrderId != null
+                    && ids.Contains(n.AssignedOrderId.Value))
+                .ToListAsync();
+
+            foreach (var row in rows)
+                row.IsRead = true;
+
+            return rows.Count;
+        }
     }
 }

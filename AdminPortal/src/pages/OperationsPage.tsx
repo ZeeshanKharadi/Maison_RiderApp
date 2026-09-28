@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { customerName, daysAgoInput, money, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
+import { customerName, daysAgoInput, money, DeliveryIssueReportDto, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
 import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
 const STATUSES = [
@@ -30,12 +30,20 @@ const STATUS_LABELS: Record<string, string> = {
   Completed: 'Completed',
   Cancelled: 'Cancelled',
   Rejected: 'Rejected',
+  ReturningToStore: 'Returning to store',
+  AwaitingStoreReceipt: 'Awaiting store receipt',
+  Failed: 'Failed',
 };
 
 export default function OperationsPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<OrderListDto[]>([]);
   const [rejections, setRejections] = useState<OrderRejectionDto[]>([]);
+  const [issues, setIssues] = useState<DeliveryIssueReportDto[]>([]);
+  const [issuesError, setIssuesError] = useState<string | null>(null);
+  const [issuesLoaded, setIssuesLoaded] = useState(false);
+  const [issueStatus, setIssueStatus] = useState('Open');
+  const [issueQuery, setIssueQuery] = useState('');
   const [stores, setStores] = useState<StoreDto[]>([]);
   const [riders, setRiders] = useState<RiderDto[]>([]);
   const [storeId, setStoreId] = useState('');
@@ -46,8 +54,8 @@ export default function OperationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'board' | 'table'>('board');
 
-  const filtersRef = useRef({ storeId, status, riderId, from, to });
-  filtersRef.current = { storeId, status, riderId, from, to };
+  const filtersRef = useRef({ storeId, status, riderId, from, to, issueStatus, issueQuery });
+  filtersRef.current = { storeId, status, riderId, from, to, issueStatus, issueQuery };
 
   const load = useCallback(async () => {
     const f = filtersRef.current;
@@ -63,17 +71,31 @@ export default function OperationsPage() {
     if (f.from) rejQs.set('from', f.from);
     if (f.to) rejQs.set('to', f.to);
 
-    const [o, s, r, rej] = await Promise.all([
+    const issQs = new URLSearchParams(rejQs);
+    if (f.issueStatus) issQs.set('status', f.issueStatus);
+    if (f.issueQuery.trim()) issQs.set('q', f.issueQuery.trim());
+    if (f.issueStatus === 'Closed') issQs.set('includeClosed', 'true');
+
+    const [o, s, r, rej, iss] = await Promise.all([
       api<OrderListDto[]>(`/api/Admin/Orders?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
       api<RiderDto[]>('/api/Admin/Riders'),
       api<OrderRejectionDto[]>(`/api/Admin/OrderRejections?${rejQs.toString()}`),
+      api<DeliveryIssueReportDto[]>(`/api/Admin/DeliveryIssueReports?${issQs.toString()}`),
     ]);
     if (!o.status) throw new Error(o.message);
     setOrders(o.Data || []);
     setStores(s.Data || []);
     setRiders(r.Data || []);
     setRejections(rej.status ? rej.Data || [] : []);
+    if (!iss.status) {
+      setIssues([]);
+      setIssuesError(iss.message || 'Failed to load delivery issue reports');
+    } else {
+      setIssues(iss.Data || []);
+      setIssuesError(null);
+    }
+    setIssuesLoaded(true);
     setError(null);
   }, []);
 
@@ -90,6 +112,17 @@ export default function OperationsPage() {
     if (status === 'Rejected' || !status) return list;
     return list;
   }, [rejections, riderId, status]);
+
+  const filteredIssues = useMemo(() => {
+    let list = issues;
+    if (riderId) list = list.filter((x) => x.riderUserId === riderId);
+    return list;
+  }, [issues, riderId]);
+
+  const openIssueCount = useMemo(
+    () => filteredIssues.filter((x) => x.status === 'New' || x.status === 'Acknowledged').length,
+    [filteredIssues],
+  );
 
   const grouped = useMemo(() => {
     const map: Record<string, OrderListDto[]> = {};
@@ -114,6 +147,108 @@ export default function OperationsPage() {
         </div>
       </div>
       {error && <div className="alert alert-danger">{error}</div>}
+
+      {(issuesLoaded || issuesError) && (
+        <div className="panel mb-3 border-start border-4 border-warning">
+          <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+            <div>
+              <h2 className="h6 mb-1">
+                Delivery issues
+                {!issuesError ? ` · ${filteredIssues.length}` : ''}
+                {!issuesError && issueStatus === 'Open' ? ` open (${openIssueCount})` : ''}
+              </h2>
+              <p className="small text-muted mb-0">
+                New and Acknowledged issues need ops attention. Closing an issue does not change the delivery,
+                COD, or cash. Date range {from || '…'} → {to || '…'} (default 7 days); capped at 500 rows —
+                not a complete historical queue.
+              </p>
+            </div>
+            <div className="d-flex flex-wrap gap-2 align-items-end">
+              <div>
+                <label className="form-label small mb-0">Issue status</label>
+                <select
+                  className="form-select form-select-sm"
+                  value={issueStatus}
+                  onChange={(e) => setIssueStatus(e.target.value)}
+                >
+                  <option value="Open">Open (New + Acknowledged)</option>
+                  <option value="New">New</option>
+                  <option value="Acknowledged">Acknowledged</option>
+                  <option value="Closed">Closed</option>
+                </select>
+              </div>
+              <div>
+                <label className="form-label small mb-0">Search issues</label>
+                <input
+                  className="form-control form-control-sm"
+                  placeholder="Order, rider, reason…"
+                  value={issueQuery}
+                  onChange={(e) => setIssueQuery(e.target.value)}
+                />
+              </div>
+              <button
+                className="btn btn-sm btn-outline-dark"
+                type="button"
+                onClick={() => load().catch((e: Error) => setError(e.message))}
+              >
+                Apply issue filters
+              </button>
+            </div>
+          </div>
+          {issuesError ? (
+            <div className="alert alert-danger mb-0">{issuesError}</div>
+          ) : filteredIssues.length === 0 ? (
+            <p className="mb-0 small text-muted">No issue reports for these filters.</p>
+          ) : (
+            <div className="table-responsive">
+              <table className="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Order</th>
+                    <th>Store</th>
+                    <th>Rider</th>
+                    <th>Reason</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredIssues.map((iss) => (
+                    <tr
+                      key={iss.id}
+                      style={{ cursor: 'pointer' }}
+                      className={iss.status === 'New' ? 'table-warning' : iss.status === 'Acknowledged' ? 'table-info' : undefined}
+                      onClick={() => navigate(`/operations/${iss.assignedOrderId}`)}
+                    >
+                      <td>
+                        <span className="fw-semibold">{iss.statusLabel || iss.status || 'New'}</span>
+                      </td>
+                      <td>
+                        <div className="fw-semibold">#{iss.orderId || iss.orderNo}</div>
+                        {iss.orderStatus ? (
+                          <div className="small text-muted">{iss.orderStatus}</div>
+                        ) : null}
+                      </td>
+                      <td>{iss.storeId}</td>
+                      <td>{iss.riderWorkerId || iss.riderName || 'Rider'}</td>
+                      <td>
+                        {iss.reasonLabel || iss.reasonCode}
+                        {iss.note ? <div className="small text-muted">{iss.note}</div> : null}
+                      </td>
+                      <td className="small">{new Date(iss.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!issuesError && filteredIssues.length >= 500 && (
+            <p className="small text-warning mb-0 mt-2">
+              Showing the maximum of 500 reports for this range — older or additional reports may exist.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="filters">
         <div>

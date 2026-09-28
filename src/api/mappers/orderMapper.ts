@@ -48,6 +48,41 @@ export type ApiAvailableOrder = {
   completedAt?: string | null;
   isDirectAssignment?: boolean;
   items?: ApiOrderItem[];
+  issueReports?: Array<{
+    id: number;
+    assignedOrderId: number;
+    orderId?: string;
+    orderNo?: string;
+    storeId?: string;
+    reasonCode: string;
+    reasonLabel?: string;
+    note?: string | null;
+    riderUserId: string;
+    requestId?: string | null;
+    createdAt: string;
+    orderStatus?: string;
+    status?: string;
+    statusLabel?: string;
+    acknowledgedAt?: string | null;
+    closedAt?: string | null;
+  }>;
+  failure?: {
+    requestStatus?: string | null;
+    reasonCode?: string | null;
+    reasonLabel?: string | null;
+    note?: string | null;
+    requestId?: string | null;
+    issueReportId?: number | null;
+    requestedAt?: string | null;
+    decidedAt?: string | null;
+    decisionNote?: string | null;
+    statusBeforeReturn?: string | null;
+    riderReturnedAt?: string | null;
+    storeReceivedAt?: string | null;
+    cashCollectedWarning?: boolean;
+    cashCollected?: number | null;
+    expectedCash?: number | null;
+  } | null;
 };
 
 export type ApiRiderPerformance = {
@@ -247,6 +282,36 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     pickedUpAt: dto.pickedUpAt ?? undefined,
     completedAt: dto.completedAt ?? undefined,
     isDirectAssignment: dto.isDirectAssignment ?? false,
+    issueReports: (dto.issueReports ?? []).map(r => ({
+      id: r.id,
+      reasonCode: r.reasonCode,
+      reasonLabel: r.reasonLabel,
+      note: r.note,
+      createdAt: r.createdAt,
+      status: r.status,
+      statusLabel: r.statusLabel,
+      acknowledgedAt: r.acknowledgedAt,
+      closedAt: r.closedAt,
+    })),
+    failure: dto.failure
+      ? {
+          requestStatus: dto.failure.requestStatus ?? undefined,
+          reasonCode: dto.failure.reasonCode ?? undefined,
+          reasonLabel: dto.failure.reasonLabel ?? undefined,
+          note: dto.failure.note ?? undefined,
+          requestId: dto.failure.requestId ?? undefined,
+          issueReportId: dto.failure.issueReportId ?? undefined,
+          requestedAt: dto.failure.requestedAt ?? undefined,
+          decidedAt: dto.failure.decidedAt ?? undefined,
+          decisionNote: dto.failure.decisionNote ?? undefined,
+          statusBeforeReturn: dto.failure.statusBeforeReturn ?? undefined,
+          riderReturnedAt: dto.failure.riderReturnedAt ?? undefined,
+          storeReceivedAt: dto.failure.storeReceivedAt ?? undefined,
+          cashCollectedWarning: !!dto.failure.cashCollectedWarning,
+          cashCollected: dto.failure.cashCollected ?? undefined,
+          expectedCash: dto.failure.expectedCash ?? undefined,
+        }
+      : undefined,
   };
 }
 
@@ -277,6 +342,12 @@ export function mapBackendStatusToDeliveryState(
       return 'NAVIGATE_TO_PICKUP';
     case 'accepted':
       return 'ACCEPTED';
+    case 'returningtostore':
+    case 'returning_to_store':
+      return 'RETURNING_TO_STORE';
+    case 'awaitingstorereceipt':
+    case 'awaiting_store_receipt':
+      return 'AWAITING_STORE_RECEIPT';
     default:
       return 'ACCEPTED';
   }
@@ -303,6 +374,10 @@ export function mapDeliveryStateToBackendStatus(
       return 'Delivered';
     case 'COMPLETED':
       return 'Completed';
+    case 'RETURNING_TO_STORE':
+      return 'ReturningToStore';
+    case 'AWAITING_STORE_RECEIPT':
+      return 'AwaitingStoreReceipt';
     default:
       return 'Accepted';
   }
@@ -311,4 +386,24 @@ export function mapDeliveryStateToBackendStatus(
 export function isCancelledBackendStatus(status?: string | null): boolean {
   const raw = (status ?? '').trim().toLowerCase();
   return raw === 'cancelled' || raw === 'canceled';
+}
+
+/** Statuses that still belong on the rider's Active list (server ActiveStatuses). */
+export function isLiveRiderActiveStatus(status?: string | null): boolean {
+  const raw = (status ?? '').trim().toLowerCase().replace(/_/g, '');
+  switch (raw) {
+    case 'accepted':
+    case 'navigatingtopickup':
+    case 'arrivedatpickup':
+    case 'inprogress':
+    case 'ontheway':
+    case 'arrivedatcustomer':
+    case 'delivered':
+    case 'returningtostore':
+    case 'awaitingstorereceipt':
+      return true;
+    default:
+      // Available / Cancelled / Completed / Failed / unknown → not an active job
+      return false;
+  }
 }

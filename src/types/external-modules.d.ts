@@ -8,32 +8,64 @@ declare module 'react-native-config' {
 }
 
 declare module 'react-native-geolocation-service' {
-  export type GeoPosition = {
-    coords: {
-      latitude: number;
-      longitude: number;
-      accuracy?: number;
-    };
-  };
-
-  export type GeoError = { code: number; message: string };
-
+  export type AuthorizationLevel = 'always' | 'whenInUse';
   export type AuthorizationResult =
     | 'granted'
     | 'denied'
     | 'disabled'
     | 'restricted';
 
+  export interface GeoCoordinates {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    altitude: number | null;
+    heading: number | null;
+    speed: number | null;
+    altitudeAccuracy?: number | null;
+  }
+
+  export interface GeoPosition {
+    coords: GeoCoordinates;
+    timestamp: number;
+    mocked?: boolean;
+  }
+
+  export type GeoError = { code: number; message: string };
+
+  export interface GeoOptions {
+    enableHighAccuracy?: boolean;
+    timeout?: number;
+    maximumAge?: number;
+    showLocationDialog?: boolean;
+    forceRequestLocation?: boolean;
+    forceLocationManager?: boolean;
+    distanceFilter?: number;
+  }
+
+  export interface GeoWatchOptions extends GeoOptions {
+    interval?: number;
+    fastestInterval?: number;
+    useSignificantChanges?: boolean;
+    showsBackgroundLocationIndicator?: boolean;
+  }
+
   const Geolocation: {
     requestAuthorization(
-      authorizationLevel: 'whenInUse' | 'always',
+      authorizationLevel: AuthorizationLevel,
     ): Promise<AuthorizationResult>;
+    getCurrentPosition(
+      success: (position: GeoPosition) => void,
+      error?: (error: GeoError) => void,
+      options?: GeoOptions,
+    ): void;
     watchPosition(
       success: (position: GeoPosition) => void,
       error?: (error: GeoError) => void,
-      options?: Record<string, unknown>,
+      options?: GeoWatchOptions,
     ): number;
     clearWatch(watchId: number): void;
+    stopObserving(): void;
   };
 
   export default Geolocation;

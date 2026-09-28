@@ -523,17 +523,120 @@ public class SqlServerConcurrencyTests
     public async Task Pickup_versus_admin_cancellation()
     {
         RequireSql();
-        await ResetDatabaseAsync();
 
+        // Race must stay non-throwing and allow either committed winner.
+        // Repeat until both final outcomes are observed (or cap attempts).
+        var sawPickupFinal = false;
+        var sawCancelFinal = false;
+        const int maxAttempts = 60;
+
+        for (var attempt = 0; attempt < maxAttempts && !(sawPickupFinal && sawCancelFinal); attempt++)
+        {
+            await ResetDatabaseAsync();
+
+            Guid riderA, adminId;
+            long id;
+            await using (var seed = new ApplicationDbContext(Options()))
+            {
+                (riderA, _, adminId) = await SeedUsersAsync(seed);
+                id = await SeedAvailableAsync(seed, $"CXL-P-{attempt}");
+                var orders = CreateOrders(seed);
+                Assert.True((await orders.UpdateRiderStatusAsync(id, riderA,
+                    new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+            }
+
+            var actor = new AdminActor
+            {
+                UserId = adminId,
+                WorkerId = "ADM",
+                Name = "Admin",
+                StoreId = "S1",
+                Roles = new List<string> { RoleNames.Administrator }
+            };
+
+            async Task<(bool ok, string message)> Pickup()
+            {
+                await using var db = new ApplicationDbContext(Options());
+                var result = await CreateOrders(db).UpdateRiderStatusAsync(id, riderA,
+                    new UpdateOrderStatusRequest { status = OrderStatuses.InProgress });
+                return (result.status, result.message ?? "");
+            }
+
+            async Task<(bool ok, string message)> Cancel()
+            {
+                await using var db = new ApplicationDbContext(Options());
+                var result = await CreateAdmin(db).CancelOrderAsync(actor, id, "cancel during pickup");
+                return (result.status, result.message ?? "");
+            }
+
+            var results = await Task.WhenAll(Pickup(), Cancel());
+            var pickup = results[0];
+            var cancel = results[1];
+
+            // Neither side may throw — failures are ApiResponse.status=false.
+            Assert.True(pickup.ok || cancel.ok, $"attempt {attempt}: expected at least one success. pickup={pickup.message}; cancel={cancel.message}");
+
+            await using var verify = new ApplicationDbContext(Options());
+            var order = await verify.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+            Assert.True(
+                order.Status is OrderStatuses.InProgress or OrderStatuses.Cancelled,
+                $"attempt {attempt}: unexpected status {order.Status}");
+            Assert.NotEqual(OrderStatuses.Accepted, order.Status);
+
+            var cancelAudits = await verify.Set<OrderLifecycleAudit>().AsNoTracking()
+                .CountAsync(a => a.AssignedOrderId == id
+                    && a.NewStatus == OrderStatuses.Cancelled
+                    && a.ActorType == "Admin");
+
+            if (order.Status == OrderStatuses.InProgress)
+            {
+                sawPickupFinal = true;
+                Assert.True(pickup.ok, $"pickup-win attempt {attempt}: pickup must succeed ({pickup.message})");
+                Assert.False(cancel.ok, $"pickup-win attempt {attempt}: cancel must lose cleanly ({cancel.message})");
+                Assert.Equal(0, cancelAudits); // cancel did not commit
+                Assert.Contains("concurrent", cancel.message, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                sawCancelFinal = true;
+                Assert.True(cancel.ok, $"cancel-win attempt {attempt}: cancel must succeed ({cancel.message})");
+                Assert.Equal(1, cancelAudits);
+                Assert.Equal(OrderStatuses.Cancelled, order.Status);
+                // Pickup may have lost the race (false) or never applied after cancel.
+                if (!pickup.ok)
+                {
+                    Assert.True(
+                        pickup.message.Contains("cancel", StringComparison.OrdinalIgnoreCase)
+                        || pickup.message.Contains("concurrent", StringComparison.OrdinalIgnoreCase)
+                        || pickup.message.Contains("Cannot move", StringComparison.OrdinalIgnoreCase)
+                        || pickup.message.Contains("Accepted", StringComparison.OrdinalIgnoreCase),
+                        $"cancel-win attempt {attempt}: unexpected pickup message: {pickup.message}");
+                }
+            }
+
+            var audits = await verify.Set<OrderLifecycleAudit>().AsNoTracking()
+                .Where(a => a.AssignedOrderId == id).ToListAsync();
+            Assert.Contains(audits, a => a.NewStatus == OrderStatuses.Accepted);
+            Assert.True(audits.Any(a => a.NewStatus is OrderStatuses.InProgress or OrderStatuses.Cancelled));
+        }
+
+        Assert.True(sawPickupFinal, $"never observed pickup-final InProgress in {maxAttempts} attempts");
+        Assert.True(sawCancelFinal, $"never observed cancel-final Cancelled in {maxAttempts} attempts");
+    }
+
+    [SkippableFact]
+    public async Task Report_issue_versus_admin_cancel_and_complete_and_duplicate_requestId()
+    {
+        RequireSql();
+
+        // --- report vs cancel ---
+        await ResetDatabaseAsync();
         Guid riderA, adminId;
-        long id;
+        long cancelRaceId;
         await using (var seed = new ApplicationDbContext(Options()))
         {
             (riderA, _, adminId) = await SeedUsersAsync(seed);
-            id = await SeedAvailableAsync(seed, "CXL-P");
-            var orders = CreateOrders(seed);
-            Assert.True((await orders.UpdateRiderStatusAsync(id, riderA,
-                new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+            cancelRaceId = await SeedActiveInProgressAsync(seed, riderA, "ISSUE-CXL");
         }
 
         var actor = new AdminActor
@@ -545,30 +648,191 @@ public class SqlServerConcurrencyTests
             Roles = new List<string> { RoleNames.Administrator }
         };
 
-        async Task<bool> Pickup()
+        async Task<(bool ok, string msg)> ReportCancelRace()
         {
             await using var db = new ApplicationDbContext(Options());
-            return (await CreateOrders(db).UpdateRiderStatusAsync(id, riderA,
-                new UpdateOrderStatusRequest { status = OrderStatuses.InProgress })).status;
+            var r = await CreateOrders(db).ReportDeliveryIssueAsync(cancelRaceId, riderA,
+                new ReportDeliveryIssueRequest
+                {
+                    reason = DeliveryIssueReasons.CustomerUnreachable,
+                    note = "race note",
+                    requestId = "sql-race-cancel"
+                });
+            return (r.status, r.message ?? "");
         }
 
-        async Task<bool> Cancel()
+        async Task<(bool ok, string msg)> CancelRace()
         {
             await using var db = new ApplicationDbContext(Options());
-            return (await CreateAdmin(db).CancelOrderAsync(actor, id, "cancel during pickup")).status;
+            var r = await CreateAdmin(db).CancelOrderAsync(actor, cancelRaceId, "cancel during report");
+            return (r.status, r.message ?? "");
         }
 
-        var results = await Task.WhenAll(Pickup(), Cancel());
-        Assert.True(results.Count(x => x) >= 1);
+        var cancelRace = await Task.WhenAll(ReportCancelRace(), CancelRace());
+        Assert.True(cancelRace[0].ok || cancelRace[1].ok);
 
-        await using var verify = new ApplicationDbContext(Options());
-        var order = await verify.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
-        Assert.True(order.Status is OrderStatuses.InProgress or OrderStatuses.Cancelled);
-        Assert.NotEqual(OrderStatuses.Accepted, order.Status); // must have left Accepted
-        var audits = await verify.Set<OrderLifecycleAudit>().AsNoTracking()
-            .Where(a => a.AssignedOrderId == id).ToListAsync();
-        Assert.Contains(audits, a => a.NewStatus == OrderStatuses.Accepted);
-        Assert.True(audits.Any(a => a.NewStatus is OrderStatuses.InProgress or OrderStatuses.Cancelled));
+        await using (var verify = new ApplicationDbContext(Options()))
+        {
+            var order = await verify.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == cancelRaceId);
+            var reports = await verify.Set<DeliveryIssueReport>().AsNoTracking()
+                .Where(r => r.AssignedOrderId == cancelRaceId).ToListAsync();
+            var issueAudits = await verify.Set<OrderLifecycleAudit>().AsNoTracking()
+                .CountAsync(a => a.AssignedOrderId == cancelRaceId
+                    && a.NewStatus == DeliveryIssueReasons.AuditEventStatus);
+            var issueNotifs = await verify.Set<AdminNotification>().AsNoTracking()
+                .CountAsync(n => n.AssignedOrderId == cancelRaceId
+                    && n.Title == "Delivery issue reported");
+
+            Assert.Equal(reports.Count, issueAudits);
+            Assert.Equal(reports.Count, issueNotifs);
+            if (order.Status == OrderStatuses.Cancelled)
+            {
+                Assert.True(cancelRace[1].ok);
+                if (!cancelRace[0].ok)
+                    Assert.False(string.IsNullOrWhiteSpace(cancelRace[0].msg));
+            }
+            else
+            {
+                Assert.True(OrderStatuses.IsActiveStatus(order.Status));
+                Assert.True(cancelRace[0].ok);
+                Assert.Single(reports);
+            }
+        }
+
+        // --- report vs complete ---
+        await ResetDatabaseAsync();
+        long completeRaceId;
+        await using (var seed = new ApplicationDbContext(Options()))
+        {
+            (riderA, _, _) = await SeedUsersAsync(seed);
+            completeRaceId = await SeedActiveInProgressAsync(seed, riderA, "ISSUE-CMP");
+        }
+
+        async Task<(bool ok, string msg)> ReportCompleteRace()
+        {
+            await using var db = new ApplicationDbContext(Options());
+            var r = await CreateOrders(db).ReportDeliveryIssueAsync(completeRaceId, riderA,
+                new ReportDeliveryIssueRequest
+                {
+                    reason = DeliveryIssueReasons.AddressIssue,
+                    requestId = "sql-race-complete"
+                });
+            return (r.status, r.message ?? "");
+        }
+
+        async Task<(bool ok, string msg)> CompleteRace()
+        {
+            await using var db = new ApplicationDbContext(Options());
+            var r = await CreateOrders(db).UpdateRiderStatusAsync(completeRaceId, riderA,
+                new UpdateOrderStatusRequest
+                {
+                    status = OrderStatuses.Completed,
+                    cashCollected = 20m,
+                    requestId = "sql-complete-1"
+                });
+            return (r.status, r.message ?? "");
+        }
+
+        var completeRace = await Task.WhenAll(ReportCompleteRace(), CompleteRace());
+        Assert.True(completeRace[0].ok || completeRace[1].ok);
+
+        await using (var verify = new ApplicationDbContext(Options()))
+        {
+            var order = await verify.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == completeRaceId);
+            var reports = await verify.Set<DeliveryIssueReport>().AsNoTracking()
+                .CountAsync(r => r.AssignedOrderId == completeRaceId);
+            var issueAudits = await verify.Set<OrderLifecycleAudit>().AsNoTracking()
+                .CountAsync(a => a.AssignedOrderId == completeRaceId
+                    && a.NewStatus == DeliveryIssueReasons.AuditEventStatus);
+            Assert.Equal(reports, issueAudits);
+            if (order.Status == OrderStatuses.Completed)
+            {
+                Assert.True(completeRace[1].ok);
+                if (!completeRace[0].ok)
+                    Assert.Contains("completed", completeRace[0].msg, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Assert.True(OrderStatuses.IsActiveStatus(order.Status));
+                Assert.True(completeRace[0].ok);
+                Assert.Equal(1, reports);
+            }
+        }
+
+        // --- concurrent identical requestId ---
+        await ResetDatabaseAsync();
+        long idemId;
+        await using (var seed = new ApplicationDbContext(Options()))
+        {
+            (riderA, _, _) = await SeedUsersAsync(seed);
+            idemId = await SeedActiveInProgressAsync(seed, riderA, "ISSUE-IDEM");
+        }
+
+        async Task<(bool ok, string msg, long? reportId)> ReportSameKey()
+        {
+            await using var db = new ApplicationDbContext(Options());
+            var r = await CreateOrders(db).ReportDeliveryIssueAsync(idemId, riderA,
+                new ReportDeliveryIssueRequest
+                {
+                    reason = DeliveryIssueReasons.CustomerRefused,
+                    note = "same payload",
+                    requestId = "sql-idem-twin"
+                });
+            return (r.status, r.message ?? "", r.Data?.id);
+        }
+
+        var twins = await Task.WhenAll(ReportSameKey(), ReportSameKey());
+        Assert.True(twins[0].ok);
+        Assert.True(twins[1].ok);
+        Assert.Equal(twins[0].reportId, twins[1].reportId);
+
+        await using (var verify = new ApplicationDbContext(Options()))
+        {
+            Assert.Equal(1, await verify.Set<DeliveryIssueReport>().CountAsync(r => r.AssignedOrderId == idemId));
+            Assert.Equal(1, await verify.Set<OrderLifecycleAudit>().CountAsync(a =>
+                a.AssignedOrderId == idemId && a.NewStatus == DeliveryIssueReasons.AuditEventStatus));
+            Assert.Equal(1, await verify.Set<AdminNotification>().CountAsync(n =>
+                n.AssignedOrderId == idemId && n.Title == "Delivery issue reported"));
+        }
+    }
+
+    private static async Task<long> SeedActiveInProgressAsync(
+        ApplicationDbContext db, Guid riderId, string orderId)
+    {
+        var batch = new AssignedOrderBatch { StoreId = "S1", Time = "now", CreatedAt = DateTime.UtcNow };
+        db.AssignedOrderBatches.Add(batch);
+        await db.SaveChangesAsync();
+        var order = new AssignedOrder
+        {
+            BatchId = batch.Id,
+            OrderId = orderId,
+            OrderNo = orderId,
+            OrderTypeId = "D",
+            OrderState = "Open",
+            Comment = "",
+            LastName = "L",
+            FirstName = "F",
+            City = "C",
+            Street = "S",
+            AddressNo = "1",
+            PostCode = "0",
+            SecondaryAddress = "",
+            Phone = "1",
+            OrderTime = "now",
+            OrderTotal = 20,
+            PaymentMethod = "cash",
+            Cash = 20,
+            ExpectedCash = 20,
+            Status = OrderStatuses.InProgress,
+            AcceptedByUserId = riderId,
+            AcceptedAt = DateTime.UtcNow.AddMinutes(-10),
+            PickedUpAt = DateTime.UtcNow.AddMinutes(-5),
+            CreatedAt = DateTime.UtcNow.AddMinutes(-15),
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.AssignedOrders.Add(order);
+        await db.SaveChangesAsync();
+        return order.Id;
     }
 
     private sealed class FakeCrypto : IPasswordCrypto

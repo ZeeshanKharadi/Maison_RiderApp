@@ -18,7 +18,10 @@ export interface User {
   name: string;
   email: string;
   phone?: string;
+  emergencyContact?: string;
+  emergencyContactName?: string;
   isAvailableOnline?: boolean;
+  currentOnlineStartedAt?: string | null;
 }
 
 interface AuthContextType {

@@ -111,7 +111,7 @@ public class ReliabilityP1Tests : IDisposable
             ["PasswordReset:ResendCooldownSeconds"] = "0"
         }).Build();
 
-        _notifications = new RecordingNotifications();
+        _notifications = new RecordingNotifications(_db);
         _orders = new OrderService(
             uow,
             _notifications,
@@ -229,6 +229,73 @@ public class ReliabilityP1Tests : IDisposable
 
         var other = await _orders.GetRecentlyCancelledOrdersAsync(_riderB, 180);
         Assert.DoesNotContain(other.Data!, o => o.id == id);
+    }
+
+    [Fact]
+    public async Task Cancel_catchup_survives_24h_and_acks_clear_it()
+    {
+        var id = await SeedAvailableAsync("S1", "CX-OLD");
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA,
+            new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+        Assert.True((await _admin.CancelOrderAsync(_adminActor, id, "old cancel")).status);
+
+        var note = await _db.RiderNotifications.SingleAsync(n =>
+            n.AssignedOrderId == id && n.UserId == _riderA);
+        note.CreatedAt = DateTime.UtcNow.AddHours(-30);
+        await _db.SaveChangesAsync();
+
+        var recent = await _orders.GetRecentlyCancelledOrdersAsync(_riderA, 180);
+        Assert.Contains(recent.Data!, o => o.id == id);
+
+        var ack = await _orders.AcknowledgeCancellationsAsync(_riderA,
+            new AcknowledgeCancellationsRequest { assignedOrderIds = new List<long> { id } });
+        Assert.True(ack.status, ack.message);
+
+        var after = await _orders.GetRecentlyCancelledOrdersAsync(_riderA, 180);
+        Assert.DoesNotContain(after.Data!, o => o.id == id);
+
+        // Second device / re-login: still cleared (server durable).
+        var again = await _orders.GetRecentlyCancelledOrdersAsync(_riderA, 1);
+        Assert.DoesNotContain(again.Data!, o => o.id == id);
+    }
+
+    [Fact]
+    public async Task Requeue_does_not_erase_unacked_cancel_for_prior_rider()
+    {
+        var id = await SeedAvailableAsync("S1", "CX-RQ");
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA,
+            new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+        Assert.True((await _admin.CancelOrderAsync(_adminActor, id, "requeue soon")).status);
+        Assert.True((await _admin.RequeueOrderAsync(_adminActor, id)).status);
+
+        var order = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(OrderStatuses.Available, order.Status);
+        Assert.Null(order.AcceptedByUserId);
+
+        var catchUp = await _orders.GetRecentlyCancelledOrdersAsync(_riderA, 180);
+        Assert.Contains(catchUp.Data!, o => o.id == id && o.status == OrderStatuses.Cancelled);
+
+        var other = await _orders.GetRecentlyCancelledOrdersAsync(_riderB, 180);
+        Assert.DoesNotContain(other.Data!, o => o.id == id);
+
+        var active = await _orders.GetActiveOrdersAsync(_riderA);
+        Assert.DoesNotContain(active.Data!, o => o.id == id);
+    }
+
+    [Fact]
+    public async Task Ack_is_scoped_to_assigned_rider_only()
+    {
+        var id = await SeedAvailableAsync("S1", "CX-SCOPE");
+        Assert.True((await _orders.UpdateRiderStatusAsync(id, _riderA,
+            new UpdateOrderStatusRequest { status = OrderStatuses.Accepted })).status);
+        Assert.True((await _admin.CancelOrderAsync(_adminActor, id, "scope")).status);
+
+        // Rider B cannot clear A's cancel inbox by acknowledging the same id.
+        Assert.True((await _orders.AcknowledgeCancellationsAsync(_riderB,
+            new AcknowledgeCancellationsRequest { assignedOrderIds = new List<long> { id } })).status);
+
+        var still = await _orders.GetRecentlyCancelledOrdersAsync(_riderA, 180);
+        Assert.Contains(still.Data!, o => o.id == id);
     }
 
     [Fact]
@@ -397,7 +464,10 @@ public class ReliabilityP1Tests : IDisposable
 
     private sealed class RecordingNotifications : IRiderNotificationService
     {
+        private readonly ApplicationDbContext _db;
         public List<(Guid riderUserId, string orderId, long? assignedOrderId)> Cancelled { get; } = new();
+
+        public RecordingNotifications(ApplicationDbContext db) => _db = db;
 
         public Task NotifyDirectAssignmentAsync(Guid riderUserId, string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
             => Task.CompletedTask;
@@ -405,10 +475,23 @@ public class ReliabilityP1Tests : IDisposable
         public Task NotifyOpenPoolOrderAsync(string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
             => Task.CompletedTask;
 
-        public Task NotifyOrderCancelledAsync(Guid riderUserId, string orderId, long? assignedOrderId, string? cancelReason)
+        public async Task NotifyOrderCancelledAsync(Guid riderUserId, string orderId, long? assignedOrderId, string? cancelReason)
         {
             Cancelled.Add((riderUserId, orderId, assignedOrderId));
-            return Task.CompletedTask;
+            var reason = string.IsNullOrWhiteSpace(cancelReason) ? "Cancelled by admin" : cancelReason.Trim();
+            _db.RiderNotifications.Add(new RiderNotification
+            {
+                UserId = riderUserId,
+                Category = "orders",
+                Title = RiderNotificationTitles.OrderCancelled,
+                Description = $"Order {orderId} was cancelled. {reason}",
+                OrderId = orderId,
+                AssignedOrderId = assignedOrderId,
+                Priority = "high",
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
         }
 
         public Task<ApiResponse<List<RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50)

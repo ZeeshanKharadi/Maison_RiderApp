@@ -52,6 +52,17 @@ namespace Rider.Application.DTOs.Auth
         public string profilePicture { get; set; }
     }
 
+    /// <summary>
+    /// Rider self-service profile patch. Identity from JWT only — never trust a client userId.
+    /// Only fields that already exist on Users and are rider-editable.
+    /// </summary>
+    public class PatchRiderProfileRequest
+    {
+        public string? phoneNumber { get; set; }
+        public string? emergencyContactNumber { get; set; }
+        public string? emergencyContactName { get; set; }
+    }
+
     public class GetUserResponse
     {
         public string id { get; set; }
@@ -59,6 +70,8 @@ namespace Rider.Application.DTOs.Auth
         public string name { get; set; }
         public string email { get; set; }
         public string phoneNumber { get; set; }
+        public string? emergencyContactNumber { get; set; }
+        public string? emergencyContactName { get; set; }
         public string department { get; set; }
         public string position { get; set; }
         public string costCenter { get; set; }
@@ -70,6 +83,8 @@ namespace Rider.Application.DTOs.Auth
         public bool isActive { get; set; }
         public bool isVerified { get; set; }
         public bool isAvailableOnline { get; set; }
+        /// <summary>UTC start of open online interval when isAvailableOnline; otherwise null.</summary>
+        public DateTime? currentOnlineStartedAt { get; set; }
         public int tokenVersion { get; set; }
         public string storeId { get; set; }
         public List<string> roles { get; set; } = new();

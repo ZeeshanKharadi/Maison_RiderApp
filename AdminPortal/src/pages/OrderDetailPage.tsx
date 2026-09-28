@@ -1,7 +1,14 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { customerName, dt, money, OrderDetailDto, OrderLifecycleEventDto } from '../api/types';
+import {
+  customerName,
+  DeliveryIssueReportDto,
+  dt,
+  money,
+  OrderDetailDto,
+  OrderLifecycleEventDto,
+} from '../api/types';
 import {
   ensureAdminHub,
   isAdminHubConnected,
@@ -23,6 +30,11 @@ const STATUS_LABELS: Record<string, string> = {
   Completed: 'Completed',
   Cancelled: 'Cancelled',
   Rejected: 'Rejected',
+  IssueReported: 'Issue reported',
+  ReturningToStore: 'Returning to store',
+  AwaitingStoreReceipt: 'Awaiting store receipt',
+  Failed: 'Failed',
+  FailureRequested: 'Failure requested',
 };
 
 function statusLabel(status?: string | null) {
@@ -47,6 +59,9 @@ export default function OrderDetailPage() {
   const [cancelReason, setCancelReason] = useState('');
   const [showCancel, setShowCancel] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [issueNote, setIssueNote] = useState<Record<number, string>>({});
+  const [issueBusyId, setIssueBusyId] = useState<number | null>(null);
+  const [issueDetails, setIssueDetails] = useState<Record<number, DeliveryIssueReportDto>>({});
 
   const load = useCallback(async () => {
     const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}`);
@@ -87,6 +102,72 @@ export default function OrderDetailPage() {
     };
   }, [load, orderId]);
 
+  async function triageIssue(
+    issue: DeliveryIssueReportDto,
+    action: 'acknowledge' | 'note' | 'close',
+  ) {
+    setError(null);
+    setIssueBusyId(issue.id);
+    try {
+      let rowVersion = issueDetails[issue.id]?.rowVersion || issue.rowVersion;
+      let working = issueDetails[issue.id] || issue;
+      if (!rowVersion) {
+        const fetched = await api<DeliveryIssueReportDto>(
+          `/api/Admin/DeliveryIssueReports/${issue.id}`,
+        );
+        if (!fetched.status) {
+          setError(fetched.message);
+          return;
+        }
+        working = fetched.Data;
+        rowVersion = fetched.Data.rowVersion;
+        setIssueDetails((prev) => ({ ...prev, [issue.id]: fetched.Data }));
+      }
+      if (!rowVersion) {
+        setError('Missing concurrency token; refresh the page and try again');
+        return;
+      }
+      const note = (issueNote[issue.id] ?? working.internalNote ?? '').trim();
+      const body: { rowVersion: string; internalNote?: string } = { rowVersion };
+      if (action === 'note') {
+        if (!note) {
+          setError('Internal note is required');
+          return;
+        }
+        body.internalNote = note;
+      } else if (note) {
+        body.internalNote = note;
+      }
+      const res = await api<DeliveryIssueReportDto>(
+        `/api/Admin/DeliveryIssueReports/${issue.id}/${action}`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+      if (!res.status) {
+        setError(res.message);
+        return;
+      }
+      setIssueDetails((prev) => ({ ...prev, [issue.id]: res.Data }));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Triage failed');
+    } finally {
+      setIssueBusyId(null);
+    }
+  }
+
+  async function loadIssueHistory(issueId: number) {
+    const res = await api<DeliveryIssueReportDto>(`/api/Admin/DeliveryIssueReports/${issueId}`);
+    if (!res.status) {
+      setError(res.message);
+      return;
+    }
+    setIssueDetails((prev) => ({ ...prev, [issueId]: res.Data }));
+    setIssueNote((prev) => ({
+      ...prev,
+      [issueId]: prev[issueId] ?? res.Data.internalNote ?? '',
+    }));
+  }
+
   async function act(path: string, body?: unknown) {
     setError(null);
     setBusy(true);
@@ -94,6 +175,26 @@ export default function OrderDetailPage() {
       const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/${path}`, {
         method: 'POST',
         body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      if (!res.status) {
+        setError(res.message);
+        return;
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Action failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function failureAct(path: string, note?: string) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api<OrderDetailDto>(`/api/Admin/Orders/${id}/failure/${path}`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note || undefined }),
       });
       if (!res.status) {
         setError(res.message);
@@ -181,9 +282,16 @@ export default function OrderDetailPage() {
     'OnTheWay',
     'ArrivedAtCustomer',
     'Delivered',
+    'Failed',
   ]);
-  const canCancel = ACTIVE_STATUSES.has(order.status);
-  const canRequeue = order.status === 'Available' || order.status === 'Cancelled';
+  const failureStatus = order.failure?.requestStatus || '';
+  const canCancel =
+    ACTIVE_STATUSES.has(order.status)
+    && failureStatus !== 'Pending'
+    && order.status !== 'ReturningToStore'
+    && order.status !== 'AwaitingStoreReceipt';
+  const canRequeue =
+    order.status === 'Available' || order.status === 'Cancelled' || order.status === 'Failed';
   const handedOver = !!order.cashHandedOverAt;
   const showLegacyNote = order.cashSemanticsNote === 'LegacyCashCollected_Ambiguous';
   const pay = (order.paymentMethod || '').toLowerCase();
@@ -193,6 +301,11 @@ export default function OrderDetailPage() {
     order.expectedCash != null ||
     order.cashCollected != null ||
     order.cash != null;
+  const failurePending = failureStatus === 'Pending';
+  const canApproveReturn = failurePending;
+  const canRejectFailure = failurePending;
+  const canConfirmReceipt =
+    order.status === 'AwaitingStoreReceipt' && failureStatus === 'RiderReturned';
 
   return (
     <div>
@@ -223,6 +336,63 @@ export default function OrderDetailPage() {
       {error && <div className="alert alert-danger">{error}</div>}
       {order.cancelReason && (
         <div className="alert alert-secondary">Cancel reason: {order.cancelReason}</div>
+      )}
+      {order.failure?.requestStatus && (
+        <div className={`alert ${order.failure.cashCollectedWarning ? 'alert-warning' : 'alert-info'}`}>
+          <div className="d-flex flex-wrap justify-content-between gap-2 align-items-start">
+            <div>
+              <strong>Failed delivery · {order.failure.requestStatus}</strong>
+              <div className="small mt-1">
+                {order.failure.reasonLabel || order.failure.reasonCode || '—'}
+                {order.failure.note ? ` — ${order.failure.note}` : ''}
+              </div>
+              {order.failure.decisionNote && (
+                <div className="small">Decision: {order.failure.decisionNote}</div>
+              )}
+              {order.failure.cashCollectedWarning && (
+                <div className="fw-semibold mt-2">
+                  Cash collected {money(order.failure.cashCollected)} — not rider earnings.
+                  Use COD handover below; do not zero collected amounts.
+                </div>
+              )}
+              <div className="small text-muted mt-1">
+                Closing an issue report does not resolve this failure. Cancel/requeue only after store receipt (Failed).
+              </div>
+            </div>
+            <div className="d-flex flex-wrap gap-2">
+              {canRejectFailure && (
+                <button
+                  className="btn btn-outline-secondary btn-sm"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void failureAct('reject', 'Continue delivery')}
+                >
+                  Reject request
+                </button>
+              )}
+              {canApproveReturn && (
+                <button
+                  className="btn btn-maison btn-sm"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void failureAct('approve-return', 'Return to store')}
+                >
+                  Approve return to store
+                </button>
+              )}
+              {canConfirmReceipt && (
+                <button
+                  className="btn btn-dark btn-sm"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void failureAct('confirm-store-receipt')}
+                >
+                  Confirm store receipt
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="row g-3">
@@ -322,6 +492,98 @@ export default function OrderDetailPage() {
                 {ev.reason ? <span className="text-muted"> · {ev.reason}</span> : null}
               </p>
             ))}
+          </div>
+          <div className="panel">
+            <h2 className="h6">Delivery issues</h2>
+            <p className="small text-muted">
+              Triage does not cancel, complete, requeue, or change COD/cash.
+            </p>
+            {(order.issueReports && order.issueReports.length > 0) ? (
+              order.issueReports.map((iss) => {
+                const detail = issueDetails[iss.id] || iss;
+                const st = detail.status || 'New';
+                const busyIssue = issueBusyId === iss.id;
+                return (
+                  <div className="border rounded p-2 mb-2" key={iss.id}>
+                    <div className="d-flex justify-content-between gap-2 flex-wrap">
+                      <div>
+                        <div className="fw-semibold">
+                          {iss.reasonLabel || iss.reasonCode}{' '}
+                          <span className="badge text-bg-secondary">{detail.statusLabel || st}</span>
+                        </div>
+                        {iss.note ? <div className="small">{iss.note}</div> : null}
+                        <div className="small text-muted">
+                          {iss.riderWorkerId || iss.riderName || 'Rider'} · {dt(iss.createdAt)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => void loadIssueHistory(iss.id)}
+                      >
+                        History
+                      </button>
+                    </div>
+                    <label className="form-label small mt-2 mb-0">Internal note (admins only)</label>
+                    <textarea
+                      className="form-control form-control-sm"
+                      rows={2}
+                      value={issueNote[iss.id] ?? detail.internalNote ?? ''}
+                      onChange={(e) =>
+                        setIssueNote((prev) => ({ ...prev, [iss.id]: e.target.value }))
+                      }
+                      disabled={st === 'Closed' || busyIssue}
+                    />
+                    <div className="d-flex flex-wrap gap-2 mt-2">
+                      {st === 'New' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-maison"
+                          disabled={busyIssue}
+                          onClick={() => void triageIssue(detail, 'acknowledge')}
+                        >
+                          Acknowledge
+                        </button>
+                      )}
+                      {(st === 'New' || st === 'Acknowledged') && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-dark"
+                          disabled={busyIssue}
+                          onClick={() => void triageIssue(detail, 'note')}
+                        >
+                          Save note
+                        </button>
+                      )}
+                      {st === 'Acknowledged' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          disabled={busyIssue}
+                          onClick={() => void triageIssue(detail, 'close')}
+                        >
+                          Close issue
+                        </button>
+                      )}
+                    </div>
+                    {detail.history && detail.history.length > 0 && (
+                      <div className="mt-2 small">
+                        <div className="fw-semibold">History</div>
+                        {detail.history.map((h) => (
+                          <div key={h.id} className="text-muted">
+                            {h.action} {h.newStatus ? `→ ${h.newStatus}` : ''} ·{' '}
+                            {h.actorWorkerId || h.actorName || h.actorType} · {dt(h.at)}
+                            {h.internalNote ? ` · ${h.internalNote}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <p className="mb-0 small text-muted">No rider issue reports on this order.</p>
+            )}
           </div>
         </div>
       </div>

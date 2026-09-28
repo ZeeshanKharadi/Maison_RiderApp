@@ -90,6 +90,45 @@ namespace Rider.WebAPI.Controllers
             return Ok(result);
         }
 
+        [HttpPost("{id:long}/failure/reject")]
+        public async Task<IActionResult> RejectFailure(long id, [FromBody] FailureDecisionRequest request)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null)
+                return error;
+
+            var result = await _admin.RejectFailureRequestAsync(actor, id, request ?? new FailureDecisionRequest());
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
+        [HttpPost("{id:long}/failure/approve-return")]
+        public async Task<IActionResult> ApproveFailureReturn(long id, [FromBody] FailureDecisionRequest request)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null)
+                return error;
+
+            var result = await _admin.ApproveFailureReturnAsync(actor, id, request ?? new FailureDecisionRequest());
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
+        [HttpPost("{id:long}/failure/confirm-store-receipt")]
+        public async Task<IActionResult> ConfirmStoreReceipt(long id, [FromBody] FailureDecisionRequest request)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null)
+                return error;
+
+            var result = await _admin.ConfirmStoreReceiptAsync(actor, id, request ?? new FailureDecisionRequest());
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
         [HttpPut("{id:long}/cash-collected")]
         public async Task<IActionResult> CashCollected(long id, [FromBody] CashCollectedRequest request)
         {

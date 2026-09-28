@@ -13,12 +13,21 @@ namespace Rider.Domain.Common
         public const string Completed = "Completed";
         public const string Cancelled = "Cancelled";
 
+        /// <summary>Admin approved return-to-store; rider still has the parcel.</summary>
+        public const string ReturningToStore = "ReturningToStore";
+
+        /// <summary>Rider confirmed return; awaiting manager store receipt.</summary>
+        public const string AwaitingStoreReceipt = "AwaitingStoreReceipt";
+
+        /// <summary>Store receipt confirmed. Terminal until Cancel or Requeue. Not a rider-writable status.</summary>
+        public const string Failed = "Failed";
+
         /// <summary>Live Ops event only — order row stays Available after pool reject.</summary>
         public const string Rejected = "Rejected";
 
         public const int MaxActiveDeliveries = 5;
 
-        /// <summary>In-flight for the rider (counts toward max-5).</summary>
+        /// <summary>In-flight for the rider (counts toward max-5), including return-to-store.</summary>
         public static readonly string[] ActiveStatuses =
         {
             Accepted,
@@ -27,7 +36,9 @@ namespace Rider.Domain.Common
             InProgress,
             OnTheWay,
             ArrivedAtCustomer,
-            Delivered
+            Delivered,
+            ReturningToStore,
+            AwaitingStoreReceipt
         };
 
         /// <summary>Statuses from which the rider may complete (pickup done).</summary>
@@ -57,6 +68,28 @@ namespace Rider.Domain.Common
 
         public static bool IsCompletableStatus(string? status)
             => !string.IsNullOrEmpty(status) && CompletablesStatuses.Contains(status);
+
+        public static bool IsFailedDeliveryFlowStatus(string? status)
+            => status is ReturningToStore or AwaitingStoreReceipt or Failed;
+
+        /// <summary>Cancel/requeue after store receipt, or normal Available/Cancelled requeue.</summary>
+        public static bool CanAdminRequeue(string? status)
+            => status is Available or Cancelled or Failed;
+
+        /// <summary>
+        /// Cancel blocked while a failure request is pending review or return is in progress.
+        /// Allowed after Failed (store receipt) and for normal ops otherwise (not Completed).
+        /// </summary>
+        public static bool CanAdminCancel(string? status, string? failureRequestStatus)
+        {
+            if (string.IsNullOrEmpty(status) || status == Completed)
+                return false;
+            if (status is ReturningToStore or AwaitingStoreReceipt)
+                return false;
+            if (string.Equals(failureRequestStatus, FailureRequestStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return true;
+        }
 
         public static bool IsRiderWritableStatus(string? status)
             => !string.IsNullOrEmpty(status) && RiderProgression.Contains(status);
@@ -100,4 +133,114 @@ namespace Rider.Domain.Common
         public const string AdminCorrected = "AdminCorrected";
         public const string HandedOver = "HandedOver";
     }
+
+    /// <summary>
+    /// Rider delivery-issue reason codes. Event-only — never used as AssignedOrder.Status.
+    /// </summary>
+    public static class DeliveryIssueReasons
+    {
+        public const string CustomerUnreachable = "CustomerUnreachable";
+        public const string CustomerRefused = "CustomerRefused";
+        public const string AddressIssue = "AddressIssue";
+        public const string Other = "Other";
+
+        /// <summary>Lifecycle audit NewStatus label only (order row status unchanged).</summary>
+        public const string AuditEventStatus = "IssueReported";
+
+        public static readonly string[] All =
+        {
+            CustomerUnreachable,
+            CustomerRefused,
+            AddressIssue,
+            Other
+        };
+
+        public static bool IsValid(string? code)
+            => !string.IsNullOrWhiteSpace(code)
+               && All.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        public static string Normalize(string code)
+            => All.First(c => string.Equals(c, code.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        public static string DisplayLabel(string? code) => code switch
+        {
+            CustomerUnreachable => "Customer unreachable",
+            CustomerRefused => "Customer refused",
+            AddressIssue => "Address issue",
+            Other => "Other",
+            _ => code ?? ""
+        };
+    }
+
+    /// <summary>Admin triage statuses for DeliveryIssueReports. Independent of delivery status.</summary>
+    public static class DeliveryIssueStatuses
+    {
+        public const string New = "New";
+        public const string Acknowledged = "Acknowledged";
+        public const string Closed = "Closed";
+
+        public static readonly string[] All = { New, Acknowledged, Closed };
+        public static readonly string[] Open = { New, Acknowledged };
+
+        public static bool IsValid(string? status)
+            => !string.IsNullOrWhiteSpace(status)
+               && All.Contains(status.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        public static bool IsOpen(string? status)
+            => !string.IsNullOrWhiteSpace(status)
+               && Open.Contains(status.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        public static string Normalize(string status)
+            => All.First(s => string.Equals(s, status.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        public static string DisplayLabel(string? status) => status switch
+        {
+            New => "New",
+            Acknowledged => "Acknowledged",
+            Closed => "Closed",
+            _ => status ?? ""
+        };
+
+        public static bool CanAcknowledge(string? from)
+            => string.Equals(from, New, StringComparison.OrdinalIgnoreCase);
+
+        public static bool CanClose(string? from)
+            => string.Equals(from, Acknowledged, StringComparison.OrdinalIgnoreCase);
+
+        public static bool CanUpdateNote(string? from)
+            => IsOpen(from);
+
+        /// <summary>Linear: New → Acknowledged → Closed.</summary>
+        public static bool CanTransition(string from, string to)
+        {
+            from = Normalize(from);
+            to = Normalize(to);
+            if (from == to) return true;
+            if (from == New && to == Acknowledged) return true;
+            if (from == Acknowledged && to == Closed) return true;
+            return false;
+        }
+    }
+
+    public static class DeliveryIssueTriageActions
+    {
+        public const string Reported = "Reported";
+        public const string Acknowledged = "Acknowledged";
+        public const string NoteUpdated = "NoteUpdated";
+        public const string Closed = "Closed";
+    }
+
+    /// <summary>Controlled failed-delivery request lifecycle (independent of issue triage Close).</summary>
+    public static class FailureRequestStatuses
+    {
+        public const string Pending = "Pending";
+        public const string Rejected = "Rejected";
+        public const string ReturnApproved = "ReturnApproved";
+        public const string RiderReturned = "RiderReturned";
+        public const string StoreReceived = "StoreReceived";
+
+        public static bool IsOpen(string? status)
+            => status is Pending or ReturnApproved or RiderReturned;
+    }
 }
+

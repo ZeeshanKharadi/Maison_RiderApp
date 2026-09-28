@@ -53,6 +53,12 @@ namespace Rider.Domain.Entities
         public string? PhoneNumber { get; set; }
 
         [MaxLength(50)]
+        public string? EmergencyContactNumber { get; set; }
+
+        [MaxLength(200)]
+        public string? EmergencyContactName { get; set; }
+
+        [MaxLength(50)]
         public string? Cnic { get; set; }
 
         [MaxLength(100)]

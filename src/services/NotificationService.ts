@@ -14,7 +14,7 @@ import {
 import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import * as deviceTokenRepository from '../repositories/deviceTokenRepository';
 import * as notificationsRepository from '../repositories/notificationsRepository';
-import { navigationRef } from '../navigation/RootNavigation';
+import { navigationRef, navigate } from '../navigation/RootNavigation';
 
 const CHANNEL_ID = 'maison_orders';
 const messaging = getMessaging();
@@ -97,7 +97,7 @@ class NotificationService {
       Platform.OS === 'ios' ? 'ios' : 'android',
     );
     if (!result.ok) {
-      console.warn('[FCM] Backend registration failed:', result.message);
+      console.warn('[FCM] Backend registration failed:', result.error.message);
       return false;
     }
 
@@ -253,10 +253,7 @@ class NotificationService {
       data.screen === 'notifications' ||
       data.screen === 'Notifications'
     ) {
-      navigationRef.navigate(
-        'MainDrawer' as never,
-        { screen: 'Notifications' } as never,
-      );
+      navigate('MainDrawer', { screen: 'Notifications' });
     }
   }
 

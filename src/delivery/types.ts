@@ -54,6 +54,7 @@ export type ActiveDeliveryJob = {
   completedAt?: string | null;
   stateTimestamps: Partial<Record<DeliveryState, string>>;
   cashCollected: boolean | null;
+  failure?: AvailableOrder['failure'];
 };
 
 function buildRestoreTimestamps(
@@ -144,6 +145,7 @@ export function createJobFromOrder(
         )
       : { ACCEPTED: acceptedAt },
     cashCollected: null,
+    failure: order.failure,
   };
 }
 

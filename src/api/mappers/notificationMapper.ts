@@ -1,4 +1,4 @@
-import { AppNotification } from '../data/account';
+import { AppNotification, NotificationCategory } from '../../data/account';
 
 export type ApiRiderNotification = {
   id: number;
@@ -12,16 +12,26 @@ export type ApiRiderNotification = {
   createdAt: string;
 };
 
+const CATEGORIES: ReadonlySet<NotificationCategory> = new Set([
+  'orders',
+  'payments',
+  'bonuses',
+  'system',
+  'announcements',
+  'achievements',
+  'support',
+]);
+
+function mapCategory(raw: string): NotificationCategory {
+  if (CATEGORIES.has(raw as NotificationCategory)) {
+    return raw as NotificationCategory;
+  }
+  if (raw === 'updates') return 'system';
+  return 'orders';
+}
+
 export function mapApiNotification(dto: ApiRiderNotification): AppNotification {
-  const category =
-    dto.category === 'orders' ||
-    dto.category === 'payments' ||
-    dto.category === 'achievements' ||
-    dto.category === 'bonuses' ||
-    dto.category === 'system' ||
-    dto.category === 'updates'
-      ? dto.category
-      : 'orders';
+  const category = mapCategory(dto.category);
 
   const priority =
     dto.priority === 'low' || dto.priority === 'high' || dto.priority === 'normal'

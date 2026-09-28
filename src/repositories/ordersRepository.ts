@@ -28,6 +28,37 @@ export type RejectOrderPayload = {
   requestId?: string;
 };
 
+export type DeliveryIssueReason =
+  | 'CustomerUnreachable'
+  | 'CustomerRefused'
+  | 'AddressIssue'
+  | 'Other';
+
+export type ReportDeliveryIssuePayload = {
+  reason: DeliveryIssueReason;
+  note?: string;
+  requestId?: string;
+};
+
+export type DeliveryIssueReport = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  reasonCode: DeliveryIssueReason | string;
+  reasonLabel: string;
+  note?: string | null;
+  riderUserId: string;
+  requestId?: string | null;
+  createdAt: string;
+  orderStatus: string;
+  status?: string;
+  statusLabel?: string;
+  acknowledgedAt?: string | null;
+  closedAt?: string | null;
+};
+
 export type RiderPerformance = {
   completedCount: number;
   avgDurationMinutes: number | null;
@@ -129,14 +160,13 @@ export async function fetchActiveOrders(): Promise<ApiResult<AvailableOrder[]>> 
   }
 }
 
-/** Recently cancelled jobs for this rider (restore/reconnect awareness). */
-export async function fetchRecentCancellations(
-  withinMinutes = 180,
-): Promise<ApiResult<AvailableOrder[]>> {
+/** Unacknowledged cancellations for this rider (server inbox; no time window). */
+export async function fetchRecentCancellations(): Promise<
+  ApiResult<AvailableOrder[]>
+> {
   try {
-    const qs = `?withinMinutes=${encodeURIComponent(String(withinMinutes))}`;
     const envelope = await apiEnvelope<ApiAvailableOrder[]>(
-      `${API_PATHS.recentCancellations}${qs}`,
+      API_PATHS.recentCancellations,
       { auth: true },
     );
 
@@ -151,6 +181,30 @@ export async function fetchRecentCancellations(
     return ok(rows.map(mapApiOrderToAvailable));
   } catch (err) {
     return mapNetworkError(err, 'Unable to reach cancellations API');
+  }
+}
+
+/** Server durable ack — marks cancel-inbox rows read for this rider. */
+export async function acknowledgeCancellations(
+  assignedOrderIds: number[],
+): Promise<ApiResult<void>> {
+  const ids = assignedOrderIds.filter(id => Number.isFinite(id) && id > 0);
+  if (ids.length === 0) return ok(undefined);
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.acknowledgeCancellations, {
+      method: 'POST',
+      auth: true,
+      body: { assignedOrderIds: ids },
+    });
+    if (!envelope.status) {
+      return fail(
+        'ACK_CANCELLATIONS_FAILED',
+        envelope.message || 'Failed to acknowledge cancellations',
+      );
+    }
+    return ok(undefined);
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to reach acknowledge cancellations API');
   }
 }
 
@@ -226,9 +280,14 @@ export async function fetchPerformance(opts?: {
 
 export async function setAvailability(
   isOnline: boolean,
-): Promise<ApiResult<true>> {
+): Promise<
+  ApiResult<{ isOnline: boolean; currentOnlineStartedAt: string | null }>
+> {
   try {
-    const envelope = await apiEnvelope<string>(API_PATHS.availability, {
+    const envelope = await apiEnvelope<{
+      isOnline?: boolean;
+      currentOnlineStartedAt?: string | null;
+    }>(API_PATHS.availability, {
       method: 'POST',
       auth: true,
       body: { isOnline },
@@ -241,7 +300,11 @@ export async function setAvailability(
       );
     }
 
-    return ok(true);
+    const data = envelope.Data;
+    return ok({
+      isOnline: Boolean(data?.isOnline ?? isOnline),
+      currentOnlineStartedAt: data?.currentOnlineStartedAt ?? null,
+    });
   } catch (err) {
     return mapNetworkError(err, 'Unable to update availability');
   }
@@ -310,6 +373,101 @@ export async function rejectOrder(
     return ok(true);
   } catch (err) {
     return mapNetworkError(err, 'Unable to reject order');
+  }
+}
+
+export async function reportDeliveryIssue(
+  backendId: number,
+  payload: ReportDeliveryIssuePayload,
+): Promise<ApiResult<DeliveryIssueReport>> {
+  const requestId = payload.requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<DeliveryIssueReport>(
+      API_PATHS.orderReportIssue(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': requestId },
+        body: {
+          reason: payload.reason,
+          note: payload.note,
+          requestId,
+        },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'REPORT_ISSUE_FAILED',
+        envelope.message || 'Failed to report delivery issue',
+      );
+    }
+
+    return ok(envelope.Data);
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to report delivery issue');
+  }
+}
+
+export async function requestFailedDelivery(
+  backendId: number,
+  payload: ReportDeliveryIssuePayload,
+): Promise<ApiResult<AvailableOrder>> {
+  const requestId = payload.requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<ApiAvailableOrder>(
+      API_PATHS.orderRequestFailedDelivery(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': requestId },
+        body: {
+          reason: payload.reason,
+          note: payload.note,
+          requestId,
+        },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'FAILED_DELIVERY_REQUEST_FAILED',
+        envelope.message || 'Failed to submit failure request',
+      );
+    }
+
+    return ok(mapApiOrderToAvailable(envelope.Data));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to submit failure request');
+  }
+}
+
+export async function confirmReturnToStore(
+  backendId: number,
+  requestId?: string,
+): Promise<ApiResult<AvailableOrder>> {
+  const id = requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<ApiAvailableOrder>(
+      API_PATHS.orderConfirmReturnToStore(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': id },
+        body: { requestId: id },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'CONFIRM_RETURN_FAILED',
+        envelope.message || 'Failed to confirm return',
+      );
+    }
+
+    return ok(mapApiOrderToAvailable(envelope.Data));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to confirm return');
   }
 }
 

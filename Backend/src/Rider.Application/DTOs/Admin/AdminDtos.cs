@@ -126,6 +126,14 @@ namespace Rider.Application.DTOs.Admin
         public string batchTime { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
         public List<AdminOrderLifecycleEventDto> statusHistory { get; set; } = new();
+        public List<AdminDeliveryIssueReportDto> issueReports { get; set; } = new();
+        public OrderFailureDto? failure { get; set; }
+    }
+
+    public class FailureDecisionRequest
+    {
+        public string? note { get; set; }
+        public string? requestId { get; set; }
     }
 
     public class AdminOrderLifecycleEventDto
@@ -309,5 +317,59 @@ namespace Rider.Application.DTOs.Admin
         public string reason { get; set; }
         public bool isDirectAssignment { get; set; }
         public DateTime createdAt { get; set; }
+    }
+
+    public class AdminDeliveryIssueReportDto
+    {
+        public long id { get; set; }
+        public long assignedOrderId { get; set; }
+        public string orderId { get; set; }
+        public string orderNo { get; set; }
+        public string storeId { get; set; }
+        public string orderStatus { get; set; }
+        public Guid riderUserId { get; set; }
+        public string riderWorkerId { get; set; }
+        public string riderName { get; set; }
+        public string reasonCode { get; set; }
+        public string reasonLabel { get; set; }
+        public string note { get; set; }
+        public string status { get; set; }
+        public string statusLabel { get; set; }
+        public string internalNote { get; set; }
+        public Guid? acknowledgedByUserId { get; set; }
+        public string acknowledgedByName { get; set; }
+        public DateTime? acknowledgedAt { get; set; }
+        public Guid? closedByUserId { get; set; }
+        public string closedByName { get; set; }
+        public DateTime? closedAt { get; set; }
+        public DateTime createdAt { get; set; }
+        public DateTime updatedAt { get; set; }
+        /// <summary>Base64 RowVersion for optimistic concurrency.</summary>
+        public string rowVersion { get; set; }
+        public List<AdminDeliveryIssueTriageEventDto> history { get; set; } = new();
+    }
+
+    public class AdminDeliveryIssueTriageEventDto
+    {
+        public long id { get; set; }
+        public string action { get; set; }
+        public string previousStatus { get; set; }
+        public string newStatus { get; set; }
+        public string actorType { get; set; }
+        public Guid? actorUserId { get; set; }
+        public string actorName { get; set; }
+        public string actorWorkerId { get; set; }
+        public string internalNote { get; set; }
+        public DateTime at { get; set; }
+    }
+
+    public class DeliveryIssueTriageRequest
+    {
+        /// <summary>Optional admin-only note (max 1000).</summary>
+        public string? internalNote { get; set; }
+
+        /// <summary>Base64 RowVersion from the last read; required for concurrent safety.</summary>
+        [Required]
+        public string rowVersion { get; set; } = "";
     }
 }

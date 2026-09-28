@@ -111,6 +111,40 @@ namespace Rider.Domain.Entities
         [MaxLength(100)]
         public string? HandoverRequestId { get; set; }
 
+        /// <summary>Pending | Rejected | ReturnApproved | RiderReturned | StoreReceived</summary>
+        [MaxLength(30)]
+        public string? FailureRequestStatus { get; set; }
+
+        [MaxLength(40)]
+        public string? FailureReasonCode { get; set; }
+
+        [MaxLength(500)]
+        public string? FailureNote { get; set; }
+
+        [MaxLength(100)]
+        public string? FailureRequestId { get; set; }
+
+        public long? FailureIssueReportId { get; set; }
+
+        public DateTime? FailureRequestedAt { get; set; }
+
+        public DateTime? FailureDecidedAt { get; set; }
+
+        public Guid? FailureDecidedByUserId { get; set; }
+
+        [MaxLength(500)]
+        public string? FailureDecisionNote { get; set; }
+
+        /// <summary>Order status when return was approved (for audit; not restored on reject).</summary>
+        [MaxLength(30)]
+        public string? StatusBeforeReturn { get; set; }
+
+        public DateTime? RiderReturnedAt { get; set; }
+
+        public DateTime? StoreReceivedAt { get; set; }
+
+        public Guid? StoreReceivedByUserId { get; set; }
+
         [Timestamp]
         public byte[]? RowVersion { get; set; }
 

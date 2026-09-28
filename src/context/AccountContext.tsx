@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import * as accountRepository from '../repositories/accountRepository';
+import * as authRepository from '../repositories/authRepository';
 import * as notificationsRepository from '../repositories/notificationsRepository';
 import { useAuth } from '../services/AuthContext';
 import {
@@ -20,6 +21,7 @@ import {
   RiderProfile,
 } from '../data/account';
 import type { User } from '../services/AuthContext';
+import { buildRiderProfilePatchBody } from '../utils/riderProfilePatch';
 
 function profileFromAuthUser(
   profile: RiderProfile,
@@ -30,9 +32,19 @@ function profileFromAuthUser(
     ...profile,
     fullName: authUser.name || profile.fullName,
     email: authUser.email || profile.email,
-    phone: authUser.phone || profile.phone,
+    phone: authUser.phone ?? profile.phone,
+    emergencyContact: authUser.emergencyContact ?? profile.emergencyContact,
   };
 }
+
+export type UpdateProfileResult = {
+  ok: boolean;
+  /** True when phone/emergency were written to the server. */
+  serverSynced: boolean;
+  /** True when only local prefs (e.g. language) changed. */
+  localOnly: boolean;
+  message?: string;
+};
 
 type AccountContextValue = {
   profile: RiderProfile;
@@ -40,7 +52,7 @@ type AccountContextValue = {
   settings: AppSettings;
   notifications: AppNotification[];
   unreadCount: number;
-  updateProfile: (patch: Partial<RiderProfile>) => Promise<boolean>;
+  updateProfile: (patch: Partial<RiderProfile>) => Promise<UpdateProfileResult>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
@@ -58,7 +70,7 @@ type AccountContextValue = {
 const AccountContext = createContext<AccountContextValue | null>(null);
 
 export function AccountProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [profile, setProfile] = useState<RiderProfile>(DEFAULT_PROFILE);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -73,7 +85,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         accountRepository.loadSettings(),
       ]);
       if (!mounted) return;
-      if (p.ok) setProfile(p.data);
+      // Prefer server auth user over stale local profile for identity fields.
+      const base = p.ok ? p.data : DEFAULT_PROFILE;
+      setProfile(profileFromAuthUser(base, user));
       if (s.ok) setSettings(s.data);
 
       if (user) {
@@ -90,37 +104,121 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   // Keep local profile in sync with backend auth user (login / CurrentUser).
   useEffect(() => {
-    if (!user?.name && !user?.email) return;
+    if (!user) return;
     setProfile(prev => {
       const next = profileFromAuthUser(prev, user);
       if (
         next.fullName === prev.fullName &&
         next.email === prev.email &&
-        next.phone === prev.phone
+        next.phone === prev.phone &&
+        next.emergencyContact === prev.emergencyContact
       ) {
         return prev;
       }
       void accountRepository.saveProfile(next);
       return next;
     });
-  }, [user?.name, user?.email, user?.phone]);
+  }, [
+    user?.name,
+    user?.email,
+    user?.phone,
+    user?.emergencyContact,
+  ]);
 
   const updateProfile = useCallback(
-    async (patch: Partial<RiderProfile>) => {
-      const next = { ...profile, ...patch };
+    async (patch: Partial<RiderProfile>): Promise<UpdateProfileResult> => {
+      const languageChanged =
+        patch.language !== undefined && patch.language !== profile.language;
+
+      const body = buildRiderProfilePatchBody({
+        currentPhone: profile.phone,
+        currentEmergency: profile.emergencyContact,
+        nextPhone: patch.phone,
+        nextEmergency: patch.emergencyContact,
+      });
+      const serverFieldsChanged = body != null;
+
+      if (serverFieldsChanged) {
+        const api = await authRepository.patchRiderProfile(body);
+        if (!api.ok) {
+          return {
+            ok: false,
+            serverSynced: false,
+            localOnly: false,
+            message: api.error.message,
+          };
+        }
+
+        // Refresh auth user so other screens / second load see server values.
+        await refreshUser();
+
+        const next: RiderProfile = {
+          ...profile,
+          ...patch,
+          phone: api.data.phone ?? patch.phone ?? profile.phone,
+          emergencyContact:
+            api.data.emergencyContact ??
+            patch.emergencyContact ??
+            profile.emergencyContact,
+          fullName: api.data.name || profile.fullName,
+          email: api.data.email || profile.email,
+        };
+        const saved = await accountRepository.saveProfile(next);
+        if (saved.ok) setProfile(saved.data);
+        else setProfile(next);
+
+        if (languageChanged) {
+          const s = await accountRepository.saveSettings({
+            ...settings,
+            language: patch.language!,
+          });
+          if (s.ok) setSettings(s.data);
+        }
+
+        return {
+          ok: true,
+          serverSynced: true,
+          localOnly: false,
+          message: api.message || 'Profile updated',
+        };
+      }
+
+      if (!languageChanged) {
+        return {
+          ok: true,
+          serverSynced: false,
+          localOnly: false,
+          message: 'No changes to save',
+        };
+      }
+
+      // Local-only preferences (language).
+      const next = { ...profile, language: patch.language! };
       const result = await accountRepository.saveProfile(next);
-      if (!result.ok) return false;
+      if (!result.ok) {
+        return {
+          ok: false,
+          serverSynced: false,
+          localOnly: true,
+          message: result.error.message,
+        };
+      }
       setProfile(result.data);
-      if (patch.language) {
+      if (languageChanged) {
         const s = await accountRepository.saveSettings({
           ...settings,
-          language: patch.language,
+          language: patch.language!,
         });
         if (s.ok) setSettings(s.data);
       }
-      return true;
+      return {
+        ok: true,
+        serverSynced: false,
+        localOnly: true,
+        message: 'Saved on this device',
+      };
     },
-    [profile, settings],
+    [profile, settings, refreshUser],
   );
 
   const updateSettings = useCallback(

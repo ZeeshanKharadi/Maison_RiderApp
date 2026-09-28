@@ -174,6 +174,24 @@ namespace Rider.WebAPI.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Rider self-service profile patch. Identity is JWT NameIdentifier only.
+        /// Editable: phoneNumber, emergencyContactNumber, emergencyContactName.
+        /// </summary>
+        [HttpPatch("profile")]
+        [Authorize]
+        public async Task<IActionResult> PatchProfile([FromBody] PatchRiderProfileRequest req)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrWhiteSpace(userIdClaim))
+                return Unauthorized();
+
+            var result = await _userService.PatchRiderProfileAsync(userIdClaim, req ?? new PatchRiderProfileRequest());
+            if (!result.status)
+                return BadRequest(result);
+            return Ok(result);
+        }
+
         [HttpPost("ValidateToken")]
         [Authorize]
         public async Task<IActionResult> ValidateToken()

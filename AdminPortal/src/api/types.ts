@@ -62,6 +62,47 @@ export type OrderRejectionDto = {
   createdAt: string;
 };
 
+export type DeliveryIssueReportDto = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  orderStatus?: string | null;
+  riderUserId: string;
+  riderWorkerId?: string | null;
+  riderName?: string | null;
+  reasonCode: string;
+  reasonLabel: string;
+  note?: string | null;
+  status?: string | null;
+  statusLabel?: string | null;
+  internalNote?: string | null;
+  acknowledgedByUserId?: string | null;
+  acknowledgedByName?: string | null;
+  acknowledgedAt?: string | null;
+  closedByUserId?: string | null;
+  closedByName?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  rowVersion?: string | null;
+  history?: DeliveryIssueTriageEventDto[];
+};
+
+export type DeliveryIssueTriageEventDto = {
+  id: number;
+  action: string;
+  previousStatus?: string | null;
+  newStatus?: string | null;
+  actorType?: string | null;
+  actorUserId?: string | null;
+  actorName?: string | null;
+  actorWorkerId?: string | null;
+  internalNote?: string | null;
+  at: string;
+};
+
 export type OrderItemDto = {
   itemId: number;
   description: string;
@@ -84,6 +125,26 @@ export type OrderDetailDto = OrderListDto & {
   batchTime?: string;
   items: OrderItemDto[];
   statusHistory?: OrderLifecycleEventDto[];
+  issueReports?: DeliveryIssueReportDto[];
+  failure?: OrderFailureDto | null;
+};
+
+export type OrderFailureDto = {
+  requestStatus?: string | null;
+  reasonCode?: string | null;
+  reasonLabel?: string | null;
+  note?: string | null;
+  requestId?: string | null;
+  issueReportId?: number | null;
+  requestedAt?: string | null;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
+  statusBeforeReturn?: string | null;
+  riderReturnedAt?: string | null;
+  storeReceivedAt?: string | null;
+  cashCollectedWarning?: boolean;
+  cashCollected?: number | null;
+  expectedCash?: number | null;
 };
 
 export type OrderLifecycleEventDto = {

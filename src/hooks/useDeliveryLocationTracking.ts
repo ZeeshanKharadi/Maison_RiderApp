@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
-import Geolocation from 'react-native-geolocation-service';
+import Geolocation, { type GeoPosition } from 'react-native-geolocation-service';
 import {
   isNativeTrackingAvailable,
   startNativeLocationTracking,
@@ -29,13 +29,13 @@ async function ensureAndroidPermissions(): Promise<boolean> {
     if (fine !== PermissionsAndroid.RESULTS.GRANTED) return false;
 
     // Android 10+: optional “All the time”. Never block FGS if this prompt fails.
-    if (Platform.Version >= 29) {
+    const apiLevel =
+      typeof Platform.Version === 'number'
+        ? Platform.Version
+        : Number.parseInt(String(Platform.Version), 10);
+    if (apiLevel >= 29) {
       try {
-        const bgPerm =
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (PermissionsAndroid.PERMISSIONS as any).ACCESS_BACKGROUND_LOCATION as
-            | string
-            | undefined;
+        const bgPerm = PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION;
         if (bgPerm) {
           await PermissionsAndroid.request(bgPerm, {
             title: 'Background location',
@@ -50,7 +50,7 @@ async function ensureAndroidPermissions(): Promise<boolean> {
       }
     }
 
-    if (Platform.Version >= 33) {
+    if (apiLevel >= 33) {
       try {
         await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
@@ -69,7 +69,7 @@ async function ensureAndroidPermissions(): Promise<boolean> {
 function readCurrentPosition(): Promise<TrackingLocation | null> {
   return new Promise(resolve => {
     Geolocation.getCurrentPosition(
-      pos =>
+      (pos: GeoPosition) =>
         resolve({
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,

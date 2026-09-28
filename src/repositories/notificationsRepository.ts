@@ -3,7 +3,7 @@ import { apiEnvelope } from '../api/httpClient';
 import {
   ApiRiderNotification,
   mapApiNotification,
-} from '../mappers/notificationMapper';
+} from '../api/mappers/notificationMapper';
 import { AppNotification } from '../data/account';
 import { ApiResult, fail, ok } from './types';
 

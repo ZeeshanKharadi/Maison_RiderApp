@@ -219,6 +219,9 @@ body {
 .status-Completed { background: #e8f5e9; color: #2e7d32; }
 .status-Cancelled { background: #ffecec; color: #c62828; }
 .status-Rejected { background: #efebe9; color: #5d4037; }
+.status-ReturningToStore { background: #fff3e0; color: #e65100; }
+.status-AwaitingStoreReceipt { background: #fce4ec; color: #ad1457; }
+.status-Failed { background: #eceff1; color: #37474f; }
 
 .dot {
   width: 8px;

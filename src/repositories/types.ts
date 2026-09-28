@@ -9,13 +9,13 @@ export type ApiError = {
 };
 
 export type ApiResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; message?: string }
   | { ok: false; error: ApiError };
 
 export type LoadState = 'idle' | 'loading' | 'success' | 'error' | 'empty';
 
-export function ok<T>(data: T): ApiResult<T> {
-  return { ok: true, data };
+export function ok<T>(data: T, message?: string): ApiResult<T> {
+  return message ? { ok: true, data, message } : { ok: true, data };
 }
 
 export function fail(code: string, message: string): ApiResult<never> {
