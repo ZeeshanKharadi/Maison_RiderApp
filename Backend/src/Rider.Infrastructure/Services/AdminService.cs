@@ -837,56 +837,110 @@ namespace Rider.Infrastructure.Services
 
         public async Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id)
         {
-            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
-            if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
-                return Fail<AdminOrderDetailDto>("Order not found");
-
-            if (!OrderStatuses.CanAdminRequeue(order.Status))
-                return Fail<AdminOrderDetailDto>("Only Available, Cancelled, or Failed orders can be requeued");
-
-            var previous = order.Status;
-            order.Status = OrderStatuses.Available;
-            order.AcceptedByUserId = null;
-            order.AcceptedAt = null;
-            order.PickedUpAt = null;
-            order.CompletedAt = null;
-            order.IsDirectAssignment = false;
-            order.CancelReason = null;
-            // Preserve COD expected / collected / handover — never zero on requeue.
-            OrderService.ClearFailureFields(order);
-            order.UpdatedAt = DateTime.UtcNow;
-
-            // Clear rejection holds so the order reappears in the pool
-            var rejections = await _unitOfWork.Context.Set<OrderRejection>()
-                .Where(r => r.AssignedOrderId == id)
-                .ToListAsync();
-            _unitOfWork.Context.Set<OrderRejection>().RemoveRange(rejections);
-
-            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
-            {
-                AssignedOrderId = id,
-                ActorUserId = actor.UserId,
-                ActorType = "Admin",
-                PreviousStatus = previous,
-                NewStatus = OrderStatuses.Available,
-                Reason = "Requeued",
-                CreatedAt = DateTime.UtcNow
-            });
-
-            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
-            await _unitOfWork.SaveChangesAsync();
-
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
             try
             {
-                await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Available);
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (!OrderStatuses.CanAdminRequeue(order.Status))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Only Available, Cancelled, or Failed orders can be requeued");
+                }
+
+                // Under row lock — concurrent handover cannot sneak past this check.
+                // Any prior CashCollected > 0 blocks Failed→Requeue (handover does not unlock).
+                if (CashSemantics.BlocksFailedRequeue(
+                        order.Status, order.CashCollected, order.CashHandedOverAmount))
+                {
+                    var collected = order.CashCollected!.Value;
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        $"Cannot requeue: this Failed order has {collected:0.00} cash collected. " +
+                        "Requeue is blocked even after COD handover so a later rider cannot inherit " +
+                        "or overwrite another rider's cash fields. Cancel the order instead, or wait " +
+                        "for a per-rider cash ledger. Cash amounts are preserved.");
+                }
+
+                var previous = order.Status;
+                var cashCollectedBefore = order.CashCollected;
+                var handedBefore = order.CashHandedOverAmount;
+                order.Status = OrderStatuses.Available;
+                order.AcceptedByUserId = null;
+                order.AcceptedAt = null;
+                order.PickedUpAt = null;
+                order.CompletedAt = null;
+                order.IsDirectAssignment = false;
+                order.CancelReason = null;
+                // Preserve COD expected / collected / handover — never zero on requeue.
+                OrderService.ClearFailureFields(order);
+                order.UpdatedAt = DateTime.UtcNow;
+
+                var rejections = await _unitOfWork.Context.Set<OrderRejection>()
+                    .Where(r => r.AssignedOrderId == id)
+                    .ToListAsync();
+                _unitOfWork.Context.Set<OrderRejection>().RemoveRange(rejections);
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = previous,
+                    NewStatus = OrderStatuses.Available,
+                    Reason = "Requeued",
+                    CashCollected = cashCollectedBefore,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+
+                try
+                {
+                    await _unitOfWork.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    await tx.RollbackAsync();
+                    _unitOfWork.Context.ChangeTracker.Clear();
+                    return Fail<AdminOrderDetailDto>(
+                        "Order changed concurrently (e.g. cash handover); refresh and try again");
+                }
+
+                // Defensive: cash amounts must never be zeroed by requeue.
+                if (order.CashCollected != cashCollectedBefore
+                    || order.CashHandedOverAmount != handedBefore)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Unable to requeue without changing COD amounts");
+                }
+
+                await tx.CommitAsync();
+
+                try
+                {
+                    await _opsEvents.PublishOrderChangedAsync(
+                        order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Available);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Ops publish after requeue failed");
+                }
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Order requeued as Available");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Ops publish after requeue failed");
+                _logger.LogError(ex, "Requeue failed for order {OrderId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to requeue order");
             }
-
-            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
-            return Ok(MapOrderDetail(fresh), "Order requeued as Available");
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> RejectFailureRequestAsync(
@@ -1721,6 +1775,15 @@ namespace Rider.Infrastructure.Services
             dto.orderTime = o.OrderTime;
             dto.batchTime = o.Batch?.Time;
             dto.failure = OrderService.MapFailure(o);
+            dto.cashOutstandingToStore = CashOutstandingToStore(o);
+            dto.requeueBlockedByUnreconciledCash = CashSemantics.BlocksFailedRequeue(
+                o.Status, o.CashCollected, o.CashHandedOverAmount);
+            dto.requeueBlockReason = dto.requeueBlockedByUnreconciledCash
+                ? $"Cannot requeue: {o.CashCollected:0.00} cash was collected on this Failed order. " +
+                  "Requeue stays blocked after handover — a second rider must not inherit or overwrite " +
+                  "prior cash fields. Cancel instead, or await a per-rider cash ledger. " +
+                  "Collected/handover amounts are preserved."
+                : null;
             dto.items = (o.Items ?? Enumerable.Empty<AssignedOrderItem>())
                 .Select(i => new AssignOrderItemDto
                 {

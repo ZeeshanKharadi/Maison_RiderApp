@@ -290,8 +290,17 @@ export default function OrderDetailPage() {
     && failureStatus !== 'Pending'
     && order.status !== 'ReturningToStore'
     && order.status !== 'AwaitingStoreReceipt';
-  const canRequeue =
+  const canRequeueStatus =
     order.status === 'Available' || order.status === 'Cancelled' || order.status === 'Failed';
+  const cashCollectedAmt = Number(order.cashCollected ?? 0);
+  const cashOutstanding =
+    order.cashOutstandingToStore != null
+      ? Number(order.cashOutstandingToStore)
+      : Math.max(0, cashCollectedAmt - Number(order.cashHandedOverAmount ?? 0));
+  const requeueBlockedByCash =
+    order.requeueBlockedByUnreconciledCash === true
+    || (order.status === 'Failed' && cashCollectedAmt > 0);
+  const canRequeue = canRequeueStatus && !requeueBlockedByCash;
   const handedOver = !!order.cashHandedOverAt;
   const showLegacyNote = order.cashSemanticsNote === 'LegacyCashCollected_Ambiguous';
   const pay = (order.paymentMethod || '').toLowerCase();
@@ -331,9 +340,28 @@ export default function OrderDetailPage() {
               Requeue
             </button>
           )}
+          {canRequeueStatus && requeueBlockedByCash && (
+            <button className="btn btn-outline-secondary" type="button" disabled title="Cash collected — requeue blocked">
+              Requeue blocked
+            </button>
+          )}
         </div>
       </div>
       {error && <div className="alert alert-danger">{error}</div>}
+      {requeueBlockedByCash && (
+        <div className="alert alert-warning">
+          <strong>Requeue blocked — cash was collected on this Failed order</strong>
+          <div className="mt-1">
+            Cash collected: <strong>{money(order.cashCollected)}</strong>
+            {' · '}handed over: <strong>{money(order.cashHandedOverAmount)}</strong>
+            {' · '}outstanding: <strong>{money(cashOutstanding)}</strong>
+          </div>
+          <div className="small mt-1 mb-0">
+            {order.requeueBlockReason
+              || 'Requeue stays blocked even after full COD handover. A later rider must not inherit or overwrite this order’s cash fields. Cancel the order, or wait for a per-rider cash ledger. Amounts are preserved.'}
+          </div>
+        </div>
+      )}
       {order.cancelReason && (
         <div className="alert alert-secondary">Cancel reason: {order.cancelReason}</div>
       )}

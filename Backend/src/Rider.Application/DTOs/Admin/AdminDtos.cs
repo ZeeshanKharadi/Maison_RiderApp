@@ -128,6 +128,14 @@ namespace Rider.Application.DTOs.Admin
         public List<AdminOrderLifecycleEventDto> statusHistory { get; set; } = new();
         public List<AdminDeliveryIssueReportDto> issueReports { get; set; } = new();
         public OrderFailureDto? failure { get; set; }
+
+        /// <summary>Collected minus handed over (0 when fully reconciled or no collection).</summary>
+        public decimal cashOutstandingToStore { get; set; }
+
+        /// <summary>True when Failed→Requeue is blocked because CashCollected &gt; 0 (handover does not unlock).</summary>
+        public bool requeueBlockedByUnreconciledCash { get; set; }
+
+        public string? requeueBlockReason { get; set; }
     }
 
     public class FailureDecisionRequest

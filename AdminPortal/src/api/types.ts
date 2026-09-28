@@ -127,6 +127,9 @@ export type OrderDetailDto = OrderListDto & {
   statusHistory?: OrderLifecycleEventDto[];
   issueReports?: DeliveryIssueReportDto[];
   failure?: OrderFailureDto | null;
+  cashOutstandingToStore?: number;
+  requeueBlockedByUnreconciledCash?: boolean;
+  requeueBlockReason?: string | null;
 };
 
 export type OrderFailureDto = {

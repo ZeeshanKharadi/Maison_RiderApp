@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
+  AppState,
+  AppStateStatus,
   Linking,
   Platform,
   ScrollView,
@@ -55,6 +57,7 @@ import {
   spacing,
   typography,
 } from '../theme';
+import { shouldPollActiveDelivery } from '../utils/activeDeliverySync';
 
 /**
  * Active delivery workspace — UI is driven entirely by the state machine.
@@ -238,7 +241,7 @@ export default function ActiveDeliveryScreen() {
     setFailureSubmitted(true);
     issueRequestIdRef.current = null;
     issueFingerprintRef.current = null;
-    await restoreActiveDeliveries({ suppressCancelAlert: true });
+    await restoreActiveDeliveries();
   }, [
     activeJob,
     issuePending,
@@ -256,15 +259,58 @@ export default function ActiveDeliveryScreen() {
       Alert.alert('Return to store', result.error.message);
       return;
     }
-    await restoreActiveDeliveries({ suppressCancelAlert: true });
+    await restoreActiveDeliveries();
   }, [activeJob, lifecyclePending, restoreActiveDeliveries]);
 
-  // Refresh when opening this screen so admin return/cancel decisions appear.
+  const screenFocusedRef = useRef(false);
+  const [appState, setAppState] = useState<AppStateStatus>(
+    AppState.currentState,
+  );
+
+  // Refresh when opening this screen so admin return/cancel/requeue appear.
   useFocusEffect(
     useCallback(() => {
-      void restoreActiveDeliveries({ suppressCancelAlert: true });
+      screenFocusedRef.current = true;
+      void restoreActiveDeliveries();
+      return () => {
+        screenFocusedRef.current = false;
+      };
     }, [restoreActiveDeliveries]),
   );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', setAppState);
+    return () => sub.remove();
+  }, []);
+
+  // While Active Delivery stays open (foreground), poll admin-driven status.
+  useEffect(() => {
+    const tick = () => {
+      if (
+        !shouldPollActiveDelivery({
+          screenFocused: screenFocusedRef.current,
+          appState: AppState.currentState,
+          hasActiveJob: !!activeJob,
+        })
+      ) {
+        return;
+      }
+      void restoreActiveDeliveries();
+    };
+
+    if (
+      !shouldPollActiveDelivery({
+        screenFocused: screenFocusedRef.current,
+        appState,
+        hasActiveJob: !!activeJob,
+      })
+    ) {
+      return;
+    }
+
+    const id = setInterval(tick, 12_000);
+    return () => clearInterval(id);
+  }, [activeJob?.backendId, appState, restoreActiveDeliveries]);
 
   const finishTrip = useCallback(
     async (opts?: {

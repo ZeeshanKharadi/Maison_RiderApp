@@ -132,6 +132,33 @@ namespace Rider.Domain.Common
         public const string RiderCollected = "RiderCollected";
         public const string AdminCorrected = "AdminCorrected";
         public const string HandedOver = "HandedOver";
+
+        /// <summary>
+        /// Collected cash not yet confirmed handed to the store.
+        /// </summary>
+        public static decimal UnreconciledCollectedCash(decimal? cashCollected, decimal? cashHandedOverAmount)
+        {
+            if (!cashCollected.HasValue || cashCollected.Value <= 0)
+                return 0;
+            return Math.Max(0m, cashCollected.Value - (cashHandedOverAmount ?? 0m));
+        }
+
+        /// <summary>
+        /// Deadline-safe Failed→Requeue gate: any CashCollected &gt; 0 blocks requeue,
+        /// even after full handover. Completing a requeued COD order would overwrite
+        /// CashCollected while retaining a prior rider's CashHandedOverAmount and can
+        /// falsely show no cash outstanding for the next rider.
+        /// Supporting two collecting riders on one order requires a separate per-rider
+        /// cash ledger (out of scope). Failed non-COD / no-collected-cash may requeue.
+        /// </summary>
+        public static bool BlocksFailedRequeue(
+            string? status, decimal? cashCollected, decimal? cashHandedOverAmount = null)
+        {
+            _ = cashHandedOverAmount; // handover does not unlock Failed→Requeue
+            return string.Equals(status, OrderStatuses.Failed, StringComparison.OrdinalIgnoreCase)
+                   && cashCollected.HasValue
+                   && cashCollected.Value > 0;
+        }
     }
 
     /// <summary>

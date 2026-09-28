@@ -288,9 +288,9 @@ public class FailedDeliveryTests : IDisposable
     }
 
     [Fact]
-    public async Task Requeue_from_Failed_clears_failure_preserves_cash_no_auto_assign()
+    public async Task Requeue_from_Failed_non_COD_clears_failure_no_auto_assign()
     {
-        var id = await SeedActiveAsync(_riderA, "S1", "FAIL-4", cashCollected: 12m);
+        var id = await SeedActiveAsync(_riderA, "S1", "FAIL-4"); // no CashCollected
         Assert.True((await _orders.RequestFailedDeliveryAsync(id, _riderA, new RequestFailedDeliveryRequest
         {
             reason = DeliveryIssueReasons.Other,
@@ -306,8 +306,98 @@ public class FailedDeliveryTests : IDisposable
         Assert.Equal(OrderStatuses.Available, requeue.Data!.status);
         Assert.Null(requeue.Data.acceptedByUserId);
         Assert.Null(requeue.Data.failure?.requestStatus);
-        Assert.Equal(12m, requeue.Data.cashCollected);
+        Assert.Null(requeue.Data.cashCollected);
         Assert.False(requeue.Data.isDirectAssignment);
+        Assert.False(requeue.Data.requeueBlockedByUnreconciledCash);
+    }
+
+    [Fact]
+    public async Task Failed_COD_handover_then_requeue_remains_blocked_cash_preserved()
+    {
+        // Regression: previously cash-collected Failed orders stay blocked after handover.
+        // Supporting two collecting riders on one order requires a separate per-rider cash ledger.
+        var id = await SeedActiveAsync(_riderA, "S1", "FAIL-COD-HO-BLOCK", cashCollected: 40m);
+
+        Assert.True((await _orders.RequestFailedDeliveryAsync(id, _riderA, new RequestFailedDeliveryRequest
+        {
+            reason = DeliveryIssueReasons.CustomerRefused,
+            requestId = "fail-cod-ho-1"
+        })).status);
+        Assert.True((await _admin.ApproveFailureReturnAsync(_managerS1, id, new FailureDecisionRequest())).status);
+        Assert.True((await _orders.ConfirmReturnToStoreAsync(id, _riderA)).status);
+        Assert.True((await _admin.ConfirmStoreReceiptAsync(_managerS1, id, new FailureDecisionRequest())).status);
+
+        var beforeHo = await _admin.GetOrderAsync(_managerS1, id);
+        Assert.True(beforeHo.status);
+        Assert.Equal(OrderStatuses.Failed, beforeHo.Data!.status);
+        Assert.True(beforeHo.Data.requeueBlockedByUnreconciledCash);
+        Assert.Equal(40m, beforeHo.Data.cashCollected);
+
+        var blockedBefore = await _admin.RequeueOrderAsync(_managerS1, id);
+        Assert.False(blockedBefore.status);
+        Assert.Contains("40", blockedBefore.message);
+
+        var handover = await _admin.ConfirmCashHandoverAsync(
+            _managerS1, id, new CashHandoverRequest { requestId = "ho-cod-block-1" });
+        Assert.True(handover.status, handover.message);
+        Assert.Equal(40m, handover.Data!.cashCollected);
+        Assert.Equal(40m, handover.Data.cashHandedOverAmount);
+        Assert.Equal(0m, handover.Data.cashOutstandingToStore);
+        Assert.True(handover.Data.requeueBlockedByUnreconciledCash);
+        Assert.Contains("ledger", handover.Data.requeueBlockReason, StringComparison.OrdinalIgnoreCase);
+
+        var blockedAfter = await _admin.RequeueOrderAsync(_managerS1, id);
+        Assert.False(blockedAfter.status);
+        Assert.Contains("collected", blockedAfter.message, StringComparison.OrdinalIgnoreCase);
+
+        var row = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == id);
+        Assert.Equal(OrderStatuses.Failed, row.Status);
+        Assert.Equal(40m, row.CashCollected);
+        Assert.Equal(40m, row.CashHandedOverAmount);
+        Assert.Equal(_riderA, row.AcceptedByUserId);
+
+        var audits = await _db.OrderLifecycleAudits
+            .AsNoTracking()
+            .Where(a => a.AssignedOrderId == id)
+            .ToListAsync();
+        Assert.Contains(audits, a => a.NewStatus == OrderStatuses.Failed);
+        Assert.Contains(audits, a => a.Reason != null && a.Reason.Contains("CashHandover", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(audits, a => a.NewStatus == OrderStatuses.Available && a.Reason == "Requeued");
+    }
+
+    [Fact]
+    public async Task Failed_non_COD_may_requeue_cash_collected_Failed_may_not()
+    {
+        var nonCod = await SeedActiveAsync(_riderA, "S1", "FAIL-NO-CASH");
+        Assert.True((await _orders.RequestFailedDeliveryAsync(nonCod, _riderA, new RequestFailedDeliveryRequest
+        {
+            reason = DeliveryIssueReasons.AddressIssue,
+            requestId = "fail-nocash-1"
+        })).status);
+        Assert.True((await _admin.ApproveFailureReturnAsync(_managerS1, nonCod, new FailureDecisionRequest())).status);
+        Assert.True((await _orders.ConfirmReturnToStoreAsync(nonCod, _riderA)).status);
+        Assert.True((await _admin.ConfirmStoreReceiptAsync(_managerS1, nonCod, new FailureDecisionRequest())).status);
+        var rq1 = await _admin.RequeueOrderAsync(_managerS1, nonCod);
+        Assert.True(rq1.status, rq1.message);
+
+        var cod = await SeedActiveAsync(_riderA, "S1", "FAIL-FULL-HO", cashCollected: 15m);
+        Assert.True((await _orders.RequestFailedDeliveryAsync(cod, _riderA, new RequestFailedDeliveryRequest
+        {
+            reason = DeliveryIssueReasons.Other,
+            note = "ok",
+            requestId = "fail-fullho-1"
+        })).status);
+        Assert.True((await _admin.ApproveFailureReturnAsync(_managerS1, cod, new FailureDecisionRequest())).status);
+        Assert.True((await _orders.ConfirmReturnToStoreAsync(cod, _riderA)).status);
+        Assert.True((await _admin.ConfirmStoreReceiptAsync(_managerS1, cod, new FailureDecisionRequest())).status);
+        Assert.True((await _admin.ConfirmCashHandoverAsync(
+            _managerS1, cod, new CashHandoverRequest { amount = 15m, requestId = "ho-full-1" })).status);
+        var rq2 = await _admin.RequeueOrderAsync(_managerS1, cod);
+        Assert.False(rq2.status);
+        var still = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == cod);
+        Assert.Equal(OrderStatuses.Failed, still.Status);
+        Assert.Equal(15m, still.CashCollected);
+        Assert.Equal(15m, still.CashHandedOverAmount);
     }
 
     [Fact]

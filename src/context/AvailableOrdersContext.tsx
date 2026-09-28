@@ -13,6 +13,7 @@ import {
   RejectReason,
 } from '../data/orders';
 import * as ordersRepository from '../repositories/ordersRepository';
+import { applyAuthoritativeAvailableOrders } from '../utils/availableOrdersSync';
 import { useRiderSession } from './RiderSessionContext';
 
 type AcceptResult = { ok: boolean; message?: string };
@@ -47,26 +48,13 @@ export function AvailableOrdersProvider({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
-  const removedIdsRef = useRef<Set<string>>(new Set());
-  const removedBackendIdsRef = useRef<Set<number>>(new Set());
+  const activeJobsRef = useRef(activeJobs);
+  activeJobsRef.current = activeJobs;
 
+  // Drop rows that became this rider's active job without waiting for refresh.
   useEffect(() => {
-    for (const job of activeJobs) {
-      removedIdsRef.current.add(job.id);
-      removedBackendIdsRef.current.add(job.backendId);
-    }
-    if (activeJobs.length > 0) {
-      setOrders(prev =>
-        prev.filter(
-          o =>
-            !activeJobs.some(
-              j =>
-                j.id === o.id ||
-                (o.backendId != null && j.backendId === o.backendId),
-            ),
-        ),
-      );
-    }
+    if (activeJobs.length === 0) return;
+    setOrders(prev => applyAuthoritativeAvailableOrders(prev, activeJobs));
   }, [activeJobs]);
 
   const getOrderById = useCallback(
@@ -145,8 +133,7 @@ export function AvailableOrdersProvider({
         return { ok: false, message };
       }
 
-      removedIdsRef.current.add(order.id);
-      removedBackendIdsRef.current.add(order.backendId);
+      // Optimistic hide only — next successful Available refresh is authoritative.
       setOrders(prev =>
         prev.filter(
           o =>
@@ -178,8 +165,7 @@ export function AvailableOrdersProvider({
         return { ok: false, message: result.error.message };
       }
 
-      removedIdsRef.current.add(order.id);
-      removedBackendIdsRef.current.add(order.backendId);
+      // Optimistic hide. Backend omits this rider's rejects until requeue clears them.
       setOrders(prev =>
         prev.filter(
           o =>
@@ -202,15 +188,9 @@ export function AvailableOrdersProvider({
       setLoading(false);
       return;
     }
+    // Server Available is authoritative (requeue can return a previously accepted id).
     setOrders(
-      result.data.filter(
-        o =>
-          !removedIdsRef.current.has(o.id) &&
-          !(
-            o.backendId != null &&
-            removedBackendIdsRef.current.has(o.backendId)
-          ),
-      ),
+      applyAuthoritativeAvailableOrders(result.data, activeJobsRef.current),
     );
     setLoading(false);
   }, []);

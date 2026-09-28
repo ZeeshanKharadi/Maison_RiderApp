@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -120,8 +121,8 @@ export default function DashboardScreen() {
   useEffect(() => {
     const unsub = navigation.addListener?.('focus', () => {
       void loadPerformance();
-      // Pull admin-driven status changes (cancel, return-to-store, requeue, etc.).
-      void restoreActiveDeliveries({ suppressCancelAlert: true });
+      // Show cancel alerts when FCM was missed; session/durable markers dedupe.
+      void restoreActiveDeliveries();
       void refreshOrders();
     });
     return () => {
@@ -129,13 +130,21 @@ export default function DashboardScreen() {
     };
   }, [navigation, loadPerformance, restoreActiveDeliveries, refreshOrders]);
 
-  // Keep syncing while a job is active OR briefly after it drops (requeue/cancel).
+  // Foreground-only sync. Never suppress cancel alerts on this path.
   useEffect(() => {
-    const id = setInterval(() => {
-      void restoreActiveDeliveries({ suppressCancelAlert: true });
+    const tick = () => {
+      if (AppState.currentState !== 'active') return;
+      void restoreActiveDeliveries();
       void refreshOrders();
-    }, 15_000);
-    return () => clearInterval(id);
+    };
+    const id = setInterval(tick, 15_000);
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') tick();
+    });
+    return () => {
+      clearInterval(id);
+      sub.remove();
+    };
   }, [restoreActiveDeliveries, refreshOrders]);
 
   const greeting = useMemo(() => getGreeting(now), [now]);
