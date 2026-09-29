@@ -35,6 +35,27 @@ describe('shiftAvailability', () => {
     expect(parseOnlineStartedAt('not-a-date')).toBeNull();
     expect(parseOnlineStartedAt('')).toBeNull();
   });
+
+  test('bare ISO from SQL is treated as UTC (not local)', () => {
+    // Classic bug: "07:56 UTC" without Z parsed as local 07:56 in PKT (+5)
+    // → shows as shift start 7:56 AM and inflated working hours.
+    const applied = applyServerAvailability({
+      isOnline: true,
+      currentOnlineStartedAt: '2026-09-29T07:56:00',
+    });
+    expect(applied.shiftStartedAt?.toISOString()).toBe(
+      '2026-09-29T07:56:00.000Z',
+    );
+  });
+
+  test('explicit Z and offset still parse correctly', () => {
+    expect(
+      parseOnlineStartedAt('2026-09-29T07:56:00.000Z')?.toISOString(),
+    ).toBe('2026-09-29T07:56:00.000Z');
+    expect(
+      parseOnlineStartedAt('2026-09-29T12:56:00+05:00')?.toISOString(),
+    ).toBe('2026-09-29T07:56:00.000Z');
+  });
 });
 
 describe('formatShiftClock / working hours', () => {

@@ -1,6 +1,6 @@
 import { AvailableOrder } from '../data/orders';
 import { API_PATHS } from '../api/config';
-import { apiEnvelope, HttpError } from '../api/httpClient';
+import { apiEnvelope, HttpError, TimeoutError } from '../api/httpClient';
 import {
   ApiAvailableOrder,
   ApiRiderPerformance,
@@ -107,8 +107,11 @@ function dedupeAvailableOrders(orders: AvailableOrder[]): AvailableOrder[] {
 }
 
 function mapNetworkError(err: unknown, fallback: string): ApiResult<never> {
+  if (err instanceof TimeoutError) {
+    return fail('TIMEOUT', err.message);
+  }
   if (err instanceof HttpError) {
-    return fail(err.code, err.message);
+    return fail(err.code, err.message, err.statusCode);
   }
   return fail(
     'NETWORK',

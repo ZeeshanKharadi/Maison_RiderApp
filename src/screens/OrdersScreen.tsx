@@ -12,8 +12,10 @@ import { useNavigation } from '@react-navigation/native';
 import { useSideMenu } from '../context/SideMenuContext';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useRiderSession } from '../context/RiderSessionContext';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import { navigate } from '../navigation/RootNavigation';
 import OrderCard from '../components/OrderCard';
+import NoConnectionBanner from '../components/NoConnectionBanner';
 import {
   AppHeader,
   EmptyState,
@@ -40,9 +42,10 @@ import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 export default function OrdersScreen() {
   const navigation = useNavigation();
   const { openMenu } = useSideMenu();
-  const { orders, loading, error, acceptOrder, rejectOrder, refreshOrders } =
+  const { orders, loading, error, accepting, acceptOrder, rejectOrder, refreshOrders } =
     useAvailableOrders();
   const { activeJobs, isOnline } = useRiderSession();
+  const { isConnected } = useNetworkConnectivity();
 
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<OrderFilters>(DEFAULT_ORDER_FILTERS);
@@ -75,6 +78,17 @@ export default function OrdersScreen() {
 
   const handleAccept = useCallback(
     async (order: AvailableOrder) => {
+      if (accepting) return;
+      if (!isConnected) {
+        confirmDialog({
+          title: 'No connection',
+          message:
+            'Connect to the internet to accept orders. Accepts are not queued offline.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
       if (!isOnline) {
         confirmDialog({
           title: 'Offline',
@@ -101,7 +115,7 @@ export default function OrdersScreen() {
         goDashboard();
       }
     },
-    [activeJobs, acceptOrder, goDashboard, isOnline],
+    [accepting, activeJobs, acceptOrder, goDashboard, isOnline, isConnected],
   );
 
   const handleRejectPress = useCallback((order: AvailableOrder) => {
@@ -139,9 +153,10 @@ export default function OrdersScreen() {
         onPress={goDetails}
         onAccept={handleAccept}
         onReject={handleRejectPress}
+        actionsDisabled={accepting || !isConnected}
       />
     ),
-    [goDetails, handleAccept, handleRejectPress],
+    [accepting, isConnected, goDetails, handleAccept, handleRejectPress],
   );
 
   const keyExtractor = useCallback(
@@ -195,6 +210,10 @@ export default function OrdersScreen() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.bannerPad}>
+        <NoConnectionBanner detail="Connect to the internet to accept or reject orders. Actions are not queued offline." />
+      </View>
+
       <Text style={styles.count} accessibilityLiveRegion="polite">
         {visibleOrders.length} available
         {query || activeFilterCount > 0 ? ' · filtered' : ''}
@@ -216,6 +235,14 @@ export default function OrdersScreen() {
               variant="loading"
               title="Loading orders"
               message="Fetching nearby deliveries…"
+            />
+          ) : !isConnected ? (
+            <EmptyState
+              variant="offline"
+              title="No connection"
+              message="Connect to the internet to load and accept available orders."
+              actionLabel="Try again"
+              onAction={() => void refreshOrders()}
             />
           ) : error ? (
             <EmptyState
@@ -291,6 +318,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     gap: spacing.xs,
+  },
+  bannerPad: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
   },
   search: {
     flex: 1,

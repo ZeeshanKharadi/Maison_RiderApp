@@ -7,11 +7,16 @@ import { useRiderSession } from '../context/RiderSessionContext';
 import {
   NotificationContext,
 } from '../context/NotificationContext';
+import * as accountRepository from '../repositories/accountRepository';
 import notificationService from '../services/NotificationService';
+import { shouldRegisterPushToken } from '../utils/pushRegistration';
 
 const listenersSetupRef = { current: false };
 
-/** Reference: request notification permission after login. */
+/**
+ * Request OS permission after login when push preference is on.
+ * Lives above AccountProvider — reads preference from AsyncStorage.
+ */
 export function NotificationPermissionHandler() {
   const { user } = useAuth();
 
@@ -19,6 +24,10 @@ export function NotificationPermissionHandler() {
     if (!user) return;
 
     const run = async () => {
+      const loaded = await accountRepository.loadSettings();
+      const enabled = loaded.ok ? loaded.data.pushNotifications : true;
+      if (!shouldRegisterPushToken(enabled)) return;
+
       await new Promise<void>(resolve => setTimeout(resolve, 2000));
       const granted = await notificationService.requestNotificationPermission();
       if (!granted) {
@@ -44,11 +53,11 @@ export function NotificationHandler() {
   const { user } = useAuth();
   const { incrementUnreadCount, setUnreadCount } = useContext(NotificationContext);
   const { refreshOrders } = useAvailableOrders();
-  const { refreshNotifications } = useAccount();
+  const { settings, ready, refreshNotifications } = useAccount();
   const { restoreActiveDeliveries } = useRiderSession();
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !ready) return;
 
     let cleanup = () => {};
     let mounted = true;
@@ -56,8 +65,15 @@ export function NotificationHandler() {
     const setup = async () => {
       if (listenersSetupRef.current) return;
 
-      await notificationService.requestNotificationPermission();
-      await notificationService.saveTokensToBackend();
+      notificationService.setPushPreferred(settings.pushNotifications);
+
+      if (shouldRegisterPushToken(settings.pushNotifications)) {
+        await notificationService.requestNotificationPermission();
+        await notificationService.saveTokensToBackend();
+      } else {
+        // Preference off: ensure this device token is not on the server.
+        await notificationService.removeTokenFromBackend();
+      }
 
       if (!mounted) return;
 
@@ -90,8 +106,11 @@ export function NotificationHandler() {
       listenersSetupRef.current = false;
       cleanup();
     };
+    // settings.pushNotifications applied on ready; toggles use updateSettings → applyPushPreference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     user?.id,
+    ready,
     incrementUnreadCount,
     setUnreadCount,
     refreshNotifications,

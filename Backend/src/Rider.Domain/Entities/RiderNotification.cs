@@ -30,6 +30,11 @@ namespace Rider.Domain.Entities
 
         public bool IsRead { get; set; }
 
+        /// <summary>Rider hid the row from their inbox; retained for audit / delivery history.</summary>
+        public bool IsDeleted { get; set; }
+
+        public DateTime? DeletedAt { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         [ForeignKey(nameof(UserId))]

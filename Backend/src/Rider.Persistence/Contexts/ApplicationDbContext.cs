@@ -223,6 +223,10 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.OrderId).HasMaxLength(50);
                 entity.Property(e => e.Priority).HasMaxLength(20);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.Property(e => e.IsDeleted).HasDefaultValue(false);
+                entity.HasIndex(e => new { e.UserId, e.CreatedAt })
+                    .HasFilter("[IsDeleted] = 0")
+                    .HasDatabaseName("IX_RiderNotifications_User_Active_Created");
                 entity.HasOne(e => e.User)
                     .WithMany()
                     .HasForeignKey(e => e.UserId)

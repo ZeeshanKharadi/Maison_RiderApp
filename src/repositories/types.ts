@@ -6,6 +6,7 @@
 export type ApiError = {
   code: string;
   message: string;
+  statusCode?: number;
 };
 
 export type ApiResult<T> =
@@ -18,8 +19,18 @@ export function ok<T>(data: T, message?: string): ApiResult<T> {
   return message ? { ok: true, data, message } : { ok: true, data };
 }
 
-export function fail(code: string, message: string): ApiResult<never> {
-  return { ok: false, error: { code, message } };
+export function fail(
+  code: string,
+  message: string,
+  statusCode?: number,
+): ApiResult<never> {
+  return {
+    ok: false,
+    error:
+      statusCode != null
+        ? { code, message, statusCode }
+        : { code, message },
+  };
 }
 
 export function delay(ms: number): Promise<void> {

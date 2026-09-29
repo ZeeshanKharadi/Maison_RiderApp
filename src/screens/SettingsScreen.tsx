@@ -13,16 +13,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useAccount } from '../context/AccountContext';
 import {
   AppHeader,
-  BottomSheet,
-  FilterChip,
   SectionHeader,
 } from '../components/ui';
-import {
-  AppearanceMode,
-  APPEARANCE_LABELS,
-  AppLanguage,
-  LANGUAGE_LABELS,
-} from '../data/account';
 import { APP_NAME, APP_NAME_SHORT, APP_VERSION } from '../constants/app';
 import { navigate } from '../navigation/RootNavigation';
 import { colors, radius, spacing, typography } from '../theme';
@@ -87,24 +79,16 @@ function SettingsRow({
 export default function SettingsScreen() {
   const navigation = useNavigation();
   const { settings, updateSettings } = useAccount();
-  const [langOpen, setLangOpen] = useState(false);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
 
-  const setLanguage = async (language: AppLanguage) => {
-    await updateSettings({ language });
-    setLangOpen(false);
-  };
-
-  const setAppearance = async (appearance: AppearanceMode) => {
-    if (appearance !== 'light') {
-      Alert.alert(
-        'Coming soon',
-        'Dark and System themes are prepared in architecture but only Light mode is active.',
-      );
-      return;
+  const onPushSwitch = async (enabled: boolean) => {
+    if (pushBusy || enabled === settings.pushNotifications) return;
+    setPushBusy(true);
+    try {
+      await updateSettings({ pushNotifications: enabled });
+    } finally {
+      setPushBusy(false);
     }
-    await updateSettings({ appearance });
-    setAppearanceOpen(false);
   };
 
   return (
@@ -119,26 +103,21 @@ export default function SettingsScreen() {
         <View style={styles.group}>
           <SettingsRow
             icon="bell-outline"
-            label="Notifications (local only)"
+            label="Push notifications"
             switchValue={settings.pushNotifications}
-            onSwitch={v => void updateSettings({ pushNotifications: v })}
+            onSwitch={v => void onPushSwitch(v)}
+            disabled={pushBusy}
           />
           <SettingsRow
             icon="translate"
             label="Language"
-            value={LANGUAGE_LABELS[settings.language]}
-            onPress={() => setLangOpen(true)}
+            value="Not available in this build"
+            disabled
           />
           <SettingsRow
             icon="palette-outline"
             label="Appearance"
-            value={APPEARANCE_LABELS[settings.appearance]}
-            onPress={() => setAppearanceOpen(true)}
-          />
-          <SettingsRow
-            icon="theme-light-dark"
-            label="Dark Mode"
-            value="Coming soon"
+            value="Light only · this build"
             disabled
           />
         </View>
@@ -154,13 +133,9 @@ export default function SettingsScreen() {
           />
           <SettingsRow
             icon="lock-outline"
-            label="Security"
-            onPress={() =>
-              Alert.alert(
-                'Security',
-                'PIN and biometric unlock will be available in a future update.',
-              )
-            }
+            label="Security (PIN / biometrics)"
+            value="Not available in this build"
+            disabled
           />
         </View>
 
@@ -200,42 +175,6 @@ export default function SettingsScreen() {
 
         <Text style={styles.version}>Version {APP_VERSION}</Text>
       </ScrollView>
-
-      <BottomSheet
-        visible={langOpen}
-        title="Language"
-        onClose={() => setLangOpen(false)}>
-        <Text style={styles.sheetHint}>Your language preference is saved on this device.</Text>
-        <View style={styles.chipWrap}>
-          {(Object.keys(LANGUAGE_LABELS) as AppLanguage[]).map(code => (
-            <FilterChip
-              key={code}
-              label={LANGUAGE_LABELS[code]}
-              selected={settings.language === code}
-              onPress={() => void setLanguage(code)}
-            />
-          ))}
-        </View>
-      </BottomSheet>
-
-      <BottomSheet
-        visible={appearanceOpen}
-        title="Appearance"
-        onClose={() => setAppearanceOpen(false)}>
-        <Text style={styles.sheetHint}>
-          Light is active. Dark and System are placeholders for future theming.
-        </Text>
-        <View style={styles.chipWrap}>
-          {(Object.keys(APPEARANCE_LABELS) as AppearanceMode[]).map(mode => (
-            <FilterChip
-              key={mode}
-              label={APPEARANCE_LABELS[mode]}
-              selected={settings.appearance === mode}
-              onPress={() => void setAppearance(mode)}
-            />
-          ))}
-        </View>
-      </BottomSheet>
     </View>
   );
 }
@@ -262,16 +201,10 @@ const styles = StyleSheet.create({
   },
   rowDisabled: { opacity: 0.55 },
   rowLabel: { ...typography.bodyStrong, flex: 1 },
-  rowValue: { ...typography.caption, marginRight: spacing.xxs, maxWidth: 140 },
+  rowValue: { ...typography.caption, marginRight: spacing.xxs, maxWidth: 160 },
   version: {
     ...typography.caption,
     textAlign: 'center',
     marginTop: spacing.xl,
   },
-  sheetHint: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap' },
 });

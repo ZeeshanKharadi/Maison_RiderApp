@@ -1,6 +1,9 @@
 /**
  * Parse server UTC interval start for shift clock. Returns null if missing/invalid.
  * Does not invent a "now" fallback.
+ *
+ * SQL / EF often round-trip UTC as ISO without `Z`. JS treats that as local time
+ * (e.g. PKT +5 → "working 5h" on a fresh reopen). Bare ISO datetimes are UTC.
  */
 export function parseOnlineStartedAt(
   raw: string | Date | null | undefined,
@@ -9,7 +12,17 @@ export function parseOnlineStartedAt(
   if (raw instanceof Date) {
     return Number.isNaN(raw.getTime()) ? null : raw;
   }
-  const d = new Date(raw);
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+
+  const hasExplicitOffset =
+    /[zZ]$/.test(trimmed) || /[+-]\d{2}:?\d{2}$/.test(trimmed);
+  const normalized =
+    !hasExplicitOffset && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)
+      ? `${trimmed}Z`
+      : trimmed;
+
+  const d = new Date(normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

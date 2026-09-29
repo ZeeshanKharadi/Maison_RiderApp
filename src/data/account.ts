@@ -78,32 +78,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'en',
 };
 
-export const MOCK_DOCUMENTS: RiderDocument[] = [
-  {
-    id: 'doc-license',
-    title: 'Driving License',
-    status: 'unavailable',
-    expiryDate: '—',
-  },
-  {
-    id: 'doc-reg',
-    title: 'Vehicle Registration',
-    status: 'unavailable',
-    expiryDate: '—',
-  },
-  {
-    id: 'doc-ins',
-    title: 'Insurance',
-    status: 'unavailable',
-    expiryDate: '—',
-  },
-  {
-    id: 'doc-id',
-    title: 'National ID',
-    status: 'unavailable',
-    expiryDate: '—',
-  },
-];
+/** No rider document API in this build — Profile shows “Managed by admin”. */
+export const MOCK_DOCUMENTS: RiderDocument[] = [];
 
 export const MOCK_APP_NOTIFICATIONS: AppNotification[] = [
   {

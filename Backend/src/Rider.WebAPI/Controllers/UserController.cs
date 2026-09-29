@@ -141,10 +141,10 @@ namespace Rider.WebAPI.Controllers
 
         [HttpPost("Logout")]
         [Authorize]
-        public async Task<IActionResult> Logout()
+        public async Task<IActionResult> Logout([FromBody] LogoutRequest? request)
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            var result = await _userService.Logout(userIdClaim);
+            var result = await _userService.Logout(userIdClaim, request?.deviceToken);
             return Ok(result);
         }
 
@@ -233,6 +233,30 @@ namespace Rider.WebAPI.Controllers
                 return Unauthorized();
 
             var result = await _notifications.MarkAllReadAsync(uid);
+            return Ok(result);
+        }
+
+        [HttpDelete("Notifications/{id:long}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteNotification(long id)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.SoftDeleteAsync(uid, id);
+            if (!result.status)
+                return NotFound(result);
+            return Ok(result);
+        }
+
+        [HttpDelete("Notifications")]
+        [Authorize]
+        public async Task<IActionResult> DeleteAllNotifications()
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.SoftDeleteAllAsync(uid);
             return Ok(result);
         }
 

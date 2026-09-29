@@ -43,6 +43,15 @@ namespace Rider.Application.DTOs.Auth
         public string refreshToken { get; set; }
     }
 
+    /// <summary>
+    /// Optional body for Logout. When deviceToken is set, that FCM registration
+    /// is removed for this user before TokenVersion is bumped.
+    /// </summary>
+    public class LogoutRequest
+    {
+        public string? deviceToken { get; set; }
+    }
+
     public class UpdateProfileRequest
     {
         public string name { get; set; }

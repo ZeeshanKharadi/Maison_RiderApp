@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   AppState,
   Pressable,
   ScrollView,
@@ -36,6 +37,8 @@ import { jobProgress } from '../delivery/types';
 import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
+import NoConnectionBanner from '../components/NoConnectionBanner';
 import * as ordersRepository from '../repositories/ordersRepository';
 import type { RiderPerformance } from '../repositories/ordersRepository';
 import {
@@ -81,6 +84,7 @@ export default function DashboardScreen() {
   } = useRiderSession();
   const { notifications, profile, unreadCount } = useAccount();
   const { orders, refreshOrders } = useAvailableOrders();
+  const { isConnected } = useNetworkConnectivity();
 
   const [now, setNow] = useState(() => new Date());
   const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
@@ -177,6 +181,13 @@ export default function DashboardScreen() {
 
   const handleOnlineChange = useCallback(
     (next: boolean) => {
+      if (!isConnected) {
+        Alert.alert(
+          'No connection',
+          'Connect to Wi‑Fi or mobile data before changing online status. Status changes are not queued offline.',
+        );
+        return;
+      }
       if (!next && activeJob) {
         confirmDialog({
           title: 'Go offline?',
@@ -192,7 +203,7 @@ export default function DashboardScreen() {
       }
       void setOnline(next);
     },
-    [activeJob, setOnline],
+    [activeJob, setOnline, isConnected],
   );
 
   const handleContinueDelivery = useCallback(() => {
@@ -268,7 +279,9 @@ export default function DashboardScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {/* 2. Online / Offline */}
+        <NoConnectionBanner detail="Phone has no internet. Dashboard numbers may show — until you reconnect. Status and COD changes are not queued offline." />
+
+        {/* 2. Online / Offline (shift status — not the same as Wi‑Fi) */}
         <View
           style={[styles.statusCard, !isOnline && styles.statusCardOffline]}
           accessibilityRole="summary"
@@ -290,19 +303,22 @@ export default function DashboardScreen() {
                   {isOnline ? 'You are online' : 'You are offline'}
                 </Text>
                 <Text style={styles.statusSub}>
-                  {isOnline
-                    ? `Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : '—'}`
-                    : 'Go online to receive orders'}
+                  {!isConnected
+                    ? 'Shift status is separate from Wi‑Fi — reconnect to sync with the server'
+                    : isOnline
+                      ? `Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : '—'}`
+                      : 'Go online to receive orders'}
                 </Text>
               </View>
             </View>
             <Switch
               value={isOnline}
               onValueChange={handleOnlineChange}
+              disabled={!isConnected}
               trackColor={{ false: colors.disabled, true: colors.successSoft }}
               thumbColor={isOnline ? colors.success : colors.textMuted}
               accessibilityLabel="Online status"
-              accessibilityState={{ checked: isOnline }}
+              accessibilityState={{ checked: isOnline, disabled: !isConnected }}
             />
           </View>
           {isOnline ? (
@@ -435,7 +451,7 @@ export default function DashboardScreen() {
             actionLabel={isOnline ? 'Browse orders' : 'Go online'}
             onAction={() => {
               if (isOnline) goTab('Orders');
-              else void setOnline(true);
+              else handleOnlineChange(true);
             }}
           />
         )}
@@ -448,11 +464,23 @@ export default function DashboardScreen() {
         />
         {!isOnline ? (
           <View style={styles.offlineBanner}>
+            <Icon name="bike-off" size={22} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.offlineTitle}>Shift is offline</Text>
+              <Text style={styles.offlineBody}>
+                Turn on your status to receive new delivery offers. This is not
+                the same as Wi‑Fi / mobile data.
+              </Text>
+            </View>
+          </View>
+        ) : !isConnected ? (
+          <View style={styles.offlineBanner}>
             <Icon name="wifi-off" size={22} color={colors.textMuted} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.offlineTitle}>You are currently offline</Text>
+              <Text style={styles.offlineTitle}>No internet connection</Text>
               <Text style={styles.offlineBody}>
-                Turn on your status to see nearby delivery opportunities.
+                You may still be on shift, but the phone cannot reach the server
+                until Wi‑Fi or mobile data is back.
               </Text>
             </View>
           </View>

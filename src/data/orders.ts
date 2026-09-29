@@ -38,6 +38,9 @@ export type AvailableOrder = {
   paymentMethod: PaymentMethod;
   isCod: boolean;
   expectedCash?: number | null;
+  /** Server CashCollected when known (order detail / active). */
+  cashCollectedAmount?: number | null;
+  cashCollectedReason?: string | null;
   backendStatus?: string;
   acceptedAt?: string | null;
   pickedUpAt?: string | null;

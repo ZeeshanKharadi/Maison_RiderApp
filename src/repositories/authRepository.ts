@@ -153,14 +153,31 @@ export async function patchRiderProfile(
 }
 
 /** Reference: call backend logout before clearing local session. */
-export async function logout(): Promise<void> {
+export async function logout(opts?: {
+  deviceToken?: string;
+}): Promise<ApiResult<void>> {
   try {
-    await apiEnvelope<string>(API_PATHS.logout, {
+    const body =
+      opts?.deviceToken && opts.deviceToken.trim()
+        ? { deviceToken: opts.deviceToken.trim() }
+        : undefined;
+    const envelope = await apiEnvelope<string>(API_PATHS.logout, {
       method: 'POST',
       auth: true,
+      body,
     });
-  } catch {
-    // Local logout proceeds even if API is unreachable.
+    if (!envelope.status) {
+      return fail(
+        'LOGOUT_FAILED',
+        envelope.message || 'Server logout failed',
+      );
+    }
+    return ok(undefined);
+  } catch (err) {
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach logout API',
+    );
   }
 }
 

@@ -15,13 +15,14 @@ namespace Rider.Persistence.Repositories
         public async Task<List<RiderNotification>> ListForUserAsync(Guid userId, int take)
             => await _entities
                 .AsNoTracking()
-                .Where(n => n.UserId == userId)
+                .Where(n => n.UserId == userId && !n.IsDeleted)
                 .OrderByDescending(n => n.CreatedAt)
                 .Take(take)
                 .ToListAsync();
 
         public async Task<RiderNotification> GetForUserAsync(Guid userId, long id)
-            => await _entities.FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
+            => await _entities.FirstOrDefaultAsync(n =>
+                n.Id == id && n.UserId == userId && !n.IsDeleted);
 
         public async Task<List<RiderNotification>> ListUnreadOrderCancellationsAsync(Guid userId, int take = 100)
         {
@@ -30,6 +31,7 @@ namespace Rider.Persistence.Repositories
             return await _entities
                 .AsNoTracking()
                 .Where(n => n.UserId == userId
+                    && !n.IsDeleted
                     && !n.IsRead
                     && n.Title == RiderNotificationTitles.OrderCancelled
                     && n.AssignedOrderId != null)
@@ -49,6 +51,7 @@ namespace Rider.Persistence.Repositories
 
             var rows = await _entities
                 .Where(n => n.UserId == userId
+                    && !n.IsDeleted
                     && !n.IsRead
                     && n.Title == RiderNotificationTitles.OrderCancelled
                     && n.AssignedOrderId != null
@@ -58,6 +61,34 @@ namespace Rider.Persistence.Repositories
             foreach (var row in rows)
                 row.IsRead = true;
 
+            return rows.Count;
+        }
+
+        public async Task<bool> SoftDeleteForUserAsync(Guid userId, long id)
+        {
+            var row = await _entities.FirstOrDefaultAsync(n =>
+                n.Id == id && n.UserId == userId && !n.IsDeleted);
+            if (row == null)
+                return false;
+
+            row.IsDeleted = true;
+            row.DeletedAt = DateTime.UtcNow;
+            row.IsRead = true;
+            return true;
+        }
+
+        public async Task<int> SoftDeleteAllForUserAsync(Guid userId)
+        {
+            var rows = await _entities
+                .Where(n => n.UserId == userId && !n.IsDeleted)
+                .ToListAsync();
+            var now = DateTime.UtcNow;
+            foreach (var row in rows)
+            {
+                row.IsDeleted = true;
+                row.DeletedAt = now;
+                row.IsRead = true;
+            }
             return rows.Count;
         }
     }

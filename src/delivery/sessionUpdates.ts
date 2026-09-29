@@ -122,8 +122,34 @@ export function jobToHistoryItem(
     fragile: job.fragile,
     packageInfo: job.packageInfo,
     specialInstructions: job.specialInstructions,
-    deliveryNotes: job.isCod ? 'COD collected on delivery.' : undefined,
-    cashCollected: job.isCod ? true : null,
+    deliveryNotes: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? `COD collected: ${job.cashCollectedAmount}${
+            job.cashCollectedReason ? ` — ${job.cashCollectedReason}` : ''
+          }.`
+        : job.cashCollected === false
+          ? 'Delivery completed; COD cash not verified on server.'
+          : 'COD collected on delivery.'
+      : undefined,
+    cashCollected: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? true
+        : job.cashCollected === false
+          ? false
+          : true
+      : null,
+    cashCollectedAmount:
+      job.isCod && job.cashCollectedAmount != null
+        ? job.cashCollectedAmount
+        : null,
+    cashCollectedReason: job.isCod ? job.cashCollectedReason ?? null : null,
+    cashVerified: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? true
+        : job.cashCollected === false
+          ? false
+          : true
+      : null,
     timeline: timeline.map(step => ({
       ...step,
       status: 'done' as const,

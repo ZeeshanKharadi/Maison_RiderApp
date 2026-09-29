@@ -5,6 +5,7 @@ import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useRiderSession } from '../context/RiderSessionContext';
 import * as notificationsRepository from '../repositories/notificationsRepository';
 import {
+  isOrderCancellationNotification,
   shouldAlertNotification,
   showOrderNotificationAlert,
 } from '../utils/notificationAlert';
@@ -13,7 +14,8 @@ const POLL_MS = 8_000;
 
 /**
  * Polls server notifications while the rider is logged in.
- * Order assignments always alert; other categories respect pushNotifications setting.
+ * Inbox always syncs. Local/system alerts honor pushNotifications.
+ * Cancel catch-up still restores active delivery even when push is OFF.
  */
 export function useRiderNotificationPoll(enabled: boolean) {
   const { settings, syncNotifications, notifications } = useAccount();
@@ -52,25 +54,22 @@ export function useRiderNotificationPoll(enabled: boolean) {
 
       for (const n of incoming) {
         if (alertedRef.current.has(n.id)) continue;
-        if (!shouldAlertNotification(n, settings.pushNotifications)) continue;
-
         alertedRef.current.add(n.id);
+
         if (n.category === 'orders') {
           void refreshOrders();
-          if (/cancel/i.test(n.title) || /cancel/i.test(n.description)) {
-            // One rider-facing Alert comes from restore (or FCM). Avoid a second
-            // local notification + Alert stack for the same cancel.
+          if (isOrderCancellationNotification(n)) {
+            // Cancel Alert comes from restore (or FCM). No second local toast.
             void restoreActiveDeliveries();
-          } else {
-            void showOrderNotificationAlert(n.title, n.description, {
-              category: n.category,
-            });
+            continue;
           }
-        } else {
-          void showOrderNotificationAlert(n.title, n.description, {
-            category: n.category,
-          });
         }
+
+        if (!shouldAlertNotification(n, settings.pushNotifications)) continue;
+
+        void showOrderNotificationAlert(n.title, n.description, {
+          category: n.category,
+        });
       }
     };
 

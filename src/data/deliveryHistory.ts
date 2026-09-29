@@ -30,7 +30,16 @@ export interface DeliveryHistoryItem {
   packageInfo: string;
   specialInstructions?: string;
   deliveryNotes?: string;
+  /** True when COD cash was collected; false when not; null for prepaid. */
   cashCollected: boolean | null;
+  /** Server-saved COD amount when verified; null if prepaid or unverified. */
+  cashCollectedAmount?: number | null;
+  cashCollectedReason?: string | null;
+  /**
+   * COD only: true when amount came from the server; false when completion
+   * was confirmed but cash could not be verified (do not treat local submit as saved).
+   */
+  cashVerified?: boolean | null;
   /** Full lifecycle timestamps when available */
   timeline: DeliveryTimelineStep[];
 }

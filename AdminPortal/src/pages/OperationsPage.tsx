@@ -2,39 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { customerName, daysAgoInput, money, DeliveryIssueReportDto, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
+import {
+  actionNeededCountLabel,
+  actionNeededCounts,
+  actionNeededQueryParams,
+  groupOrdersByBoardStatus,
+  isActionNeededStatus,
+  OPS_BOARD_STATUSES,
+  statusLabel,
+  toActionNeededSnapshot,
+  type ActionNeededSnapshot,
+} from '../operations/boardStatuses';
 import { useLiveRefresh } from '../realtime/useLiveRefresh';
 
-const STATUSES = [
-  'Available',
-  'Accepted',
-  'NavigatingToPickup',
-  'ArrivedAtPickup',
-  'InProgress',
-  'OnTheWay',
-  'ArrivedAtCustomer',
-  'Delivered',
-  'Completed',
-  'Cancelled',
-  'Rejected',
-];
-
-const STATUS_LABELS: Record<string, string> = {
-  Available: 'Available',
-  Accepted: 'Accepted',
-  NavigatingToPickup: 'To pickup',
-  ArrivedAtPickup: 'At pickup',
-  InProgress: 'Picked up',
-  OnTheWay: 'On the way',
-  ArrivedAtCustomer: 'At customer',
-  Delivered: 'Delivered',
-  Completed: 'Completed',
-  Cancelled: 'Cancelled',
-  Rejected: 'Rejected',
-  ReturningToStore: 'Returning to store',
-  AwaitingStoreReceipt: 'Awaiting store receipt',
-  Failed: 'Failed',
+const EMPTY_ACTION: ActionNeededSnapshot = {
+  ReturningToStore: 0,
+  AwaitingStoreReceipt: 0,
+  total: 0,
+  isComplete: true,
 };
-
 export default function OperationsPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<OrderListDto[]>([]);
@@ -53,9 +39,35 @@ export default function OperationsPage() {
   const [to, setTo] = useState(todayInput());
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'board' | 'table'>('board');
+  const [needsAction, setNeedsAction] = useState<ActionNeededSnapshot>(EMPTY_ACTION);
 
   const filtersRef = useRef({ storeId, status, riderId, from, to, issueStatus, issueQuery });
   filtersRef.current = { storeId, status, riderId, from, to, issueStatus, issueQuery };
+
+  const loadActionNeeded = useCallback(async (scopedStoreId: string) => {
+    try {
+      const [ret, awaitReceipt] = await Promise.all(
+        (['ReturningToStore', 'AwaitingStoreReceipt'] as const).map((st) =>
+          api<OrderListDto[]>(
+            `/api/Admin/Orders?${actionNeededQueryParams(scopedStoreId, st).toString()}`,
+          ),
+        ),
+      );
+      if (!ret.status || !awaitReceipt.status) {
+        return null;
+      }
+      return toActionNeededSnapshot(
+        {
+          ReturningToStore: (ret.Data || []).length,
+          AwaitingStoreReceipt: (awaitReceipt.Data || []).length,
+          total: (ret.Data || []).length + (awaitReceipt.Data || []).length,
+        },
+        true,
+      );
+    } catch {
+      return null;
+    }
+  }, []);
 
   const load = useCallback(async () => {
     const f = filtersRef.current;
@@ -76,15 +88,17 @@ export default function OperationsPage() {
     if (f.issueQuery.trim()) issQs.set('q', f.issueQuery.trim());
     if (f.issueStatus === 'Closed') issQs.set('includeClosed', 'true');
 
-    const [o, s, r, rej, iss] = await Promise.all([
+    const [o, s, r, rej, iss, actionSnap] = await Promise.all([
       api<OrderListDto[]>(`/api/Admin/Orders?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
       api<RiderDto[]>('/api/Admin/Riders'),
       api<OrderRejectionDto[]>(`/api/Admin/OrderRejections?${rejQs.toString()}`),
       api<DeliveryIssueReportDto[]>(`/api/Admin/DeliveryIssueReports?${issQs.toString()}`),
+      loadActionNeeded(f.storeId),
     ]);
     if (!o.status) throw new Error(o.message);
-    setOrders(o.Data || []);
+    const boardOrders = o.Data || [];
+    setOrders(boardOrders);
     setStores(s.Data || []);
     setRiders(r.Data || []);
     setRejections(rej.status ? rej.Data || [] : []);
@@ -96,8 +110,11 @@ export default function OperationsPage() {
       setIssuesError(null);
     }
     setIssuesLoaded(true);
+    setNeedsAction(
+      actionSnap ?? toActionNeededSnapshot(actionNeededCounts(boardOrders), false),
+    );
     setError(null);
-  }, []);
+  }, [loadActionNeeded]);
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
@@ -124,15 +141,16 @@ export default function OperationsPage() {
     [filteredIssues],
   );
 
-  const grouped = useMemo(() => {
-    const map: Record<string, OrderListDto[]> = {};
-    for (const st of STATUSES) map[st] = [];
-    for (const o of orders) {
-      if (status === 'Rejected') continue;
-      (map[o.status] ||= []).push(o);
-    }
-    return map;
-  }, [orders, status]);
+  const grouped = useMemo(
+    () => groupOrdersByBoardStatus(orders, status),
+    [orders, status],
+  );
+
+  const applyStatusFilter = useCallback((nextStatus: string) => {
+    setStatus(nextStatus);
+    filtersRef.current = { ...filtersRef.current, status: nextStatus };
+    void load().catch((e: Error) => setError(e.message));
+  }, [load]);
 
   return (
     <div>
@@ -250,6 +268,40 @@ export default function OperationsPage() {
         </div>
       )}
 
+      {needsAction.total > 0 && (
+        <div className="alert alert-warning d-flex flex-wrap gap-3 align-items-center mb-3">
+          <strong>
+            Needs action · {actionNeededCountLabel(needsAction.total, needsAction.isComplete)}
+          </strong>
+          <button
+            type="button"
+            className={`btn btn-sm ${status === 'ReturningToStore' ? 'btn-maison' : 'btn-outline-dark'}`}
+            onClick={() => applyStatusFilter('ReturningToStore')}
+          >
+            Returning to store ·{' '}
+            {actionNeededCountLabel(needsAction.ReturningToStore, needsAction.isComplete)}
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${status === 'AwaitingStoreReceipt' ? 'btn-maison' : 'btn-outline-dark'}`}
+            onClick={() => applyStatusFilter('AwaitingStoreReceipt')}
+          >
+            Awaiting store receipt ·{' '}
+            {actionNeededCountLabel(needsAction.AwaitingStoreReceipt, needsAction.isComplete)}
+          </button>
+          {!needsAction.isComplete ? (
+            <span className="small mb-0 text-muted">
+              Counts are from the current board filters — a full store-scoped total was unavailable.
+            </span>
+          ) : (
+            <span className="small mb-0">
+              Store-scoped live totals (ignore board status / date / rider filters). Open a card to
+              confirm store receipt or handle a Failed order.
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="filters">
         <div>
           <label className="form-label">Store</label>
@@ -262,7 +314,7 @@ export default function OperationsPage() {
           <label className="form-label">Status</label>
           <select className="form-select form-select-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
+            {OPS_BOARD_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
           </select>
         </div>
         <div>
@@ -285,35 +337,54 @@ export default function OperationsPage() {
 
       {view === 'board' ? (
         <div className="board">
-          {STATUSES.map((st) => (
-            <div className="board-col" key={st}>
-              <h6>
-                {STATUS_LABELS[st] || st} ·{' '}
-                {st === 'Rejected' ? filteredRejections.length : grouped[st]?.length ?? 0}
-              </h6>
-              {st === 'Rejected'
-                ? filteredRejections.map((rej) => (
-                    <div
-                      className="order-card"
-                      key={`rej-${rej.id}`}
-                      onClick={() => navigate(`/operations/${rej.assignedOrderId}`)}
-                    >
-                      <div className="fw-semibold">#{rej.orderId || rej.orderNo}</div>
-                      <div className="small">{rej.riderWorkerId || rej.riderName || 'Rider'}</div>
-                      <div className="small text-muted">{rej.storeId}{rej.reason ? ` · ${rej.reason}` : ''}</div>
-                      <div className="small text-muted">{new Date(rej.createdAt).toLocaleString()}</div>
-                    </div>
-                  ))
-                : (grouped[st] || []).map((o) => (
-                    <div className="order-card" key={o.id} onClick={() => navigate(`/operations/${o.id}`)}>
-                      <div className="fw-semibold">#{o.orderId || o.orderNo}</div>
-                      <div className="small">{customerName(o)}</div>
-                      <div className="small text-muted">{o.storeId} · {money(o.orderTotal)}</div>
-                      {o.acceptedByWorkerId && <div className="small">{o.acceptedByWorkerId}</div>}
-                    </div>
-                  ))}
-            </div>
-          ))}
+          {OPS_BOARD_STATUSES.map((st) => {
+            const boardCount = st === 'Rejected' ? filteredRejections.length : grouped[st]?.length ?? 0;
+            const completeForAction =
+              st === 'ReturningToStore'
+                ? needsAction.ReturningToStore
+                : st === 'AwaitingStoreReceipt'
+                  ? needsAction.AwaitingStoreReceipt
+                  : null;
+            const columnFiltered =
+              completeForAction != null
+              && (needsAction.isComplete
+                ? boardCount !== completeForAction
+                : true);
+            return (
+              <div
+                className={`board-col${isActionNeededStatus(st) ? ' board-col-action' : ''}`}
+                key={st}
+              >
+                <h6>
+                  {statusLabel(st)} ·{' '}
+                  {columnFiltered
+                    ? actionNeededCountLabel(boardCount, false)
+                    : boardCount}
+                </h6>
+                {st === 'Rejected'
+                  ? filteredRejections.map((rej) => (
+                      <div
+                        className="order-card"
+                        key={`rej-${rej.id}`}
+                        onClick={() => navigate(`/operations/${rej.assignedOrderId}`)}
+                      >
+                        <div className="fw-semibold">#{rej.orderId || rej.orderNo}</div>
+                        <div className="small">{rej.riderWorkerId || rej.riderName || 'Rider'}</div>
+                        <div className="small text-muted">{rej.storeId}{rej.reason ? ` · ${rej.reason}` : ''}</div>
+                        <div className="small text-muted">{new Date(rej.createdAt).toLocaleString()}</div>
+                      </div>
+                    ))
+                  : (grouped[st] || []).map((o) => (
+                      <div className="order-card" key={o.id} onClick={() => navigate(`/operations/${o.id}`)}>
+                        <div className="fw-semibold">#{o.orderId || o.orderNo}</div>
+                        <div className="small">{customerName(o)}</div>
+                        <div className="small text-muted">{o.storeId} · {money(o.orderTotal)}</div>
+                        {o.acceptedByWorkerId && <div className="small">{o.acceptedByWorkerId}</div>}
+                      </div>
+                    ))}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="panel">
@@ -337,7 +408,7 @@ export default function OperationsPage() {
                       <td>#{o.orderId || o.orderNo}</td>
                       <td>{o.storeId}</td>
                       <td>{customerName(o)}</td>
-                      <td><span className={`status-pill status-${o.status}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
+                      <td><span className={`status-pill status-${o.status}`}>{statusLabel(o.status)}</span></td>
                       <td>{o.acceptedByWorkerId || '—'}</td>
                       <td>{money(o.orderTotal)}</td>
                       <td>{o.paymentMethod || '—'}</td>

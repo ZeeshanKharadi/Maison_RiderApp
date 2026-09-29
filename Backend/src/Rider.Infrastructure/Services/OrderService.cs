@@ -406,7 +406,7 @@ namespace Rider.Infrastructure.Services
                 new RiderAvailabilityDto
                 {
                     isOnline = isOnline,
-                    currentOnlineStartedAt = startedAt
+                    currentOnlineStartedAt = AsUtc(startedAt)
                 });
         }
 
@@ -438,7 +438,7 @@ namespace Rider.Infrastructure.Services
                 open[i].EndReason = "OverlapClose";
             }
 
-            return open[0].StartedAt;
+            return AsUtc(open[0].StartedAt);
         }
 
         private async Task<DateTime?> GetOpenIntervalStartedAtAsync(Guid riderUserId)
@@ -449,8 +449,20 @@ namespace Rider.Infrastructure.Services
                 .OrderBy(i => i.StartedAt)
                 .Select(i => (DateTime?)i.StartedAt)
                 .FirstOrDefaultAsync();
-            return open;
+            return AsUtc(open);
         }
+
+        /// <summary>
+        /// EF/SQL returns UTC wall-clock as Unspecified; mark Utc so JSON emits `Z`
+        /// and clients do not treat the value as local time.
+        /// </summary>
+        private static DateTime AsUtc(DateTime value) =>
+            value.Kind == DateTimeKind.Utc
+                ? value
+                : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+        private static DateTime? AsUtc(DateTime? value) =>
+            value.HasValue ? AsUtc(value.Value) : null;
 
         public async Task<ApiResponse<RiderLocationDto>> UpdateRiderLocationAsync(
             Guid riderUserId, UpdateRiderLocationRequest request)

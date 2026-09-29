@@ -36,8 +36,14 @@ import {
   isCancelledBackendStatus,
   isLiveRiderActiveStatus,
 } from '../api/mappers/orderMapper';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import * as ordersRepository from '../repositories/ordersRepository';
 import type { OrderStatusPayload } from '../repositories/ordersRepository';
+import {
+  isUncertainMutationFailure,
+  reconcileStatusMutation,
+  resolveCodCashAfterServerCompleted,
+} from '../utils/mutationReconciliation';
 import * as authRepository from '../repositories/authRepository';
 import * as cancellationAckRepository from '../repositories/cancellationAckRepository';
 import { planCancellationAlerts } from '../utils/cancellationAlertPlan';
@@ -58,6 +64,8 @@ type CompleteResult = {
   ok: boolean;
   historyItem?: DeliveryHistoryItem;
   message?: string;
+  /** COD: false when completion confirmed but cash not verified on server. */
+  cashVerified?: boolean | null;
 };
 
 function isActiveJob(job: ActiveDeliveryJob): boolean {
@@ -125,6 +133,7 @@ export function RiderSessionProvider({
   children: React.ReactNode;
 }) {
   const { user, isLoading: authLoading } = useAuth();
+  const { isConnected } = useNetworkConnectivity();
   const [isOnline, setIsOnline] = useState(false);
   const [shiftStartedAt, setShiftStartedAt] = useState<Date | null>(null);
   const [activeJobs, setActiveJobs] = useState<ActiveDeliveryJob[]>([]);
@@ -473,6 +482,14 @@ export function RiderSessionProvider({
     if (!activeJob) return false;
     if (isCompletionStep(activeJob.state)) return false;
 
+    if (!isConnected) {
+      Alert.alert(
+        'No connection',
+        'Connect to the internet to update this delivery. Status changes are not queued offline.',
+      );
+      return false;
+    }
+
     const next = getNextState(activeJob.state);
     if (!next || next === 'DELIVERED' || next === 'COMPLETED') {
       return false;
@@ -480,6 +497,7 @@ export function RiderSessionProvider({
 
     const jobId = activeJob.id;
     const backendId = activeJob.backendId;
+    const previousStatus = activeJob.backendStatus;
     const backendStatus = backendStatusForAdvance(next);
     if (!backendStatus) return false;
 
@@ -497,8 +515,23 @@ export function RiderSessionProvider({
       status: backendStatus as OrderStatusPayload['status'],
     });
 
-    setLifecyclePending(false);
-    if (!result.ok) {
+    if (result.ok) {
+      setLifecyclePending(false);
+      const now = new Date().toISOString();
+      updateJobInList(jobId, prev => ({
+        ...advanceJob(prev),
+        backendStatus,
+        ...(isInProgressTransition(activeJob.state, next)
+          ? { pickedUpAt: now }
+          : {}),
+        pendingAction: null,
+        lastError: null,
+      }));
+      return true;
+    }
+
+    if (!isUncertainMutationFailure(result.error)) {
+      setLifecyclePending(false);
       setLastLifecycleError(result.error.message);
       updateJobInList(jobId, prev => ({
         ...prev,
@@ -509,18 +542,40 @@ export function RiderSessionProvider({
       return false;
     }
 
-    const now = new Date().toISOString();
+    const serverResult = await ordersRepository.fetchOrderById(backendId);
+    const reconcile = reconcileStatusMutation({
+      expectedBackendStatus: backendStatus,
+      previousBackendStatus: previousStatus,
+      serverOrder: serverResult.ok ? serverResult.data : null,
+      fetchFailed: !serverResult.ok,
+    });
+
+    setLifecyclePending(false);
     updateJobInList(jobId, prev => ({
-      ...advanceJob(prev),
-      backendStatus,
-      ...(isInProgressTransition(activeJob.state, next)
-        ? { pickedUpAt: now }
-        : {}),
+      ...prev,
       pendingAction: null,
-      lastError: null,
+      lastError: reconcile.kind === 'applied' ? null : reconcile.message,
     }));
-    return true;
-  }, [activeJob, updateJobInList]);
+
+    if (reconcile.kind === 'applied') {
+      await restoreActiveDeliveries({ suppressCancelAlert: true });
+      return true;
+    }
+
+    if (reconcile.kind === 'unchanged') {
+      Alert.alert('Update not confirmed', reconcile.message);
+      setLastLifecycleError(reconcile.message);
+      return false;
+    }
+
+    await restoreActiveDeliveries({ suppressCancelAlert: true });
+    Alert.alert(
+      reconcile.kind === 'unknown' ? 'Update status unknown' : 'Update failed',
+      reconcile.message,
+    );
+    setLastLifecycleError(reconcile.message);
+    return false;
+  }, [activeJob, isConnected, restoreActiveDeliveries, updateJobInList]);
 
   const setCashCollected = useCallback(
     (collected: boolean) => {
@@ -543,6 +598,17 @@ export function RiderSessionProvider({
     async (opts?: CompleteOpts): Promise<CompleteResult | null> => {
       if (!activeJob) return null;
       if (activeJob.state !== 'ARRIVED_AT_DESTINATION') return null;
+
+      if (!isConnected) {
+        Alert.alert(
+          'No connection',
+          'Connect to the internet to complete delivery and submit COD. Cash and status are not queued offline.',
+        );
+        return {
+          ok: false,
+          message: 'No connection — cash and status were not submitted.',
+        };
+      }
 
       if (activeJob.isCod) {
         const amount = opts?.cashCollectedAmount;
@@ -567,6 +633,7 @@ export function RiderSessionProvider({
 
       const jobId = activeJob.id;
       const backendId = activeJob.backendId;
+      const previousStatus = activeJob.backendStatus;
 
       setLifecyclePending(true);
       setLastLifecycleError(null);
@@ -586,9 +653,74 @@ export function RiderSessionProvider({
           : undefined,
       });
 
-      setLifecyclePending(false);
+      const finishLocalCompletion = (cash?: {
+        amount: number | null;
+        reason: string | null;
+        verified: boolean;
+        message?: string;
+      }) => {
+        const isCod = activeJob.isCod;
+        const amount =
+          cash != null
+            ? cash.amount
+            : isCod
+              ? opts?.cashCollectedAmount ?? null
+              : null;
+        const reason =
+          cash != null
+            ? cash.reason
+            : isCod
+              ? opts?.cashCollectedReason ?? null
+              : null;
+        const verified = cash != null ? cash.verified : true;
 
-      if (!result.ok) {
+        let delivered: ActiveDeliveryJob = {
+          ...activeJob,
+          cashCollected: isCod ? verified : activeJob.cashCollected,
+          cashCollectedAmount: isCod && verified ? amount : null,
+          cashCollectedReason: isCod && verified ? reason : null,
+          backendStatus: 'Completed',
+          pendingAction: null,
+          lastError: null,
+        };
+        if (isCod && !verified) {
+          delivered = {
+            ...delivered,
+            cashCollected: false,
+            cashCollectedAmount: null,
+            cashCollectedReason: null,
+          };
+        }
+        delivered = transitionJob(delivered, 'DELIVERED');
+        delivered = transitionJob(delivered, 'COMPLETED');
+        const timeline = buildDeliveryTimeline(delivered);
+        const historyItem = jobToHistoryItem(delivered, timeline);
+
+        setHistory(prev => [historyItem, ...prev]);
+        setStats(prev => applyCompletionToStats(prev, delivered));
+
+        setActiveJobs(prev => {
+          const remaining = prev.filter(j => j.id !== delivered.id);
+          const nextSelected = remaining.find(isActiveJob)?.id ?? null;
+          setSelectedJobId(nextSelected);
+          return remaining;
+        });
+
+        return {
+          historyItem,
+          ok: true as const,
+          cashVerified: isCod ? verified : null,
+          message: cash?.message,
+        };
+      };
+
+      if (result.ok) {
+        setLifecyclePending(false);
+        return finishLocalCompletion();
+      }
+
+      if (!isUncertainMutationFailure(result.error)) {
+        setLifecyclePending(false);
         setLastLifecycleError(result.error.message);
         updateJobInList(jobId, prev => ({
           ...prev,
@@ -599,34 +731,58 @@ export function RiderSessionProvider({
         return { ok: false, message: result.error.message };
       }
 
-      let delivered: ActiveDeliveryJob = {
-        ...activeJob,
-        cashCollected: activeJob.isCod ? true : activeJob.cashCollected,
-        cashCollectedAmount: opts?.cashCollectedAmount ?? null,
-        cashCollectedReason: opts?.cashCollectedReason ?? null,
-        backendStatus: 'Completed',
-        pendingAction: null,
-        lastError: null,
-      };
-      delivered = transitionJob(delivered, 'DELIVERED');
-      delivered = transitionJob(delivered, 'COMPLETED');
-      const timeline = buildDeliveryTimeline(delivered);
-      const historyItem = jobToHistoryItem(delivered, timeline);
-
-      setHistory(prev => [historyItem, ...prev]);
-      // Do not auto-credit wallet as withdrawable money — settlements are admin-managed.
-      setStats(prev => applyCompletionToStats(prev, delivered));
-
-      setActiveJobs(prev => {
-        const remaining = prev.filter(j => j.id !== delivered.id);
-        const nextSelected = remaining.find(isActiveJob)?.id ?? null;
-        setSelectedJobId(nextSelected);
-        return remaining;
+      const serverResult = await ordersRepository.fetchOrderById(backendId);
+      const reconcile = reconcileStatusMutation({
+        expectedBackendStatus: 'Completed',
+        previousBackendStatus: previousStatus,
+        serverOrder: serverResult.ok ? serverResult.data : null,
+        fetchFailed: !serverResult.ok,
       });
 
-      return { historyItem, ok: true };
+      setLifecyclePending(false);
+      updateJobInList(jobId, prev => ({
+        ...prev,
+        pendingAction: null,
+        lastError: reconcile.kind === 'applied' ? null : reconcile.message,
+      }));
+
+      if (reconcile.kind === 'applied') {
+        const cash = resolveCodCashAfterServerCompleted({
+          isCod: activeJob.isCod,
+          submittedAmount: opts?.cashCollectedAmount,
+          submittedReason: opts?.cashCollectedReason,
+          serverCashCollected: reconcile.order.cashCollectedAmount,
+          serverCashReason: reconcile.order.cashCollectedReason,
+        });
+        const finished = finishLocalCompletion({
+          amount: cash.amount,
+          reason: cash.reason,
+          verified: cash.verified,
+          message: cash.message,
+        });
+        if (!cash.verified || cash.matchedSubmitted === false) {
+          Alert.alert('Delivery completed', cash.message);
+        }
+        return finished;
+      }
+
+      if (reconcile.kind === 'unchanged') {
+        Alert.alert('Complete not confirmed', reconcile.message);
+        setLastLifecycleError(reconcile.message);
+        return { ok: false, message: reconcile.message };
+      }
+
+      await restoreActiveDeliveries({ suppressCancelAlert: true });
+      Alert.alert(
+        reconcile.kind === 'unknown'
+          ? 'Complete status unknown'
+          : 'Complete failed',
+        reconcile.message,
+      );
+      setLastLifecycleError(reconcile.message);
+      return { ok: false, message: reconcile.message };
     },
-    [activeJob, updateJobInList],
+    [activeJob, isConnected, restoreActiveDeliveries, updateJobInList],
   );
 
   const withdrawFunds = useCallback((_amount: number): boolean => {

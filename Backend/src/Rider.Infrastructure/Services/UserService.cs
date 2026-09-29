@@ -341,13 +341,20 @@ namespace Rider.Infrastructure.Services
             return new ApiResponse<string>(true, "Password Updated successfully", string.Empty);
         }
 
-        public async Task<ApiResponse<string>> Logout(string userId)
+        public async Task<ApiResponse<string>> Logout(string userId, string? deviceToken = null)
         {
             if (Guid.TryParse(userId, out var uid))
             {
                 var user = await _unitOfWork.UserRepository.GetByUserIdAsync(uid);
                 if (user != null)
                 {
+                    // Revoke this device's FCM registration while the request is still authenticated.
+                    if (!string.IsNullOrWhiteSpace(deviceToken))
+                    {
+                        await _unitOfWork.UserDeviceTokenRepository.RemoveAsync(
+                            uid, deviceToken.Trim());
+                    }
+
                     // Invalidate access JWTs (OnTokenValidated checks token_version).
                     user.TokenVersion += 1;
 
@@ -568,12 +575,18 @@ namespace Rider.Infrastructure.Services
             }
 
             // Earliest open interval only — never invent a start when none exists.
-            dto.currentOnlineStartedAt = await _unitOfWork.Context.Set<RiderAvailabilityInterval>()
+            // Mark Utc so JSON includes Z (SQL/EF returns Unspecified).
+            var started = await _unitOfWork.Context.Set<RiderAvailabilityInterval>()
                 .AsNoTracking()
                 .Where(i => i.UserId == user.UserId && i.EndedAt == null)
                 .OrderBy(i => i.StartedAt)
                 .Select(i => (DateTime?)i.StartedAt)
                 .FirstOrDefaultAsync();
+
+            if (started.HasValue && started.Value.Kind != DateTimeKind.Utc)
+                started = DateTime.SpecifyKind(started.Value, DateTimeKind.Utc);
+
+            dto.currentOnlineStartedAt = started;
             return dto;
         }
 

@@ -349,6 +349,36 @@ public class ReliabilityP1Tests : IDisposable
     }
 
     [Fact]
+    public async Task Logout_with_device_token_removes_registration_before_version_bump()
+    {
+        _db.UserDeviceTokens.Add(new UserDeviceToken
+        {
+            UserId = _riderA,
+            Token = "fcm-device-a",
+            Platform = "android",
+            UpdatedAt = DateTime.UtcNow
+        });
+        _db.UserDeviceTokens.Add(new UserDeviceToken
+        {
+            UserId = _riderB,
+            Token = "fcm-device-b",
+            Platform = "android",
+            UpdatedAt = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        var before = await _db.Users.AsNoTracking().FirstAsync(u => u.UserId == _riderA);
+        var logout = await _users.Logout(_riderA.ToString(), "fcm-device-a");
+        Assert.True(logout.status);
+
+        Assert.False(await _db.UserDeviceTokens.AnyAsync(t => t.Token == "fcm-device-a"));
+        Assert.True(await _db.UserDeviceTokens.AnyAsync(t => t.Token == "fcm-device-b"));
+
+        var after = await _db.Users.AsNoTracking().FirstAsync(u => u.UserId == _riderA);
+        Assert.Equal(before.TokenVersion + 1, after.TokenVersion);
+    }
+
+    [Fact]
     public async Task Change_password_bumps_token_version()
     {
         var login = await _users.UserLoginUsingEmailandPassword(new LoginModel
@@ -501,6 +531,12 @@ public class ReliabilityP1Tests : IDisposable
             => throw new NotImplementedException();
 
         public Task<ApiResponse<string>> MarkAllReadAsync(Guid userId)
+            => throw new NotImplementedException();
+
+        public Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId)
+            => throw new NotImplementedException();
+
+        public Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId)
             => throw new NotImplementedException();
 
         public Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(SendNotificationRequest request)

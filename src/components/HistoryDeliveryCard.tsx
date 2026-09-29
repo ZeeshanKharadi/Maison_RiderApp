@@ -167,9 +167,17 @@ function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
             label="COD status"
             value={
               item.isCod
-                ? item.cashCollected
-                  ? 'Cash collected'
-                  : 'COD — not collected'
+                ? item.cashVerified === false
+                  ? 'Completed — cash unverified'
+                  : item.cashCollected
+                    ? item.cashCollectedAmount != null
+                      ? `Cash collected · ${item.cashCollectedAmount}${
+                          item.cashCollectedReason
+                            ? ` · ${item.cashCollectedReason}`
+                            : ''
+                        }`
+                      : 'Cash collected'
+                    : 'COD — not collected'
                 : 'Prepaid'
             }
           />

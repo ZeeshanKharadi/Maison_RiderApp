@@ -8,6 +8,8 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<List<RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50);
         Task<ApiResponse<string>> MarkReadAsync(Guid userId, long notificationId);
         Task<ApiResponse<string>> MarkAllReadAsync(Guid userId);
+        Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId);
+        Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId);
 
         /// <summary>Order dispatched to a specific rider (AssignOrderToRider).</summary>
         Task NotifyDirectAssignmentAsync(

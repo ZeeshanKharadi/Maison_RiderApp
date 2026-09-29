@@ -15,6 +15,11 @@ import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import * as deviceTokenRepository from '../repositories/deviceTokenRepository';
 import * as notificationsRepository from '../repositories/notificationsRepository';
 import { navigationRef, navigate } from '../navigation/RootNavigation';
+import {
+  applyPushSyncIntent,
+  resolvePushSyncIntent,
+  shouldRegisterPushToken,
+} from '../utils/pushRegistration';
 
 const CHANNEL_ID = 'maison_orders';
 const messaging = getMessaging();
@@ -22,6 +27,16 @@ const messaging = getMessaging();
 class NotificationService {
   private fcmToken: string | null = null;
   private listenersSetup = false;
+  /** Mirrors Settings pushNotifications; gates register / token-refresh. */
+  private pushPreferred = true;
+
+  setPushPreferred(enabled: boolean): void {
+    this.pushPreferred = enabled;
+  }
+
+  getPushPreferred(): boolean {
+    return this.pushPreferred;
+  }
 
   async initializeChannels(): Promise<void> {
     if (Platform.OS !== 'android') return;
@@ -88,7 +103,15 @@ class NotificationService {
     }
   }
 
+  /**
+   * POST this device token when push is preferred.
+   * No-ops (success) when the rider turned push off.
+   */
   async saveTokensToBackend(): Promise<boolean> {
+    if (!shouldRegisterPushToken(this.pushPreferred)) {
+      return true;
+    }
+
     const token = await this.getFcmToken();
     if (!token) return false;
 
@@ -105,17 +128,66 @@ class NotificationService {
     return true;
   }
 
-  async removeTokenFromBackend(): Promise<void> {
+  /** Cached FCM token if known; otherwise fetches from Firebase. */
+  async peekFcmToken(): Promise<string | null> {
+    if (this.fcmToken) return this.fcmToken;
+    return this.getFcmToken();
+  }
+
+  /** DELETE this device token on the server. Keeps local FCM token for re-register. */
+  async removeTokenFromBackend(): Promise<boolean> {
     const token = this.fcmToken ?? (await this.getFcmToken());
-    if (!token) return;
-    await deviceTokenRepository.removeDeviceToken(token);
-    this.fcmToken = null;
+    if (!token) return true;
+
+    const result = await deviceTokenRepository.removeDeviceToken(token);
+    if (!result.ok) {
+      console.warn('[FCM] Backend removal failed:', result.error.message);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Apply Settings push switch to server registration for this device.
+   * Caller should persist the preference only when ok is true.
+   */
+  async applyPushPreference(
+    enabled: boolean,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const previous = this.pushPreferred;
+    const intent = resolvePushSyncIntent(enabled);
+    this.pushPreferred = enabled;
+
+    if (intent === 'register') {
+      const granted = await this.requestNotificationPermission();
+      if (!granted) {
+        this.pushPreferred = previous;
+        return {
+          ok: false,
+          message:
+            'Notification permission is off. Enable it in system Settings, then try again.',
+        };
+      }
+    }
+
+    const result = await applyPushSyncIntent({
+      intent,
+      register: () => this.saveTokensToBackend(),
+      unregister: () => this.removeTokenFromBackend(),
+    });
+
+    if (!result.ok) {
+      this.pushPreferred = previous;
+    }
+    return result;
   }
 
   async showNotification(
     remoteMessage: RemoteMessage,
     notificationId?: string,
   ): Promise<void> {
+    if (!this.pushPreferred) return;
+
     await this.initializeChannels();
 
     const title =
@@ -160,6 +232,8 @@ class NotificationService {
     body: string,
     data?: Record<string, string>,
   ): Promise<void> {
+    if (!this.pushPreferred) return;
+
     await this.initializeChannels();
     await notifee.displayNotification({
       id: `local_${Date.now()}`,
@@ -198,8 +272,12 @@ class NotificationService {
       queue.add(String(notificationId));
       setTimeout(() => queue.delete(String(notificationId)), 2000);
 
-      await this.showNotification(remoteMessage, String(notificationId));
-      options.incrementUnreadCount();
+      // Still handle order side-effects (e.g. cancel restore) when push is OFF;
+      // only the visible toast is gated by pushPreferred inside showNotification.
+      if (this.pushPreferred) {
+        await this.showNotification(remoteMessage, String(notificationId));
+        options.incrementUnreadCount();
+      }
 
       if (remoteMessage.data?.category === 'orders') {
         const data: Record<string, string> = {};
@@ -234,6 +312,7 @@ class NotificationService {
     });
 
     const unsubscribeTokenRefresh = onTokenRefresh(messaging, async () => {
+      if (!shouldRegisterPushToken(this.pushPreferred)) return;
       await this.saveTokensToBackend();
     });
 
@@ -260,6 +339,8 @@ class NotificationService {
   fetchNotifications = notificationsRepository.fetchNotifications;
   markNotificationRead = notificationsRepository.markNotificationRead;
   markAllNotificationsRead = notificationsRepository.markAllNotificationsRead;
+  deleteNotification = notificationsRepository.deleteNotification;
+  deleteAllNotifications = notificationsRepository.deleteAllNotifications;
 }
 
 const notificationService = new NotificationService();

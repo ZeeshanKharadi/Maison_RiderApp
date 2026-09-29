@@ -48,6 +48,24 @@ namespace Rider.Infrastructure.Services
             return Ok("", "All marked read");
         }
 
+        public async Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId)
+        {
+            var ok = await _unitOfWork.RiderNotificationRepository.SoftDeleteForUserAsync(
+                userId, notificationId);
+            if (!ok)
+                return Fail("Notification not found");
+
+            await _unitOfWork.SaveChangesAsync();
+            return Ok("", "Notification deleted");
+        }
+
+        public async Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId)
+        {
+            await _unitOfWork.RiderNotificationRepository.SoftDeleteAllForUserAsync(userId);
+            await _unitOfWork.SaveChangesAsync();
+            return Ok("", "All notifications deleted");
+        }
+
         public async Task NotifyDirectAssignmentAsync(
             Guid riderUserId, string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
         {

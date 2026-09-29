@@ -26,16 +26,25 @@ type Props = {
   onPress: (order: AvailableOrder) => void;
   onAccept: (order: AvailableOrder) => void | Promise<void>;
   onReject: (order: AvailableOrder) => void;
+  actionsDisabled?: boolean;
 };
 
-function OrderCardComponent({ order, onPress, onAccept, onReject }: Props) {
+function OrderCardComponent({
+  order,
+  onPress,
+  onAccept,
+  onReject,
+  actionsDisabled,
+}: Props) {
   const handleAccept = useCallback(() => {
+    if (actionsDisabled) return;
     onAccept(order);
-  }, [onAccept, order]);
+  }, [actionsDisabled, onAccept, order]);
 
   const handleReject = useCallback(() => {
+    if (actionsDisabled) return;
     onReject(order);
-  }, [onReject, order]);
+  }, [actionsDisabled, onReject, order]);
 
   return (
     <Pressable
@@ -127,6 +136,7 @@ function OrderCardComponent({ order, onPress, onAccept, onReject }: Props) {
             icon="check"
             variant="secondary"
             onPress={handleAccept}
+            disabled={actionsDisabled}
             style={styles.acceptBtn}
             accessibilityLabel={`Accept order ${order.id}`}
           />
@@ -134,6 +144,7 @@ function OrderCardComponent({ order, onPress, onAccept, onReject }: Props) {
             label="Reject"
             variant="outline"
             onPress={handleReject}
+            disabled={actionsDisabled}
             style={styles.rejectBtn}
             accessibilityLabel={`Reject order ${order.id}`}
           />

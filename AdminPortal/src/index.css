@@ -272,7 +272,7 @@ body {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(11, minmax(150px, 1fr));
+  grid-template-columns: repeat(14, minmax(150px, 1fr));
   gap: 12px;
   overflow-x: auto;
   padding-bottom: 8px;
@@ -284,6 +284,15 @@ body {
   border-radius: 12px;
   min-height: 280px;
   padding: 10px;
+}
+
+.board-col-action {
+  background: #fff8e1;
+  border-color: #ffcc80;
+}
+
+.board-col-action h6 {
+  color: #e65100;
 }
 
 .board-col h6 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }

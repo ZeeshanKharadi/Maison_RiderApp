@@ -884,6 +884,9 @@ public class SqlServerConcurrencyTests
             => throw new NotImplementedException();
         public Task<ApiResponse<string>> MarkReadAsync(Guid userId, long notificationId) => throw new NotImplementedException();
         public Task<ApiResponse<string>> MarkAllReadAsync(Guid userId) => throw new NotImplementedException();
+        public Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId)
+            => throw new NotImplementedException();
+        public Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId) => throw new NotImplementedException();
         public Task<ApiResponse<Rider.Application.DTOs.Notifications.SendNotificationResultDto>> SendTestToUserAsync(
             Rider.Application.DTOs.Notifications.SendNotificationRequest request) => throw new NotImplementedException();
         public Task<ApiResponse<Rider.Application.DTOs.Notifications.SendNotificationResultDto>> BroadcastTestAsync(

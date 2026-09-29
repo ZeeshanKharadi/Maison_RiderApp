@@ -120,10 +120,23 @@ jest.mock('react-native-maps', () => {
   return { __esModule: true, default: Mock, Marker: View, Polyline: View };
 });
 
-jest.mock('react-native-config', () => ({
-  __esModule: true,
-  default: {},
-}));
+jest.mock('@react-native-community/netinfo', () => {
+  const listeners = new Set();
+  return {
+    __esModule: true,
+    default: {
+      fetch: jest.fn(async () => ({
+        isConnected: true,
+        isInternetReachable: true,
+        type: 'wifi',
+      })),
+      addEventListener: jest.fn(listener => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+    },
+  };
+});
 
 jest.mock('react-native-linear-gradient', () => {
   const React = require('react');

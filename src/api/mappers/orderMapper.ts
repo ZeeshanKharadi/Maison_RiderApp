@@ -277,6 +277,11 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     backendId: dto.id,
     externalOrderId: dto.orderId,
     expectedCash,
+    cashCollectedAmount:
+      dto.cashCollected != null && Number.isFinite(Number(dto.cashCollected))
+        ? Number(dto.cashCollected)
+        : null,
+    cashCollectedReason: (dto.cashCollectedReason ?? '').trim() || null,
     backendStatus: dto.status ?? undefined,
     acceptedAt: dto.acceptedAt ?? undefined,
     pickedUpAt: dto.pickedUpAt ?? undefined,

@@ -4,8 +4,10 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
+import { Alert } from 'react-native';
 import * as accountRepository from '../repositories/accountRepository';
 import * as authRepository from '../repositories/authRepository';
 import * as notificationsRepository from '../repositories/notificationsRepository';
@@ -15,13 +17,13 @@ import {
   AppSettings,
   DEFAULT_PROFILE,
   DEFAULT_SETTINGS,
-  MOCK_DOCUMENTS,
   NotificationCategory,
-  RiderDocument,
   RiderProfile,
 } from '../data/account';
 import type { User } from '../services/AuthContext';
+import notificationService from '../services/NotificationService';
 import { buildRiderProfilePatchBody } from '../utils/riderProfilePatch';
+import { shouldRegisterPushToken } from '../utils/pushRegistration';
 
 function profileFromAuthUser(
   profile: RiderProfile,
@@ -48,7 +50,6 @@ export type UpdateProfileResult = {
 
 type AccountContextValue = {
   profile: RiderProfile;
-  documents: RiderDocument[];
   settings: AppSettings;
   notifications: AppNotification[];
   unreadCount: number;
@@ -56,8 +57,8 @@ type AccountContextValue = {
   updateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
-  deleteNotification: (id: string) => void;
-  clearAllNotifications: () => void;
+  deleteNotification: (id: string) => Promise<void>;
+  clearAllNotifications: () => Promise<void>;
   filterNotifications: (
     query: string,
     category: NotificationCategory | 'all',
@@ -75,7 +76,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [ready, setReady] = useState(false);
-  const documents = MOCK_DOCUMENTS;
+  const clearAllInFlightRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -88,7 +89,10 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       // Prefer server auth user over stale local profile for identity fields.
       const base = p.ok ? p.data : DEFAULT_PROFILE;
       setProfile(profileFromAuthUser(base, user));
-      if (s.ok) setSettings(s.data);
+      if (s.ok) {
+        setSettings(s.data);
+        notificationService.setPushPreferred(s.data.pushNotifications);
+      }
 
       if (user) {
         const n = await notificationsRepository.fetchNotifications();
@@ -223,10 +227,43 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   const updateSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
+      if (
+        patch.pushNotifications !== undefined &&
+        patch.pushNotifications !== settings.pushNotifications
+      ) {
+        const pushResult = await notificationService.applyPushPreference(
+          patch.pushNotifications,
+        );
+        if (!pushResult.ok) {
+          Alert.alert(
+            'Push notifications',
+            pushResult.message ||
+              'Could not update push registration on the server.',
+          );
+          return false;
+        }
+      }
+
       const next = { ...settings, ...patch };
       const result = await accountRepository.saveSettings(next);
-      if (!result.ok) return false;
+      if (!result.ok) {
+        // Server push already changed — keep preference aligned with intent.
+        if (patch.pushNotifications !== undefined) {
+          notificationService.setPushPreferred(settings.pushNotifications);
+          if (shouldRegisterPushToken(settings.pushNotifications)) {
+            void notificationService.saveTokensToBackend();
+          } else {
+            void notificationService.removeTokenFromBackend();
+          }
+        }
+        Alert.alert(
+          'Settings',
+          result.error.message || 'Could not save settings on this device.',
+        );
+        return false;
+      }
       setSettings(result.data);
+      notificationService.setPushPreferred(result.data.pushNotifications);
       if (patch.language) {
         const p = await accountRepository.saveProfile({
           ...profile,
@@ -238,11 +275,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     },
     [settings, profile],
   );
-
-  const persistNotifications = useCallback(async (next: AppNotification[]) => {
-    setNotifications(next);
-    await accountRepository.saveNotifications(next);
-  }, []);
 
   const syncNotifications = useCallback(async (items: AppNotification[]) => {
     setNotifications(items);
@@ -274,16 +306,73 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   }, [notifications, syncNotifications]);
 
   const deleteNotification = useCallback(
-    (id: string) => {
-      const next = notifications.filter(n => n.id !== id);
-      void persistNotifications(next);
+    async (id: string) => {
+      let snapshot: AppNotification[] = [];
+      setNotifications(prev => {
+        snapshot = prev;
+        return prev.filter(n => n.id !== id);
+      });
+
+      const result = await notificationsRepository.deleteNotification(id);
+      if (result.ok) {
+        setNotifications(current => {
+          const persist = current.filter(n => n.id !== id);
+          void accountRepository.saveNotifications(persist);
+          return persist;
+        });
+        return;
+      }
+
+      const refreshed = await notificationsRepository.fetchNotifications();
+      if (refreshed.ok) {
+        await syncNotifications(refreshed.data);
+      } else {
+        setNotifications(snapshot);
+      }
+
+      Alert.alert(
+        'Delete failed',
+        result.error.message ||
+          'Could not delete on the server. The notification is still in your inbox.',
+      );
     },
-    [notifications, persistNotifications],
+    [syncNotifications],
   );
 
-  const clearAllNotifications = useCallback(() => {
-    void persistNotifications([]);
-  }, [persistNotifications]);
+  const clearAllNotifications = useCallback(async () => {
+    if (clearAllInFlightRef.current) return;
+    clearAllInFlightRef.current = true;
+
+    let snapshot: AppNotification[] = [];
+    try {
+      setNotifications(prev => {
+        snapshot = prev;
+        return [];
+      });
+
+      const result = await notificationsRepository.deleteAllNotifications();
+      if (result.ok) {
+        setNotifications([]);
+        await accountRepository.saveNotifications([]);
+        return;
+      }
+
+      const refreshed = await notificationsRepository.fetchNotifications();
+      if (refreshed.ok) {
+        await syncNotifications(refreshed.data);
+      } else {
+        setNotifications(snapshot);
+      }
+
+      Alert.alert(
+        'Clear all failed',
+        result.error.message ||
+          'Could not clear notifications on the server. Your inbox was not cleared.',
+      );
+    } finally {
+      clearAllInFlightRef.current = false;
+    }
+  }, [syncNotifications]);
 
   const filterNotifications = useCallback(
     (query: string, category: NotificationCategory | 'all') => {
@@ -314,7 +403,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       profile,
-      documents,
       settings,
       notifications,
       unreadCount,
@@ -331,7 +419,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       profile,
-      documents,
       settings,
       notifications,
       unreadCount,
