@@ -3,7 +3,7 @@ import { apiEnvelope } from '../api/httpClient';
 import {
   ApiRiderNotification,
   mapApiNotification,
-} from '../mappers/notificationMapper';
+} from '../api/mappers/notificationMapper';
 import { AppNotification } from '../data/account';
 import { ApiResult, fail, ok } from './types';
 
@@ -54,6 +54,44 @@ export async function markAllNotificationsRead(): Promise<ApiResult<void>> {
     });
     if (!envelope.status) {
       return fail('MARK_READ_FAILED', envelope.message || 'Could not mark all read');
+    }
+    return ok(undefined);
+  } catch (err) {
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach notifications API',
+    );
+  }
+}
+
+export async function deleteNotification(
+  id: string,
+): Promise<ApiResult<void>> {
+  try {
+    const envelope = await apiEnvelope<string>(
+      API_PATHS.notificationDelete(id),
+      { method: 'DELETE', auth: true },
+    );
+    if (!envelope.status) {
+      return fail('DELETE_FAILED', envelope.message || 'Could not delete notification');
+    }
+    return ok(undefined);
+  } catch (err) {
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach notifications API',
+    );
+  }
+}
+
+export async function deleteAllNotifications(): Promise<ApiResult<void>> {
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.notificationsDeleteAll, {
+      method: 'DELETE',
+      auth: true,
+    });
+    if (!envelope.status) {
+      return fail('DELETE_FAILED', envelope.message || 'Could not clear notifications');
     }
     return ok(undefined);
   } catch (err) {

@@ -13,10 +13,12 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<string>> UpdatePassword(string userId, string password);
         Task<ApiResponse<string>> UpdatePasswordWithTokenAsync(UpdatePassword req);
         Task<ApiResponse<string>> UpdatePasswordUsingOldPassword(ChangePasswordRequest req);
-        Task<ApiResponse<string>> Logout(string userId);
+        Task<ApiResponse<string>> Logout(string userId, string? deviceToken = null);
         Task<ApiResponse<GetUserResponse>> GetCurrentUser(string userId);
         Task<ApiResponse<LoginUser>> RefreshToken(RefreshTokenRequest req);
         Task<ApiResponse<GetUserResponse>> UpdateProfile(UpdateProfileRequest req, string userId);
+        /// <summary>Rider self-service patch; userId must come from JWT NameIdentifier.</summary>
+        Task<ApiResponse<GetUserResponse>> PatchRiderProfileAsync(string jwtUserId, PatchRiderProfileRequest req);
         Task<ApiResponse<bool>> ValidateToken(string userId);
     }
 }

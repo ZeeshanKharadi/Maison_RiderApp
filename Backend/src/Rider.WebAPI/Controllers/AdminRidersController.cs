@@ -31,6 +31,16 @@ namespace Rider.WebAPI.Controllers
             return Ok(result);
         }
 
+        [HttpGet("live-map")]
+        public async Task<IActionResult> LiveMap([FromQuery] string storeId)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null)
+                return error;
+
+            return Ok(await _admin.ListLiveMapRidersAsync(actor, storeId));
+        }
+
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> Get(Guid id)
         {

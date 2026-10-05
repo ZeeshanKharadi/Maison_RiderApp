@@ -8,7 +8,11 @@ export type AuthUser = {
   name: string;
   email: string;
   phone?: string;
+  emergencyContact?: string;
+  emergencyContactName?: string;
   isAvailableOnline?: boolean;
+  /** ISO UTC start of open online interval when online. */
+  currentOnlineStartedAt?: string | null;
 };
 
 type ApiUserData = {
@@ -17,7 +21,10 @@ type ApiUserData = {
   name?: string;
   email?: string;
   phoneNumber?: string;
+  emergencyContactNumber?: string;
+  emergencyContactName?: string;
   isAvailableOnline?: boolean;
+  currentOnlineStartedAt?: string | null;
 };
 
 type LoginUserData = {
@@ -32,7 +39,10 @@ function mapApiUser(dto: ApiUserData | undefined, fallbackId: string): AuthUser 
     name: dto?.name?.trim() || 'Rider',
     email: dto?.email?.trim() || '',
     phone: dto?.phoneNumber?.trim() || '',
+    emergencyContact: dto?.emergencyContactNumber?.trim() || '',
+    emergencyContactName: dto?.emergencyContactName?.trim() || '',
     isAvailableOnline: dto?.isAvailableOnline,
+    currentOnlineStartedAt: dto?.currentOnlineStartedAt ?? null,
   };
 }
 
@@ -77,7 +87,7 @@ export async function login(
   }
 }
 
-/** Loads latest user row from DB (name/email/phone). */
+/** Loads latest user row from DB (name/email/phone/emergency). */
 export async function fetchCurrentUser(): Promise<ApiResult<AuthUser>> {
   try {
     const envelope = await apiEnvelope<ApiUserData>(API_PATHS.currentUser, {
@@ -103,15 +113,71 @@ export async function fetchCurrentUser(): Promise<ApiResult<AuthUser>> {
   }
 }
 
-/** Reference: call backend logout before clearing local session. */
-export async function logout(): Promise<void> {
+export type PatchRiderProfileInput = {
+  phoneNumber?: string;
+  emergencyContactNumber?: string;
+  emergencyContactName?: string;
+};
+
+/** PATCH /api/User/profile — JWT identity only; phone + emergency contact. */
+export async function patchRiderProfile(
+  patch: PatchRiderProfileInput,
+): Promise<ApiResult<AuthUser>> {
   try {
-    await apiEnvelope<string>(API_PATHS.logout, {
+    const envelope = await apiEnvelope<ApiUserData>(API_PATHS.patchProfile, {
+      method: 'PATCH',
+      auth: true,
+      body: patch,
+    });
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'PROFILE_UPDATE_FAILED',
+        envelope.message || 'Could not update profile',
+      );
+    }
+
+    return ok(
+      mapApiUser(envelope.Data, envelope.Data.employeeId || ''),
+      envelope.message || 'Profile updated',
+    );
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return fail(err.code, err.message);
+    }
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach profile API',
+    );
+  }
+}
+
+/** Reference: call backend logout before clearing local session. */
+export async function logout(opts?: {
+  deviceToken?: string;
+}): Promise<ApiResult<void>> {
+  try {
+    const body =
+      opts?.deviceToken && opts.deviceToken.trim()
+        ? { deviceToken: opts.deviceToken.trim() }
+        : undefined;
+    const envelope = await apiEnvelope<string>(API_PATHS.logout, {
       method: 'POST',
       auth: true,
+      body,
     });
-  } catch {
-    // Local logout proceeds even if API is unreachable.
+    if (!envelope.status) {
+      return fail(
+        'LOGOUT_FAILED',
+        envelope.message || 'Server logout failed',
+      );
+    }
+    return ok(undefined);
+  } catch (err) {
+    return fail(
+      'NETWORK',
+      err instanceof Error ? err.message : 'Unable to reach logout API',
+    );
   }
 }
 

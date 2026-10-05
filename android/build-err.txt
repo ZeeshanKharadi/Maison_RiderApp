@@ -1,0 +1,33 @@
+C:\Maison_RiderApp\node_modules\@notifee\react-native\android\src\main\java\io\invertase\notifee\NotifeeApiModule.java:42: warning: [removal] onCatalystInstanceDestroy() in NativeModule has been deprecated and marked for removal
+  public void onCatalystInstanceDestroy() {
+              ^
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+1 warning
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:buildCMakeDebug[arm64-v8a]'.
+> com.android.ide.common.process.ProcessException: ninja: Entering directory `C:\Maison_RiderApp\android\app\.cxx\Debug\1905u464\arm64-v8a'
+  [0/2] Re-checking globbed directories...
+  
+  C++ build system [build] failed while executing:
+      @echo off
+      "C:\\Users\\UmerAhsan\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
+        -C ^
+        "C:\\Maison_RiderApp\\android\\app\\.cxx\\Debug\\1905u464\\arm64-v8a" ^
+        appmodules ^
+        react_codegen_rngesturehandler_codegen ^
+        react_codegen_rnscreens ^
+        react_codegen_safeareacontext
+    from C:\Maison_RiderApp\android\app
+  ninja: error: Stat(C:/Users/UmerAhsan/AppData/Local/Temp/cursor-sandbox-cache/53cffcf07915d2457022f9c5d07dc71f/gradle/caches/9.3.1/transforms/6a10fef6cd8472b44c3da6bb0d167d42/workspace/transformed/react-android-0.86.0-debug/prefab/modules/reactnative/libs/android.arm64-v8a/libreactnative.so): Filename longer than 260 characters
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 6m 38s

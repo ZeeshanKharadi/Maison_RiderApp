@@ -5,6 +5,7 @@ import {
   LogLevel,
 } from '@microsoft/signalr';
 import { getToken } from '../api/client';
+import { apiBase } from '../api/apiBase';
 
 export type OrderChangedPayload = {
   assignedOrderId: number;
@@ -28,6 +29,18 @@ export type AdminNotificationCreatedPayload = {
   at?: string;
 };
 
+export type RiderLocationChangedPayload = {
+  riderUserId: string;
+  storeId?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationUpdatedAt?: string | null;
+  activeOrderCount?: number;
+  deliveryStatus?: string | null;
+  cleared?: boolean;
+  at?: string;
+};
+
 type AnyHandler = (...args: unknown[]) => void;
 
 let connection: HubConnection | null = null;
@@ -35,8 +48,7 @@ let startPromise: Promise<HubConnection> | null = null;
 const reconnectListeners = new Set<() => void>();
 
 function hubUrl(): string {
-  const env = import.meta.env.VITE_API_URL as string | undefined;
-  const base = env && env.length > 0 ? env.replace(/\/$/, '') : '';
+  const base = apiBase();
   return `${base}/hubs/admin`;
 }
 
@@ -146,9 +158,16 @@ export function subscribeAdminNotificationCreated(
   return subscribeEvent('AdminNotificationCreated', handler as AnyHandler);
 }
 
+export function subscribeRiderLocationChanged(
+  handler: (payload: RiderLocationChangedPayload) => void,
+): () => void {
+  return subscribeEvent('RiderLocationChanged', handler as AnyHandler);
+}
+
 /**
- * Optional store group join. Server already adds Hoffice + claim storeId on connect.
- * Call when filtering a store not on the JWT claims.
+ * Optional store group join for HO admins filtering a specific store.
+ * Managers are already limited to their JWT storeId on the server;
+ * JoinStore(otherStoreId) is denied server-side.
  */
 export async function joinStore(storeId: string): Promise<void> {
   if (!storeId.trim()) return;

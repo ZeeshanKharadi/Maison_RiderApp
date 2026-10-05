@@ -76,6 +76,11 @@ public class FinanceAcceptanceTests : IDisposable
             crypto,
             new PasswordVerifier(crypto),
             new NoOpOps(),
+            new NoOpRiderNotifications(),
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Location:StaleSeconds"] = "90"
+            }).Build(),
             NullLogger<AdminService>.Instance);
 
         _finance = new RiderFinanceService(uow);
@@ -374,6 +379,10 @@ public class FinanceAcceptanceTests : IDisposable
             => Task.CompletedTask;
         public Task PublishAdminNotificationCreatedAsync(string? storeId, long notificationId, string title, CancellationToken ct = default)
             => Task.CompletedTask;
+        public Task PublishRiderLocationChangedAsync(
+            string? storeId, Guid riderUserId, double? latitude, double? longitude, DateTime? locationUpdatedAt,
+            int activeOrderCount, string? deliveryStatus, bool cleared, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 
     private sealed class NoOpRiderNotifications : IRiderNotificationService
@@ -382,10 +391,16 @@ public class FinanceAcceptanceTests : IDisposable
             => Task.CompletedTask;
         public Task NotifyOpenPoolOrderAsync(string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
             => Task.CompletedTask;
+        public Task NotifyOrderCancelledAsync(
+            Guid riderUserId, string orderId, long? assignedOrderId, string? cancelReason)
+            => Task.CompletedTask;
         public Task<ApiResponse<List<Rider.Application.DTOs.Notifications.RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50)
             => throw new NotImplementedException();
         public Task<ApiResponse<string>> MarkReadAsync(Guid userId, long notificationId) => throw new NotImplementedException();
         public Task<ApiResponse<string>> MarkAllReadAsync(Guid userId) => throw new NotImplementedException();
+        public Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId)
+            => throw new NotImplementedException();
+        public Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId) => throw new NotImplementedException();
         public Task<ApiResponse<Rider.Application.DTOs.Notifications.SendNotificationResultDto>> SendTestToUserAsync(
             Rider.Application.DTOs.Notifications.SendNotificationRequest request) => throw new NotImplementedException();
         public Task<ApiResponse<Rider.Application.DTOs.Notifications.SendNotificationResultDto>> BroadcastTestAsync(

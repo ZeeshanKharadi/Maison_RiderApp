@@ -53,6 +53,12 @@ namespace Rider.Domain.Entities
         public string? PhoneNumber { get; set; }
 
         [MaxLength(50)]
+        public string? EmergencyContactNumber { get; set; }
+
+        [MaxLength(200)]
+        public string? EmergencyContactName { get; set; }
+
+        [MaxLength(50)]
         public string? Cnic { get; set; }
 
         [MaxLength(100)]
@@ -69,6 +75,13 @@ namespace Rider.Domain.Entities
         public string? StoreId { get; set; }
 
         public DateTime? LastSeenAt { get; set; }
+
+        /// <summary>Last reported rider GPS (WGS84). Cleared when no active deliveries / logout.</summary>
+        public double? LastLatitude { get; set; }
+
+        public double? LastLongitude { get; set; }
+
+        public DateTime? LocationUpdatedAt { get; set; }
 
         /// <summary>Incremented on password reset to invalidate existing access JWTs.</summary>
         public int TokenVersion { get; set; }

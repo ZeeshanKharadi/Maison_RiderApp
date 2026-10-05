@@ -6,18 +6,26 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as accountRepository from '../repositories/accountRepository';
 import * as authRepository from '../repositories/authRepository';
 import { clearTokens, getAccessToken } from '../api/tokenStorage';
 import notificationService from './NotificationService';
+import { stopNativeLocationTracking } from './locationTrackingNative';
 import { loginUser } from './UserService';
+import { shouldRegisterPushToken } from '../utils/pushRegistration';
+import { resolveLogoutPushCleanupStatus } from '../utils/logoutCleanup';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   phone?: string;
+  emergencyContact?: string;
+  emergencyContactName?: string;
   isAvailableOnline?: boolean;
+  currentOnlineStartedAt?: string | null;
 }
 
 interface AuthContextType {
@@ -39,6 +47,20 @@ function serializeUser(user: User): string {
   return JSON.stringify(user);
 }
 
+/** Load persisted push preference and sync this device’s server token. */
+async function syncPushRegistrationFromStoredPreference(): Promise<void> {
+  const loaded = await accountRepository.loadSettings();
+  const enabled = loaded.ok
+    ? loaded.data.pushNotifications
+    : true;
+  notificationService.setPushPreferred(enabled);
+  if (shouldRegisterPushToken(enabled)) {
+    await notificationService.saveTokensToBackend();
+  } else {
+    await notificationService.removeTokenFromBackend();
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -56,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await authRepository.fetchCurrentUser();
     if (result.ok) {
       await persistUser(result.data);
-      void notificationService.saveTokensToBackend();
+      void syncPushRegistrationFromStoredPreference();
     }
   }, [persistUser]);
 
@@ -89,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (result.status && result.data) {
         const userData: User = JSON.parse(result.data);
         await persistUser(userData);
-        void notificationService.saveTokensToBackend();
+        void syncPushRegistrationFromStoredPreference();
         return { status: true };
       }
       return { status: false, message: result.message };
@@ -99,14 +121,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await authRepository.logout();
+      await stopNativeLocationTracking();
     } catch {
-      // Reference: still clear local session if API fails.
+      /* ignore */
     }
-    await notificationService.removeTokenFromBackend();
+
+    // Revoke this device's FCM registration while the JWT is still valid.
+    const deviceToken = await notificationService.peekFcmToken();
+    let tokenRemoved = deviceToken == null;
+
+    if (deviceToken) {
+      tokenRemoved = await notificationService.removeTokenFromBackend();
+    }
+
+    // Same authenticated logout can also revoke the token if DELETE failed.
+    const serverLogout = await authRepository.logout(
+      !tokenRemoved && deviceToken
+        ? { deviceToken }
+        : undefined,
+    );
+    if (serverLogout.ok && deviceToken && !tokenRemoved) {
+      tokenRemoved = true;
+    }
+
+    // Local sign-out always proceeds.
     setUser(null);
     await AsyncStorage.removeItem('user');
     await clearTokens();
+
+    const cleanup = resolveLogoutPushCleanupStatus({
+      hadDeviceToken: deviceToken != null,
+      removed: tokenRemoved,
+    });
+    if (cleanup.kind === 'failed') {
+      Alert.alert('Signed out', cleanup.message);
+    }
   }, []);
 
   const value = useMemo(

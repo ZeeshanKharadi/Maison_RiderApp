@@ -5,6 +5,7 @@ import TabNavigator from './TabNavigator';
 import SideMenu from '../components/SideMenu';
 import { NotificationHandler } from '../components/NotificationHandler';
 import { SideMenuProvider } from '../context/SideMenuContext';
+import { NetworkConnectivityProvider } from '../connectivity/NetworkConnectivityContext';
 import { RiderSessionProvider } from '../context/RiderSessionContext';
 import { AvailableOrdersProvider } from '../context/AvailableOrdersContext';
 import { AccountProvider } from '../context/AccountContext';
@@ -25,7 +26,7 @@ export type MainStackParamList = {
   Settings: undefined;
   Help: { section?: 'faq' | 'support' | 'report' | 'feedback' | 'privacy' | 'terms' } | undefined;
   OrderDetails: { orderId: string; backendId?: number };
-  ActiveDelivery: undefined;
+  ActiveDelivery: { openReportIssue?: boolean } | undefined;
 };
 
 const Stack = createStackNavigator<MainStackParamList>();
@@ -38,33 +39,35 @@ function RiderNotificationPoller() {
 export default function MainNavigator() {
   return (
     <SideMenuProvider>
-      <RiderSessionProvider>
-        <AvailableOrdersProvider>
-          <AccountProvider>
-            <NotificationHandler />
-            <RiderNotificationPoller />
-            <View style={{ flex: 1 }}>
-              <Stack.Navigator screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="Tabs" component={TabNavigator} />
-                <Stack.Screen name="RouteHistory" component={HistoryScreen} />
-                <Stack.Screen name="Performance" component={PerformanceScreen} />
-                <Stack.Screen
-                  name="Notifications"
-                  component={NotificationsScreen}
-                />
-                <Stack.Screen name="Settings" component={SettingsScreen} />
-                <Stack.Screen name="Help" component={HelpScreen} />
-                <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
-                <Stack.Screen
-                  name="ActiveDelivery"
-                  component={ActiveDeliveryScreen}
-                />
-              </Stack.Navigator>
-              <SideMenu />
-            </View>
-          </AccountProvider>
-        </AvailableOrdersProvider>
-      </RiderSessionProvider>
+      <NetworkConnectivityProvider>
+        <RiderSessionProvider>
+          <AvailableOrdersProvider>
+            <AccountProvider>
+              <NotificationHandler />
+              <RiderNotificationPoller />
+              <View style={{ flex: 1 }}>
+                <Stack.Navigator screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="Tabs" component={TabNavigator} />
+                  <Stack.Screen name="RouteHistory" component={HistoryScreen} />
+                  <Stack.Screen name="Performance" component={PerformanceScreen} />
+                  <Stack.Screen
+                    name="Notifications"
+                    component={NotificationsScreen}
+                  />
+                  <Stack.Screen name="Settings" component={SettingsScreen} />
+                  <Stack.Screen name="Help" component={HelpScreen} />
+                  <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
+                  <Stack.Screen
+                    name="ActiveDelivery"
+                    component={ActiveDeliveryScreen}
+                  />
+                </Stack.Navigator>
+                <SideMenu />
+              </View>
+            </AccountProvider>
+          </AvailableOrdersProvider>
+        </RiderSessionProvider>
+      </NetworkConnectivityProvider>
     </SideMenuProvider>
   );
 }

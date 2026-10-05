@@ -14,6 +14,24 @@ namespace Rider.Application.DTOs.Admin
         public bool IsManager => Roles.Contains("Manager");
     }
 
+    public class AdminLiveRiderDto
+    {
+        public Guid riderUserId { get; set; }
+        public string workerId { get; set; }
+        public string name { get; set; }
+        public string storeId { get; set; }
+        public string storeName { get; set; }
+        public bool isOnline { get; set; }
+        public int activeOrderCount { get; set; }
+        public string deliveryStatus { get; set; }
+        public double? latitude { get; set; }
+        public double? longitude { get; set; }
+        public DateTime? locationUpdatedAt { get; set; }
+        public bool hasLocation { get; set; }
+        public bool isStale { get; set; }
+        public int staleAfterSeconds { get; set; }
+    }
+
     public class AdminRiderDto
     {
         public Guid userId { get; set; }
@@ -107,6 +125,32 @@ namespace Rider.Application.DTOs.Admin
         public string orderTime { get; set; }
         public string batchTime { get; set; }
         public List<AssignOrderItemDto> items { get; set; } = new();
+        public List<AdminOrderLifecycleEventDto> statusHistory { get; set; } = new();
+        public List<AdminDeliveryIssueReportDto> issueReports { get; set; } = new();
+        public OrderFailureDto? failure { get; set; }
+
+        /// <summary>Collected minus handed over (0 when fully reconciled or no collection).</summary>
+        public decimal cashOutstandingToStore { get; set; }
+
+        /// <summary>True when Failed→Requeue is blocked because CashCollected &gt; 0 (handover does not unlock).</summary>
+        public bool requeueBlockedByUnreconciledCash { get; set; }
+
+        public string? requeueBlockReason { get; set; }
+    }
+
+    public class FailureDecisionRequest
+    {
+        public string? note { get; set; }
+        public string? requestId { get; set; }
+    }
+
+    public class AdminOrderLifecycleEventDto
+    {
+        public string status { get; set; }
+        public string previousStatus { get; set; }
+        public string actorType { get; set; }
+        public string reason { get; set; }
+        public DateTime at { get; set; }
     }
 
     public class AdminOrderQuery
@@ -266,5 +310,86 @@ namespace Rider.Application.DTOs.Admin
         public int cancelledToday { get; set; }
         public int onlineRiders { get; set; }
         public decimal cashToCollectToday { get; set; }
+    }
+
+    public class AdminOrderRejectionDto
+    {
+        public long id { get; set; }
+        public long assignedOrderId { get; set; }
+        public string orderId { get; set; }
+        public string orderNo { get; set; }
+        public string storeId { get; set; }
+        public Guid riderUserId { get; set; }
+        public string riderWorkerId { get; set; }
+        public string riderName { get; set; }
+        public string reason { get; set; }
+        public bool isDirectAssignment { get; set; }
+        public DateTime createdAt { get; set; }
+    }
+
+    public class AdminDeliveryIssueReportDto
+    {
+        public long id { get; set; }
+        public long assignedOrderId { get; set; }
+        public string orderId { get; set; }
+        public string orderNo { get; set; }
+        public string storeId { get; set; }
+        public string orderStatus { get; set; }
+        public Guid riderUserId { get; set; }
+        public string riderWorkerId { get; set; }
+        public string riderName { get; set; }
+        public string reasonCode { get; set; }
+        public string reasonLabel { get; set; }
+        public string note { get; set; }
+        public string status { get; set; }
+        public string statusLabel { get; set; }
+        public string internalNote { get; set; }
+        public Guid? acknowledgedByUserId { get; set; }
+        public string acknowledgedByName { get; set; }
+        public DateTime? acknowledgedAt { get; set; }
+        public Guid? closedByUserId { get; set; }
+        public string closedByName { get; set; }
+        public DateTime? closedAt { get; set; }
+        public DateTime createdAt { get; set; }
+        public DateTime updatedAt { get; set; }
+        /// <summary>Base64 RowVersion for optimistic concurrency.</summary>
+        public string rowVersion { get; set; }
+        public List<AdminDeliveryIssueTriageEventDto> history { get; set; } = new();
+    }
+
+    /// <summary>Paged delivery-issue list for Live Ops open queue / history.</summary>
+    public class AdminDeliveryIssueReportPageDto
+    {
+        public List<AdminDeliveryIssueReportDto> items { get; set; } = new();
+        public int page { get; set; }
+        public int pageSize { get; set; }
+        public int totalCount { get; set; }
+        public bool hasMore { get; set; }
+        /// <summary>True when CreatedAt was constrained by from/to (Closed / historical).</summary>
+        public bool dateFilterApplied { get; set; }
+    }
+
+    public class AdminDeliveryIssueTriageEventDto
+    {
+        public long id { get; set; }
+        public string action { get; set; }
+        public string previousStatus { get; set; }
+        public string newStatus { get; set; }
+        public string actorType { get; set; }
+        public Guid? actorUserId { get; set; }
+        public string actorName { get; set; }
+        public string actorWorkerId { get; set; }
+        public string internalNote { get; set; }
+        public DateTime at { get; set; }
+    }
+
+    public class DeliveryIssueTriageRequest
+    {
+        /// <summary>Optional admin-only note (max 1000).</summary>
+        public string? internalNote { get; set; }
+
+        /// <summary>Base64 RowVersion from the last read; required for concurrent safety.</summary>
+        [Required]
+        public string rowVersion { get; set; } = "";
     }
 }

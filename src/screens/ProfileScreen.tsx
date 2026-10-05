@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -17,9 +17,7 @@ import { navigate } from '../navigation/RootNavigation';
 import {
   AppHeader,
   AppButton,
-  Badge,
   BottomSheet,
-  FilterChip,
   InfoRow,
   SectionHeader,
   StatCard,
@@ -27,49 +25,28 @@ import {
   confirmDialog,
 } from '../components/ui';
 import {
-  AppLanguage,
-  DocumentStatus,
-  LANGUAGE_LABELS,
   RiderProfile,
 } from '../data/account';
 import { APP_VERSION } from '../constants/app';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
+import * as ordersRepository from '../repositories/ordersRepository';
 
-function docTone(status: DocumentStatus): 'success' | 'warning' | 'error' | 'neutral' {
-  if (status === 'verified') return 'success';
-  if (status === 'pending') return 'warning';
-  if (status === 'unavailable') return 'neutral';
-  return 'error';
-}
-
-function docLabel(status: DocumentStatus): string {
-  if (status === 'verified') return 'Verified';
-  if (status === 'pending') return 'Pending';
-  if (status === 'unavailable') return 'Admin-managed';
-  return 'Expired';
-}
-
-type EditDraft = Pick<
-  RiderProfile,
-  'phone' | 'emergencyContact' | 'vehicle' | 'vehicleNumber' | 'language'
->;
+type EditDraft = Pick<RiderProfile, 'phone' | 'emergencyContact'>;
 
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const { openMenu } = useSideMenu();
-  const { isOnline, activeJob, stats } = useRiderSession();
-  const { profile, documents, updateProfile } = useAccount();
+  const { isOnline, activeJob } = useRiderSession();
+  const { profile, updateProfile } = useAccount();
 
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState<EditDraft>({
     phone: profile.phone,
     emergencyContact: profile.emergencyContact,
-    vehicle: profile.vehicle,
-    vehicleNumber: profile.vehicleNumber,
-    language: profile.language,
   });
   const [saving, setSaving] = useState(false);
+  const [completedCount, setCompletedCount] = useState<number | null>(null);
 
   const displayName = user?.name || profile.fullName || 'Rider';
   const shiftLabel = activeJob
@@ -78,18 +55,22 @@ export default function ProfileScreen() {
       ? 'On shift'
       : 'Off shift';
 
-  const lifetimeDeliveries = useMemo(
-    () => Math.max(stats.monthlyDeliveries, stats.weeklyDeliveries),
-    [stats.monthlyDeliveries, stats.weeklyDeliveries],
-  );
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const result = await ordersRepository.fetchPerformance();
+      if (!alive) return;
+      if (result.ok) setCompletedCount(result.data.completedCount);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const openEdit = () => {
     setDraft({
       phone: profile.phone,
       emergencyContact: profile.emergencyContact,
-      vehicle: profile.vehicle,
-      vehicleNumber: profile.vehicleNumber,
-      language: profile.language,
     });
     setEditOpen(true);
   };
@@ -97,13 +78,16 @@ export default function ProfileScreen() {
   const saveEdit = async () => {
     setSaving(true);
     try {
-      const ok = await updateProfile(draft);
-      if (!ok) {
-        Alert.alert('Couldn’t save', 'Please try again.');
+      const result = await updateProfile(draft);
+      if (!result.ok) {
+        Alert.alert('Couldn’t save', result.message || 'Please try again.');
         return;
       }
       setEditOpen(false);
-      Alert.alert('Profile updated', 'Your changes have been saved.');
+      Alert.alert(
+        'Profile updated',
+        result.message || 'Changes saved to your account.',
+      );
     } finally {
       setSaving(false);
     }
@@ -168,39 +152,26 @@ export default function ProfileScreen() {
             label="Emergency Contact"
             value={profile.emergencyContact}
           />
-          <InfoRow
-            icon="translate"
-            label="Language"
-            value={LANGUAGE_LABELS[profile.language]}
-          />
         </View>
 
         <SectionHeader title="Vehicle" style={styles.sectionGap} />
         <View style={styles.card}>
-          <InfoRow icon="moped" label="Vehicle" value={profile.vehicle} />
-          <InfoRow
-            icon="card-text-outline"
-            label="Vehicle Number"
-            value={profile.vehicleNumber}
-          />
-          <InfoRow
-            icon="card-account-details-outline"
-            label="License Number"
-            value={profile.licenseNumber}
-          />
+          <Text style={styles.managedNotice}>Managed by admin</Text>
+          <Text style={styles.docNotice}>
+            Vehicle and license details are not editable in this app. Contact
+            your administrator if something needs updating.
+          </Text>
         </View>
 
         <SectionHeader title="Performance snapshot" style={styles.sectionGap} />
+        <Text style={styles.docNotice}>
+          Last 7 days completed deliveries from the server (API default window).
+          Ratings are not tracked in this app.
+        </Text>
         <View style={styles.statsRow}>
           <StatCard
-            label="Rating"
-            value={stats.todayRating.toFixed(1)}
-            icon="star"
-            style={styles.stat}
-          />
-          <StatCard
-            label="Deliveries"
-            value={String(lifetimeDeliveries)}
+            label="Last 7 days completed"
+            value={completedCount == null ? '—' : String(completedCount)}
             icon="package-variant"
             style={styles.stat}
           />
@@ -213,35 +184,12 @@ export default function ProfileScreen() {
         </View>
 
         <SectionHeader title="Documents" style={styles.sectionGap} />
-        <Text style={styles.docNotice}>
-          Document verification is managed by your administrator and is not
-          available in the app.
-        </Text>
-        <View style={styles.docGrid}>
-          {documents.map(doc => (
-            <View key={doc.id} style={styles.docCard}>
-              <View style={styles.docTop}>
-                <Icon
-                  name="file-document-outline"
-                  size={22}
-                  color={colors.primaryDark}
-                />
-                <Badge
-                  label={docLabel(doc.status)}
-                  tone={docTone(doc.status)}
-                  icon={
-                    doc.status === 'verified' ? 'check-decagram' : undefined
-                  }
-                />
-              </View>
-              <Text style={styles.docTitle}>{doc.title}</Text>
-              <Text style={styles.docExpiry}>
-                {doc.status === 'unavailable'
-                  ? 'Status unavailable'
-                  : `Expires ${doc.expiryDate}`}
-              </Text>
-            </View>
-          ))}
+        <View style={styles.card}>
+          <Text style={styles.managedNotice}>Managed by admin</Text>
+          <Text style={styles.docNotice}>
+            Document verification is handled outside the rider app. There is no
+            document upload or status API in this build.
+          </Text>
         </View>
 
         <SectionHeader title="App" style={styles.sectionGap} />
@@ -296,28 +244,6 @@ export default function ProfileScreen() {
           onChangeText={t => setDraft(d => ({ ...d, emergencyContact: t }))}
           keyboardType="phone-pad"
         />
-        <Field
-          label="Vehicle"
-          value={draft.vehicle}
-          onChangeText={t => setDraft(d => ({ ...d, vehicle: t }))}
-        />
-        <Field
-          label="Vehicle Number"
-          value={draft.vehicleNumber}
-          onChangeText={t => setDraft(d => ({ ...d, vehicleNumber: t }))}
-          autoCapitalize="characters"
-        />
-        <Text style={styles.fieldLabel}>Language</Text>
-        <View style={styles.langRow}>
-          {(Object.keys(LANGUAGE_LABELS) as AppLanguage[]).map(code => (
-            <FilterChip
-              key={code}
-              label={LANGUAGE_LABELS[code]}
-              selected={draft.language === code}
-              onPress={() => setDraft(d => ({ ...d, language: code }))}
-            />
-          ))}
-        </View>
       </BottomSheet>
     </View>
   );
@@ -390,10 +316,10 @@ const styles = StyleSheet.create({
   },
   statsRow: { flexDirection: 'row', gap: spacing.sm },
   stat: { flex: 1 },
-  docGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
+  managedNotice: {
+    ...typography.bodyStrong,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xxs,
   },
   docNotice: {
     ...typography.caption,
@@ -401,22 +327,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     paddingHorizontal: spacing.xxs,
   },
-  docCard: {
-    width: '48%',
-    flexGrow: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    ...elevation.small,
-  },
-  docTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  docTitle: { ...typography.bodyStrong, marginBottom: 4 },
-  docExpiry: { ...typography.caption },
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -443,5 +353,4 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.background,
   },
-  langRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: spacing.sm },
 });

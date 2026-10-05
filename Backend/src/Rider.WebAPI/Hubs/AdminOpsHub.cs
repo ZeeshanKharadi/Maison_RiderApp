@@ -1,9 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Rider.Application.Authorization;
+using Rider.Domain.Common;
 
 namespace Rider.WebAPI.Hubs
 {
-    [Authorize]
+    /// <summary>
+    /// Admin/Manager operations hub. Riders must not connect.
+    /// HO (Administrator) joins <see cref="HofficeGroup"/> for all-store events.
+    /// Managers join only their authorized store group(s).
+    /// </summary>
+    [Authorize(Roles = RoleNames.AdminOrManager)]
     public class AdminOpsHub : Hub
     {
         public const string HofficeGroup = "hoffice";
@@ -12,21 +19,42 @@ namespace Rider.WebAPI.Hubs
 
         public override async Task OnConnectedAsync()
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, HofficeGroup);
+            if (AdminOpsHubAccess.IsHeadOffice(Context.User))
+                await Groups.AddToGroupAsync(Context.ConnectionId, HofficeGroup);
 
-            var storeId = Context.User?.FindFirst("storeId")?.Value
-                ?? Context.User?.FindFirst("StoreId")?.Value;
-            if (!string.IsNullOrWhiteSpace(storeId))
+            // Managers (and HO users with a store claim) join their own store group.
+            var storeId = AdminOpsHubAccess.GetClaimStoreId(Context.User);
+            if (!string.IsNullOrWhiteSpace(storeId)
+                && AdminOpsHubAccess.CanJoinStore(Context.User, storeId))
+            {
                 await Groups.AddToGroupAsync(Context.ConnectionId, StoreGroup(storeId));
+            }
 
             await base.OnConnectedAsync();
         }
 
-        public Task JoinStore(string storeId)
+        public async Task JoinStore(string storeId)
         {
             if (string.IsNullOrWhiteSpace(storeId))
-                return Task.CompletedTask;
-            return Groups.AddToGroupAsync(Context.ConnectionId, StoreGroup(storeId.Trim()));
+                return;
+
+            storeId = storeId.Trim();
+            if (!AdminOpsHubAccess.CanJoinStore(Context.User, storeId))
+                throw new HubException("Not authorized for this store");
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, StoreGroup(storeId));
+        }
+
+        public async Task LeaveStore(string storeId)
+        {
+            if (string.IsNullOrWhiteSpace(storeId))
+                return;
+
+            storeId = storeId.Trim();
+            if (!AdminOpsHubAccess.CanJoinStore(Context.User, storeId))
+                throw new HubException("Not authorized for this store");
+
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, StoreGroup(storeId));
         }
     }
 }

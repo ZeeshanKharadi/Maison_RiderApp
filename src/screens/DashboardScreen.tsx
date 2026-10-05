@@ -1,5 +1,7 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,8 +36,16 @@ import { getStateConfig } from '../delivery/stateMachine';
 import { jobProgress } from '../delivery/types';
 import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
+import {
+  formatDateRangeLabel,
+  performanceSevenCalendarDayWindow,
+  performanceTodayWindow,
+} from '../utils/performanceRange';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
+import NoConnectionBanner from '../components/NoConnectionBanner';
 import * as ordersRepository from '../repositories/ordersRepository';
+import type { RiderPerformance } from '../repositories/ordersRepository';
 import {
   colors,
   elevation,
@@ -56,7 +66,8 @@ function goStack(screen: string) {
 }
 
 /**
- * Rider command center — answers: online? active job? earned today? what's next?
+ * Rider command center — answers: online? active job? what's next?
+ * Summary metrics come from GET /api/Order/Performance (not session-local estimates).
  */
 export default function DashboardScreen() {
   const navigation = useNavigation();
@@ -68,12 +79,83 @@ export default function DashboardScreen() {
     setOnline,
     shiftStartedAt,
     activeJob,
-    stats,
+    restoreActiveDeliveries,
   } = useRiderSession();
   const { notifications, profile, unreadCount } = useAccount();
-  const { orders } = useAvailableOrders();
+  const { orders, refreshOrders } = useAvailableOrders();
+  const { isConnected } = useNetworkConnectivity();
 
-  const [now] = useState(() => new Date());
+  const [now, setNow] = useState(() => new Date());
+  const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
+  const [weekPerf, setWeekPerf] = useState<RiderPerformance | null>(null);
+  const [weekRangeLabel, setWeekRangeLabel] = useState('');
+
+  // Tick working-hours clock while online (stops when offline).
+  useEffect(() => {
+    if (!isOnline || !shiftStartedAt) {
+      setNow(new Date());
+      return;
+    }
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [isOnline, shiftStartedAt]);
+
+  const loadPerformance = useCallback(async () => {
+    const end = new Date();
+    const todayWin = performanceTodayWindow(end);
+    const weekWin = performanceSevenCalendarDayWindow(end);
+    setWeekRangeLabel(formatDateRangeLabel(weekWin.from, weekWin.to));
+
+    const [today, week] = await Promise.all([
+      ordersRepository.fetchPerformance({
+        from: todayWin.from,
+        to: todayWin.to,
+      }),
+      ordersRepository.fetchPerformance({
+        from: weekWin.from,
+        to: weekWin.to,
+      }),
+    ]);
+    // Clear on failure so we never show another rider's (or stale) values.
+    setTodayPerf(today.ok ? today.data : null);
+    setWeekPerf(week.ok ? week.data : null);
+  }, []);
+
+  useEffect(() => {
+    setTodayPerf(null);
+    setWeekPerf(null);
+    void loadPerformance();
+  }, [user?.id, loadPerformance]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener?.('focus', () => {
+      void loadPerformance();
+      // Show cancel alerts when FCM was missed; session/durable markers dedupe.
+      void restoreActiveDeliveries();
+      void refreshOrders();
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [navigation, loadPerformance, restoreActiveDeliveries, refreshOrders]);
+
+  // Foreground-only sync. Never suppress cancel alerts on this path.
+  useEffect(() => {
+    const tick = () => {
+      if (AppState.currentState !== 'active') return;
+      void restoreActiveDeliveries();
+      void refreshOrders();
+    };
+    const id = setInterval(tick, 15_000);
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') tick();
+    });
+    return () => {
+      clearInterval(id);
+      sub.remove();
+    };
+  }, [restoreActiveDeliveries, refreshOrders]);
 
   const greeting = useMemo(() => getGreeting(now), [now]);
   const dateLabel = useMemo(() => formatDashboardDate(now), [now]);
@@ -105,6 +187,13 @@ export default function DashboardScreen() {
 
   const handleOnlineChange = useCallback(
     (next: boolean) => {
+      if (!isConnected) {
+        Alert.alert(
+          'No connection',
+          'Connect to Wi‑Fi or mobile data before changing online status. Status changes are not queued offline.',
+        );
+        return;
+      }
       if (!next && activeJob) {
         confirmDialog({
           title: 'Go offline?',
@@ -120,7 +209,7 @@ export default function DashboardScreen() {
       }
       void setOnline(next);
     },
-    [activeJob, setOnline],
+    [activeJob, setOnline, isConnected],
   );
 
   const handleContinueDelivery = useCallback(() => {
@@ -196,7 +285,9 @@ export default function DashboardScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {/* 2. Online / Offline */}
+        <NoConnectionBanner detail="Phone has no internet. Dashboard numbers may show — until you reconnect. Status and COD changes are not queued offline." />
+
+        {/* 2. Online / Offline (shift status — not the same as Wi‑Fi) */}
         <View
           style={[styles.statusCard, !isOnline && styles.statusCardOffline]}
           accessibilityRole="summary"
@@ -218,19 +309,22 @@ export default function DashboardScreen() {
                   {isOnline ? 'You are online' : 'You are offline'}
                 </Text>
                 <Text style={styles.statusSub}>
-                  {isOnline
-                    ? `Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : '—'}`
-                    : 'Go online to receive orders'}
+                  {!isConnected
+                    ? 'Shift status is separate from Wi‑Fi — reconnect to sync with the server'
+                    : isOnline
+                      ? `Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : '—'}`
+                      : 'Go online to receive orders'}
                 </Text>
               </View>
             </View>
             <Switch
               value={isOnline}
               onValueChange={handleOnlineChange}
+              disabled={!isConnected}
               trackColor={{ false: colors.disabled, true: colors.successSoft }}
               thumbColor={isOnline ? colors.success : colors.textMuted}
               accessibilityLabel="Online status"
-              accessibilityState={{ checked: isOnline }}
+              accessibilityState={{ checked: isOnline, disabled: !isConnected }}
             />
           </View>
           {isOnline ? (
@@ -241,32 +335,41 @@ export default function DashboardScreen() {
           ) : null}
         </View>
 
-        {/* 3. Today's Summary */}
+        {/* 3. Today's Summary — server Performance API (not session estimates) */}
         <SectionHeader title="Today" />
+        <Text style={styles.summaryHint}>
+          From server records. COD collected is cash in hand, not earnings.
+        </Text>
         <View style={styles.statsRow}>
           <StatCard
             icon="package-variant"
             label="Deliveries"
-            value={String(stats.todayDeliveries)}
+            value={todayPerf ? String(todayPerf.completedCount) : '—'}
           />
           <StatCard
             icon="cash"
-            label="Earnings"
-            value={formatMoney(stats.todayEarnings)}
+            label="COD collected"
+            value={
+              todayPerf ? formatMoney(todayPerf.codCollected) : '—'
+            }
           />
         </View>
         <View style={styles.statsRow}>
           <StatCard
-            icon="star"
-            label="Avg rating"
-            value={stats.todayRating.toFixed(1)}
-            iconColor={colors.star}
+            icon="timer-outline"
+            label="Online hours"
+            value={
+              todayPerf ? `${todayPerf.onlineHours.toFixed(1)}h` : '—'
+            }
+            iconColor={colors.info}
           />
           <StatCard
-            icon="timer-outline"
-            label="Hours worked"
-            value={`${stats.hoursWorked}h`}
-            iconColor={colors.info}
+            icon="wallet-outline"
+            label="COD outstanding"
+            value={
+              todayPerf ? formatMoney(todayPerf.codOutstanding) : '—'
+            }
+            iconColor={colors.warning}
           />
         </View>
 
@@ -324,8 +427,19 @@ export default function DashboardScreen() {
             </View>
 
             <AppButton
-              label="Continue delivery"
-              icon="navigation-variant"
+              label={
+                activeJob.state === 'RETURNING_TO_STORE'
+                  ? 'Return to store'
+                  : activeJob.state === 'AWAITING_STORE_RECEIPT'
+                    ? 'Awaiting store receipt'
+                    : 'Continue delivery'
+              }
+              icon={
+                activeJob.state === 'RETURNING_TO_STORE' ||
+                activeJob.state === 'AWAITING_STORE_RECEIPT'
+                  ? 'store-marker'
+                  : 'navigation-variant'
+              }
               fullWidth
               onPress={handleContinueDelivery}
               accessibilityLabel="Continue active delivery"
@@ -343,7 +457,7 @@ export default function DashboardScreen() {
             actionLabel={isOnline ? 'Browse orders' : 'Go online'}
             onAction={() => {
               if (isOnline) goTab('Orders');
-              else void setOnline(true);
+              else handleOnlineChange(true);
             }}
           />
         )}
@@ -356,11 +470,23 @@ export default function DashboardScreen() {
         />
         {!isOnline ? (
           <View style={styles.offlineBanner}>
+            <Icon name="bike-off" size={22} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.offlineTitle}>Shift is offline</Text>
+              <Text style={styles.offlineBody}>
+                Turn on your status to receive new delivery offers. This is not
+                the same as Wi‑Fi / mobile data.
+              </Text>
+            </View>
+          </View>
+        ) : !isConnected ? (
+          <View style={styles.offlineBanner}>
             <Icon name="wifi-off" size={22} color={colors.textMuted} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.offlineTitle}>You are currently offline</Text>
+              <Text style={styles.offlineTitle}>No internet connection</Text>
               <Text style={styles.offlineBody}>
-                Turn on your status to see nearby delivery opportunities.
+                You may still be on shift, but the phone cannot reach the server
+                until Wi‑Fi or mobile data is back.
               </Text>
             </View>
           </View>
@@ -382,13 +508,15 @@ export default function DashboardScreen() {
               ]}
               onPress={() => goTab('Orders')}
               accessibilityRole="button"
-              accessibilityLabel={`Order ${order.id}, ${order.restaurant}, fee ${formatMoney(order.deliveryFee)}`}>
+              accessibilityLabel={`Order ${order.id}, ${order.restaurant}, order ${formatMoney(order.orderAmount)}`}>
               <View style={styles.orderPreviewTop}>
                 <Text style={styles.orderRestaurant} numberOfLines={1}>
                   {order.restaurant}
                 </Text>
                 <Text style={styles.orderFee}>
-                  {formatMoney(order.deliveryFee)}
+                  {order.deliveryFee != null && order.deliveryFee > 0
+                    ? formatMoney(order.deliveryFee)
+                    : formatMoney(order.orderAmount)}
                 </Text>
               </View>
               <Text style={styles.orderMeta} numberOfLines={1}>
@@ -413,20 +541,27 @@ export default function DashboardScreen() {
         />
         <View style={styles.perfCard}>
           <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>{stats.weeklyDeliveries}</Text>
-            <Text style={styles.perfLabel}>Weekly deliveries</Text>
+            <Text style={styles.perfValue}>
+              {weekPerf ? String(weekPerf.completedCount) : '—'}
+            </Text>
+            <Text style={styles.perfLabel}>
+              7-day deliveries
+              {weekRangeLabel ? `\n${weekRangeLabel}` : ''}
+            </Text>
           </View>
           <View style={styles.perfDivider} />
           <View style={styles.perfItem}>
             <Text style={styles.perfValue}>
-              {Math.round(stats.completionRate)}%
+              {weekPerf ? `${weekPerf.onlineHours.toFixed(1)}h` : '—'}
             </Text>
-            <Text style={styles.perfLabel}>Completion</Text>
+            <Text style={styles.perfLabel}>7-day online</Text>
           </View>
           <View style={styles.perfDivider} />
           <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>#{stats.ranking}</Text>
-            <Text style={styles.perfLabel}>City rank</Text>
+            <Text style={styles.perfValue}>
+              {weekPerf ? formatMoney(weekPerf.codCollected) : '—'}
+            </Text>
+            <Text style={styles.perfLabel}>7-day COD</Text>
           </View>
         </View>
 
@@ -605,6 +740,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginBottom: spacing.sm,
+  },
+  summaryHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+    marginTop: -spacing.xs,
   },
   activeCard: {
     backgroundColor: colors.surface,

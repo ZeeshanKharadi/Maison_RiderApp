@@ -8,6 +8,8 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<List<RiderNotificationDto>>> ListForUserAsync(Guid userId, int take = 50);
         Task<ApiResponse<string>> MarkReadAsync(Guid userId, long notificationId);
         Task<ApiResponse<string>> MarkAllReadAsync(Guid userId);
+        Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId);
+        Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId);
 
         /// <summary>Order dispatched to a specific rider (AssignOrderToRider).</summary>
         Task NotifyDirectAssignmentAsync(
@@ -16,6 +18,16 @@ namespace Rider.Application.Interfaces
         /// <summary>New open-pool order for riders serving this store.</summary>
         Task NotifyOpenPoolOrderAsync(
             string orderId, long? assignedOrderId, string storeId, decimal orderTotal);
+
+        /// <summary>
+        /// Admin cancelled an order assigned to this rider.
+        /// Inbox + FCM only for the affected rider (not store-wide).
+        /// </summary>
+        Task NotifyOrderCancelledAsync(
+            Guid riderUserId,
+            string orderId,
+            long? assignedOrderId,
+            string? cancelReason);
 
         /// <summary>Admin/Swagger test: send inbox + FCM to one user.</summary>
         Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(SendNotificationRequest request);

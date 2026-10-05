@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
+import LiveMapPage from './pages/LiveMapPage';
 import LoginPage from './pages/LoginPage';
 import OperationsPage from './pages/OperationsPage';
 import OrderDetailPage from './pages/OrderDetailPage';
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/operations" element={<OperationsPage />} />
             <Route path="/operations/:id" element={<OrderDetailPage />} />
+            <Route path="/live-map" element={<LiveMapPage />} />
             <Route path="/riders" element={<RidersPage />} />
             <Route path="/payments" element={<PaymentsPage />} />
             <Route path="/reports" element={<ReportsPage />} />

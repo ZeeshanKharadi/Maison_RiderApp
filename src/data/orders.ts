@@ -38,11 +38,44 @@ export type AvailableOrder = {
   paymentMethod: PaymentMethod;
   isCod: boolean;
   expectedCash?: number | null;
+  /** Server CashCollected when known (order detail / active). */
+  cashCollectedAmount?: number | null;
+  cashCollectedReason?: string | null;
   backendStatus?: string;
   acceptedAt?: string | null;
   pickedUpAt?: string | null;
   completedAt?: string | null;
   isDirectAssignment?: boolean;
+  /** Rider-safe delivery issue reports (no admin internal notes). */
+  issueReports?: Array<{
+    id: number;
+    reasonCode: string;
+    reasonLabel?: string;
+    note?: string | null;
+    createdAt: string;
+    status?: string;
+    statusLabel?: string;
+    acknowledgedAt?: string | null;
+    closedAt?: string | null;
+  }>;
+  /** Controlled failed-delivery request / return progress. */
+  failure?: {
+    requestStatus?: string;
+    reasonCode?: string;
+    reasonLabel?: string;
+    note?: string | null;
+    requestId?: string;
+    issueReportId?: number;
+    requestedAt?: string;
+    decidedAt?: string;
+    decisionNote?: string | null;
+    statusBeforeReturn?: string;
+    riderReturnedAt?: string;
+    storeReceivedAt?: string;
+    cashCollectedWarning?: boolean;
+    cashCollected?: number | null;
+    expectedCash?: number | null;
+  };
   priority: OrderPriority;
   fragile: boolean;
   express: boolean;

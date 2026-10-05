@@ -48,6 +48,24 @@ namespace Rider.Infrastructure.Services
             return Ok("", "All marked read");
         }
 
+        public async Task<ApiResponse<string>> SoftDeleteAsync(Guid userId, long notificationId)
+        {
+            var ok = await _unitOfWork.RiderNotificationRepository.SoftDeleteForUserAsync(
+                userId, notificationId);
+            if (!ok)
+                return Fail("Notification not found");
+
+            await _unitOfWork.SaveChangesAsync();
+            return Ok("", "Notification deleted");
+        }
+
+        public async Task<ApiResponse<string>> SoftDeleteAllAsync(Guid userId)
+        {
+            await _unitOfWork.RiderNotificationRepository.SoftDeleteAllForUserAsync(userId);
+            await _unitOfWork.SaveChangesAsync();
+            return Ok("", "All notifications deleted");
+        }
+
         public async Task NotifyDirectAssignmentAsync(
             Guid riderUserId, string orderId, long? assignedOrderId, string storeId, decimal orderTotal)
         {
@@ -76,6 +94,32 @@ namespace Rider.Infrastructure.Services
                     assignedOrderId,
                     "high");
             }
+        }
+
+        public async Task NotifyOrderCancelledAsync(
+            Guid riderUserId,
+            string orderId,
+            long? assignedOrderId,
+            string? cancelReason)
+        {
+            var reason = string.IsNullOrWhiteSpace(cancelReason)
+                ? "Cancelled by admin"
+                : cancelReason.Trim();
+            var body = $"Order {orderId} was cancelled. {reason}";
+
+            await CreateAndPushAsync(
+                riderUserId,
+                "orders",
+                RiderNotificationTitles.OrderCancelled,
+                body,
+                orderId,
+                assignedOrderId,
+                "high",
+                extraData: new Dictionary<string, string>
+                {
+                    ["event"] = "order_cancelled",
+                    ["assignedOrderId"] = assignedOrderId?.ToString() ?? ""
+                });
         }
 
         public async Task<ApiResponse<SendNotificationResultDto>> SendTestToUserAsync(
@@ -159,7 +203,8 @@ namespace Rider.Infrastructure.Services
             string description,
             string orderId,
             long? assignedOrderId,
-            string priority)
+            string priority,
+            IReadOnlyDictionary<string, string>? extraData = null)
         {
             var row = await CreateAsync(
                 userId,
@@ -170,16 +215,19 @@ namespace Rider.Infrastructure.Services
                 assignedOrderId,
                 priority);
 
-            await _fcm.SendToUserAsync(
-                userId,
-                title,
-                description,
-                new Dictionary<string, string>
-                {
-                    ["category"] = category,
-                    ["orderId"] = orderId ?? "",
-                    ["notificationId"] = row.Id.ToString()
-                });
+            var data = new Dictionary<string, string>
+            {
+                ["category"] = category,
+                ["orderId"] = orderId ?? "",
+                ["notificationId"] = row.Id.ToString()
+            };
+            if (extraData != null)
+            {
+                foreach (var kv in extraData)
+                    data[kv.Key] = kv.Value ?? "";
+            }
+
+            await _fcm.SendToUserAsync(userId, title, description, data);
         }
 
         private async Task<RiderNotification> CreateAsync(

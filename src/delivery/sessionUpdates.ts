@@ -97,8 +97,21 @@ export function jobToHistoryItem(
   job: ActiveDeliveryJob,
   timeline: DeliveryTimelineStep[],
 ): DeliveryHistoryItem {
-  const tip = job.tip || (job.isCod ? 0 : 2.5);
   const deliveredAt = new Date().toISOString();
+  // Do not invent tip/fee/distance for the archive — API does not supply them yet.
+  const deliveryFee =
+    job.deliveryFee != null &&
+    Number.isFinite(job.deliveryFee) &&
+    job.deliveryFee > 0
+      ? job.deliveryFee
+      : null;
+  const distanceMiles =
+    job.distanceMiles != null &&
+    Number.isFinite(job.distanceMiles) &&
+    job.distanceMiles > 0
+      ? job.distanceMiles
+      : null;
+
   return {
     id: job.id,
     restaurant: job.restaurant,
@@ -107,12 +120,11 @@ export function jobToHistoryItem(
     dropoffAddress: job.dropoffAddress,
     deliveredAt,
     orderAmount: job.orderAmount,
-    deliveryFee: job.deliveryFee,
-    tip,
-    distanceMiles: job.distanceMiles ?? 0,
+    deliveryFee,
+    tip: null,
+    distanceMiles,
     durationMin: estimateDurationMin(job),
     items: job.items,
-    rating: 5,
     paymentMethod: job.paymentMethod,
     status: 'delivered',
     imageColor: job.imageColor,
@@ -122,8 +134,34 @@ export function jobToHistoryItem(
     fragile: job.fragile,
     packageInfo: job.packageInfo,
     specialInstructions: job.specialInstructions,
-    deliveryNotes: job.isCod ? 'COD collected on delivery.' : undefined,
-    cashCollected: job.isCod ? true : null,
+    deliveryNotes: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? `COD collected: ${job.cashCollectedAmount}${
+            job.cashCollectedReason ? ` — ${job.cashCollectedReason}` : ''
+          }.`
+        : job.cashCollected === false
+          ? 'Delivery completed; COD cash not verified on server.'
+          : 'COD collected on delivery.'
+      : undefined,
+    cashCollected: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? true
+        : job.cashCollected === false
+          ? false
+          : true
+      : null,
+    cashCollectedAmount:
+      job.isCod && job.cashCollectedAmount != null
+        ? job.cashCollectedAmount
+        : null,
+    cashCollectedReason: job.isCod ? job.cashCollectedReason ?? null : null,
+    cashVerified: job.isCod
+      ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
+        ? true
+        : job.cashCollected === false
+          ? false
+          : true
+      : null,
     timeline: timeline.map(step => ({
       ...step,
       status: 'done' as const,

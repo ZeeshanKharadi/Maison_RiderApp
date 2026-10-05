@@ -12,6 +12,7 @@ import { DeliveryHistoryItem } from '../data/deliveryHistory';
 import {
   ActiveDeliveryJob,
   advanceJob,
+  backendStatusForAdvance,
   buildDeliveryTimeline,
   createJobFromOrder,
   isInProgressTransition,
@@ -33,10 +34,23 @@ import {
 import { AvailableOrder } from '../data/orders';
 import {
   isCancelledBackendStatus,
+  isLiveRiderActiveStatus,
 } from '../api/mappers/orderMapper';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import * as ordersRepository from '../repositories/ordersRepository';
+import type { OrderStatusPayload } from '../repositories/ordersRepository';
+import {
+  isUncertainMutationFailure,
+  reconcileStatusMutation,
+  resolveCodCashAfterServerCompleted,
+} from '../utils/mutationReconciliation';
 import * as authRepository from '../repositories/authRepository';
+import * as cancellationAckRepository from '../repositories/cancellationAckRepository';
+import { planCancellationAlerts } from '../utils/cancellationAlertPlan';
+import { applyServerAvailability } from '../utils/shiftAvailability';
 import { useAuth } from '../services/AuthContext';
+import { useDeliveryLocationTracking } from '../hooks/useDeliveryLocationTracking';
+import { stopNativeLocationTracking } from '../services/locationTrackingNative';
 
 const MAX_ACTIVE_JOBS = 5;
 
@@ -50,10 +64,20 @@ type CompleteResult = {
   ok: boolean;
   historyItem?: DeliveryHistoryItem;
   message?: string;
+  /** COD: false when completion confirmed but cash not verified on server. */
+  cashVerified?: boolean | null;
 };
 
 function isActiveJob(job: ActiveDeliveryJob): boolean {
-  return !isTerminalState(job.state);
+  if (isTerminalState(job.state)) return false;
+  // Drop jobs that admin finished / requeued (Available/Failed/Cancelled/…).
+  if (
+    job.backendStatus != null &&
+    !isLiveRiderActiveStatus(job.backendStatus)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function pickSelectedJob(
@@ -91,7 +115,10 @@ type RiderSessionContextValue = {
   wallet: WalletState;
   stats: SessionStats;
   withdrawFunds: (amount: number) => boolean;
-  restoreActiveDeliveries: () => Promise<void>;
+  restoreActiveDeliveries: (opts?: {
+    /** Skip cancel Alert (caller already showed one). Still persists ack for new cancels. */
+    suppressCancelAlert?: boolean;
+  }) => Promise<void>;
   lifecyclePending: boolean;
   lastLifecycleError: string | null;
 };
@@ -106,6 +133,7 @@ export function RiderSessionProvider({
   children: React.ReactNode;
 }) {
   const { user, isLoading: authLoading } = useAuth();
+  const { isConnected } = useNetworkConnectivity();
   const [isOnline, setIsOnline] = useState(false);
   const [shiftStartedAt, setShiftStartedAt] = useState<Date | null>(null);
   const [activeJobs, setActiveJobs] = useState<ActiveDeliveryJob[]>([]);
@@ -118,11 +146,18 @@ export function RiderSessionProvider({
     null,
   );
   const restoringRef = useRef(false);
+  const restoreQueuedRef = useRef(false);
+  const restoreOptsRef = useRef<{ suppressCancelAlert?: boolean } | undefined>(
+    undefined,
+  );
 
   const activeJob = useMemo(
     () => pickSelectedJob(activeJobs, selectedJobId),
     [activeJobs, selectedJobId],
   );
+
+  const trackingEnabled = !!user && activeJobs.some(isActiveJob);
+  useDeliveryLocationTracking(trackingEnabled, user?.id ?? null);
 
   const setOnline = useCallback(async (online: boolean): Promise<boolean> => {
     setLifecyclePending(true);
@@ -130,16 +165,17 @@ export function RiderSessionProvider({
     const result = await ordersRepository.setAvailability(online);
     setLifecyclePending(false);
     if (!result.ok) {
+      // Network / JWT failure: do not invent online state or shift start.
       setLastLifecycleError(result.error.message);
       Alert.alert('Availability', result.error.message);
       return false;
     }
-    setIsOnline(online);
-    if (online) {
-      setShiftStartedAt(prev => prev ?? new Date());
-    } else {
-      setShiftStartedAt(null);
-    }
+    const applied = applyServerAvailability({
+      isOnline: result.data.isOnline,
+      currentOnlineStartedAt: result.data.currentOnlineStartedAt,
+    });
+    setIsOnline(applied.isOnline);
+    setShiftStartedAt(applied.shiftStartedAt);
     return true;
   }, []);
 
@@ -214,68 +250,171 @@ export function RiderSessionProvider({
     setSelectedJobId(job.id);
   }, []);
 
-  const restoreActiveDeliveries = useCallback(async () => {
-    if (restoringRef.current) return;
-    restoringRef.current = true;
-    setLifecyclePending(true);
-    try {
-      const result = await ordersRepository.fetchActiveOrders();
-      if (!result.ok) {
-        setLastLifecycleError(result.error.message);
+  const restoreActiveDeliveries = useCallback(
+    async (opts?: { suppressCancelAlert?: boolean }) => {
+      if (opts?.suppressCancelAlert) {
+        restoreOptsRef.current = { suppressCancelAlert: true };
+      } else if (!restoringRef.current) {
+        restoreOptsRef.current = opts;
+      }
+
+      if (restoringRef.current) {
+        restoreQueuedRef.current = true;
         return;
       }
 
-      const cancelled: AvailableOrder[] = [];
-      const active: AvailableOrder[] = [];
-      for (const order of result.data) {
-        if (isCancelledBackendStatus(order.backendStatus)) {
-          cancelled.push(order);
-        } else if (
-          order.backendStatus &&
-          /completed/i.test(order.backendStatus)
-        ) {
-          // Completed should not appear in Active; skip if it does.
-        } else {
-          active.push(order);
+      restoringRef.current = true;
+      setLifecyclePending(true);
+      try {
+        do {
+          restoreQueuedRef.current = false;
+          const runOpts = restoreOptsRef.current;
+          restoreOptsRef.current = undefined;
+
+          const [activeResult, cancelledResult] = await Promise.all([
+            ordersRepository.fetchActiveOrders(),
+            ordersRepository.fetchRecentCancellations(),
+          ]);
+
+          if (!activeResult.ok) {
+            setLastLifecycleError(activeResult.error.message);
+            continue;
+          }
+
+          const cancelledFromApi =
+            cancelledResult.ok && Array.isArray(cancelledResult.data)
+              ? cancelledResult.data
+              : [];
+
+          // Also honor cancelled rows if Active ever returns them (legacy / edge).
+          const cancelledFromActive: AvailableOrder[] = [];
+          const active: AvailableOrder[] = [];
+          for (const order of activeResult.data) {
+            if (isCancelledBackendStatus(order.backendStatus)) {
+              cancelledFromActive.push(order);
+            } else if (!isLiveRiderActiveStatus(order.backendStatus)) {
+              // Available / Completed / Failed / requeued — leave Active list.
+            } else {
+              active.push(order);
+            }
+          }
+
+          const cancelledByKey = new Map<string, AvailableOrder>();
+          for (const order of [...cancelledFromApi, ...cancelledFromActive]) {
+            const eventKey = cancellationAckRepository.cancellationEventKey({
+              backendId: order.backendId,
+              externalOrderId: order.externalOrderId,
+              id: order.id,
+            });
+            if (!eventKey) continue;
+            cancelledByKey.set(eventKey, order);
+          }
+
+          // Always restore Active jobs even if cancel-ack storage fails.
+          const jobs: ActiveDeliveryJob[] = [];
+          for (const order of active) {
+            try {
+              jobs.push(createJobFromOrder(order, { restore: true }));
+            } catch {
+              // Skip rows missing backendId
+            }
+          }
+
+          setActiveJobs(jobs);
+          setSelectedJobId(prev => {
+            if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
+              return prev;
+            }
+            return jobs.find(isActiveJob)?.id ?? null;
+          });
+          setLastLifecycleError(null);
+
+          const riderKey = user?.id ? String(user.id) : '';
+          if (cancelledByKey.size > 0 && riderKey) {
+            try {
+              let durableAcked = new Set<string>();
+              try {
+                durableAcked =
+                  await cancellationAckRepository.loadAcknowledgedCancellationKeys(
+                    riderKey,
+                  );
+              } catch {
+                durableAcked = new Set();
+              }
+
+              const sessionAlerted =
+                cancellationAckRepository.getSessionCancellationAlerts(riderKey);
+              const plan = planCancellationAlerts({
+                eventKeys: [...cancelledByKey.keys()],
+                durableAcked,
+                sessionAlerted,
+                suppressUiAlert: Boolean(runOpts?.suppressCancelAlert),
+              });
+
+              if (plan.keysToShowAlert.length > 0) {
+                const labels = plan.keysToShowAlert
+                  .map(k => {
+                    const o = cancelledByKey.get(k);
+                    return o?.externalOrderId || o?.id || k;
+                  })
+                  .join(', ');
+                Alert.alert(
+                  'Order cancelled',
+                  plan.keysToShowAlert.length === 1
+                    ? `Order ${labels} was cancelled.`
+                    : `Orders cancelled: ${labels}`,
+                );
+                cancellationAckRepository.markSessionCancellationAlerts(
+                  riderKey,
+                  plan.keysToShowAlert,
+                );
+              }
+
+              if (runOpts?.suppressCancelAlert && plan.keysNeedingAck.length > 0) {
+                cancellationAckRepository.markSessionCancellationAlerts(
+                  riderKey,
+                  plan.keysNeedingAck,
+                );
+              }
+
+              if (plan.keysNeedingAck.length > 0) {
+                await cancellationAckRepository.acknowledgeCancellationKeys(
+                  riderKey,
+                  plan.keysNeedingAck,
+                );
+              }
+
+              const aoIds = [...cancelledByKey.values()]
+                .map(o => o.backendId)
+                .filter((id): id is number => typeof id === 'number' && id > 0);
+              if (aoIds.length > 0) {
+                try {
+                  await ordersRepository.acknowledgeCancellations(aoIds);
+                } catch {
+                  // ignore
+                }
+              }
+            } catch {
+              // Ack/storage failures must not undo Active job restore above.
+            }
+          }
+        } while (restoreQueuedRef.current);
+      } finally {
+        setLifecyclePending(false);
+        restoringRef.current = false;
+        if (restoreQueuedRef.current) {
+          restoreQueuedRef.current = false;
+          void restoreActiveDeliveries(restoreOptsRef.current);
         }
       }
-
-      if (cancelled.length > 0) {
-        const labels = cancelled.map(o => o.id).join(', ');
-        Alert.alert(
-          'Order cancelled',
-          cancelled.length === 1
-            ? `Order ${labels} was cancelled.`
-            : `Orders cancelled: ${labels}`,
-        );
-      }
-
-      const jobs: ActiveDeliveryJob[] = [];
-      for (const order of active) {
-        try {
-          jobs.push(createJobFromOrder(order, { restore: true }));
-        } catch {
-          // Skip rows missing backendId
-        }
-      }
-
-      setActiveJobs(jobs);
-      setSelectedJobId(prev => {
-        if (prev && jobs.some(j => j.id === prev && isActiveJob(j))) {
-          return prev;
-        }
-        return jobs.find(isActiveJob)?.id ?? null;
-      });
-      setLastLifecycleError(null);
-    } finally {
-      setLifecyclePending(false);
-      restoringRef.current = false;
-    }
-  }, []);
+    },
+    [user?.id],
+  );
 
   // Clear rider-scoped UI state on logout / account switch
   useEffect(() => {
     if (user) return;
+    void stopNativeLocationTracking();
     setIsOnline(false);
     setShiftStartedAt(null);
     setActiveJobs([]);
@@ -303,12 +442,12 @@ export function RiderSessionProvider({
       const me = await authRepository.fetchCurrentUser();
       if (cancelled) return;
       if (me.ok && typeof me.data.isAvailableOnline === 'boolean') {
-        setIsOnline(me.data.isAvailableOnline);
-        if (me.data.isAvailableOnline) {
-          setShiftStartedAt(prev => prev ?? new Date());
-        } else {
-          setShiftStartedAt(null);
-        }
+        const applied = applyServerAvailability({
+          isOnline: me.data.isAvailableOnline,
+          currentOnlineStartedAt: me.data.currentOnlineStartedAt,
+        });
+        setIsOnline(applied.isOnline);
+        setShiftStartedAt(applied.shiftStartedAt);
       }
       await restoreActiveDeliveries();
     })();
@@ -317,13 +456,23 @@ export function RiderSessionProvider({
     };
   }, [authLoading, user, restoreActiveDeliveries]);
 
-  // Refresh active jobs when app returns to foreground
+  // Refresh active jobs + server online interval when app returns to foreground
   useEffect(() => {
     if (!user) return;
     const onChange = (state: AppStateStatus) => {
-      if (state === 'active') {
-        void restoreActiveDeliveries();
-      }
+      if (state !== 'active') return;
+      void (async () => {
+        const me = await authRepository.fetchCurrentUser();
+        if (me.ok && typeof me.data.isAvailableOnline === 'boolean') {
+          const applied = applyServerAvailability({
+            isOnline: me.data.isAvailableOnline,
+            currentOnlineStartedAt: me.data.currentOnlineStartedAt,
+          });
+          setIsOnline(applied.isOnline);
+          setShiftStartedAt(applied.shiftStartedAt);
+        }
+        await restoreActiveDeliveries();
+      })();
     };
     const sub = AppState.addEventListener('change', onChange);
     return () => sub.remove();
@@ -333,6 +482,14 @@ export function RiderSessionProvider({
     if (!activeJob) return false;
     if (isCompletionStep(activeJob.state)) return false;
 
+    if (!isConnected) {
+      Alert.alert(
+        'No connection',
+        'Connect to the internet to update this delivery. Status changes are not queued offline.',
+      );
+      return false;
+    }
+
     const next = getNextState(activeJob.state);
     if (!next || next === 'DELIVERED' || next === 'COMPLETED') {
       return false;
@@ -340,43 +497,85 @@ export function RiderSessionProvider({
 
     const jobId = activeJob.id;
     const backendId = activeJob.backendId;
+    const previousStatus = activeJob.backendStatus;
+    const backendStatus = backendStatusForAdvance(next);
+    if (!backendStatus) return false;
 
-    if (isInProgressTransition(activeJob.state, next)) {
-      setLifecyclePending(true);
-      setLastLifecycleError(null);
-      updateJobInList(jobId, prev => ({
-        ...prev,
-        pendingAction: 'pickup',
-        lastError: null,
-      }));
-      const result = await ordersRepository.updateOrderStatus(backendId, {
-        status: 'InProgress',
-      });
+    setLifecyclePending(true);
+    setLastLifecycleError(null);
+    updateJobInList(jobId, prev => ({
+      ...prev,
+      pendingAction: isInProgressTransition(activeJob.state, next)
+        ? 'pickup'
+        : 'advance',
+      lastError: null,
+    }));
+
+    const result = await ordersRepository.updateOrderStatus(backendId, {
+      status: backendStatus as OrderStatusPayload['status'],
+    });
+
+    if (result.ok) {
       setLifecyclePending(false);
-      if (!result.ok) {
-        setLastLifecycleError(result.error.message);
-        updateJobInList(jobId, prev => ({
-          ...prev,
-          pendingAction: null,
-          lastError: result.error.message,
-        }));
-        Alert.alert('Pickup failed', result.error.message);
-        return false;
-      }
       const now = new Date().toISOString();
       updateJobInList(jobId, prev => ({
         ...advanceJob(prev),
-        backendStatus: 'InProgress',
-        pickedUpAt: now,
+        backendStatus,
+        ...(isInProgressTransition(activeJob.state, next)
+          ? { pickedUpAt: now }
+          : {}),
         pendingAction: null,
         lastError: null,
       }));
       return true;
     }
 
-    updateJobInList(jobId, prev => advanceJob(prev));
-    return true;
-  }, [activeJob, updateJobInList]);
+    if (!isUncertainMutationFailure(result.error)) {
+      setLifecyclePending(false);
+      setLastLifecycleError(result.error.message);
+      updateJobInList(jobId, prev => ({
+        ...prev,
+        pendingAction: null,
+        lastError: result.error.message,
+      }));
+      Alert.alert('Update failed', result.error.message);
+      return false;
+    }
+
+    const serverResult = await ordersRepository.fetchOrderById(backendId);
+    const reconcile = reconcileStatusMutation({
+      expectedBackendStatus: backendStatus,
+      previousBackendStatus: previousStatus,
+      serverOrder: serverResult.ok ? serverResult.data : null,
+      fetchFailed: !serverResult.ok,
+    });
+
+    setLifecyclePending(false);
+    updateJobInList(jobId, prev => ({
+      ...prev,
+      pendingAction: null,
+      lastError: reconcile.kind === 'applied' ? null : reconcile.message,
+    }));
+
+    if (reconcile.kind === 'applied') {
+      await restoreActiveDeliveries({ suppressCancelAlert: true });
+      return true;
+    }
+
+    if (reconcile.kind === 'unchanged') {
+      Alert.alert('Update not confirmed', reconcile.message);
+      setLastLifecycleError(reconcile.message);
+      return false;
+    }
+
+    await restoreActiveDeliveries({ suppressCancelAlert: true });
+    Alert.alert(
+      reconcile.kind === 'unknown' ? 'Update status unknown' : 'Update failed',
+      reconcile.message,
+    );
+    setLastLifecycleError(reconcile.message);
+    return false;
+  }, [activeJob, isConnected, restoreActiveDeliveries, updateJobInList]);
 
   const setCashCollected = useCallback(
     (collected: boolean) => {
@@ -399,6 +598,17 @@ export function RiderSessionProvider({
     async (opts?: CompleteOpts): Promise<CompleteResult | null> => {
       if (!activeJob) return null;
       if (activeJob.state !== 'ARRIVED_AT_DESTINATION') return null;
+
+      if (!isConnected) {
+        Alert.alert(
+          'No connection',
+          'Connect to the internet to complete delivery and submit COD. Cash and status are not queued offline.',
+        );
+        return {
+          ok: false,
+          message: 'No connection — cash and status were not submitted.',
+        };
+      }
 
       if (activeJob.isCod) {
         const amount = opts?.cashCollectedAmount;
@@ -423,6 +633,7 @@ export function RiderSessionProvider({
 
       const jobId = activeJob.id;
       const backendId = activeJob.backendId;
+      const previousStatus = activeJob.backendStatus;
 
       setLifecyclePending(true);
       setLastLifecycleError(null);
@@ -442,9 +653,74 @@ export function RiderSessionProvider({
           : undefined,
       });
 
-      setLifecyclePending(false);
+      const finishLocalCompletion = (cash?: {
+        amount: number | null;
+        reason: string | null;
+        verified: boolean;
+        message?: string;
+      }) => {
+        const isCod = activeJob.isCod;
+        const amount =
+          cash != null
+            ? cash.amount
+            : isCod
+              ? opts?.cashCollectedAmount ?? null
+              : null;
+        const reason =
+          cash != null
+            ? cash.reason
+            : isCod
+              ? opts?.cashCollectedReason ?? null
+              : null;
+        const verified = cash != null ? cash.verified : true;
 
-      if (!result.ok) {
+        let delivered: ActiveDeliveryJob = {
+          ...activeJob,
+          cashCollected: isCod ? verified : activeJob.cashCollected,
+          cashCollectedAmount: isCod && verified ? amount : null,
+          cashCollectedReason: isCod && verified ? reason : null,
+          backendStatus: 'Completed',
+          pendingAction: null,
+          lastError: null,
+        };
+        if (isCod && !verified) {
+          delivered = {
+            ...delivered,
+            cashCollected: false,
+            cashCollectedAmount: null,
+            cashCollectedReason: null,
+          };
+        }
+        delivered = transitionJob(delivered, 'DELIVERED');
+        delivered = transitionJob(delivered, 'COMPLETED');
+        const timeline = buildDeliveryTimeline(delivered);
+        const historyItem = jobToHistoryItem(delivered, timeline);
+
+        setHistory(prev => [historyItem, ...prev]);
+        setStats(prev => applyCompletionToStats(prev, delivered));
+
+        setActiveJobs(prev => {
+          const remaining = prev.filter(j => j.id !== delivered.id);
+          const nextSelected = remaining.find(isActiveJob)?.id ?? null;
+          setSelectedJobId(nextSelected);
+          return remaining;
+        });
+
+        return {
+          historyItem,
+          ok: true as const,
+          cashVerified: isCod ? verified : null,
+          message: cash?.message,
+        };
+      };
+
+      if (result.ok) {
+        setLifecyclePending(false);
+        return finishLocalCompletion();
+      }
+
+      if (!isUncertainMutationFailure(result.error)) {
+        setLifecyclePending(false);
         setLastLifecycleError(result.error.message);
         updateJobInList(jobId, prev => ({
           ...prev,
@@ -455,34 +731,58 @@ export function RiderSessionProvider({
         return { ok: false, message: result.error.message };
       }
 
-      let delivered: ActiveDeliveryJob = {
-        ...activeJob,
-        cashCollected: activeJob.isCod ? true : activeJob.cashCollected,
-        cashCollectedAmount: opts?.cashCollectedAmount ?? null,
-        cashCollectedReason: opts?.cashCollectedReason ?? null,
-        backendStatus: 'Completed',
-        pendingAction: null,
-        lastError: null,
-      };
-      delivered = transitionJob(delivered, 'DELIVERED');
-      delivered = transitionJob(delivered, 'COMPLETED');
-      const timeline = buildDeliveryTimeline(delivered);
-      const historyItem = jobToHistoryItem(delivered, timeline);
-
-      setHistory(prev => [historyItem, ...prev]);
-      // Do not auto-credit wallet as withdrawable money — settlements are admin-managed.
-      setStats(prev => applyCompletionToStats(prev, delivered));
-
-      setActiveJobs(prev => {
-        const remaining = prev.filter(j => j.id !== delivered.id);
-        const nextSelected = remaining.find(isActiveJob)?.id ?? null;
-        setSelectedJobId(nextSelected);
-        return remaining;
+      const serverResult = await ordersRepository.fetchOrderById(backendId);
+      const reconcile = reconcileStatusMutation({
+        expectedBackendStatus: 'Completed',
+        previousBackendStatus: previousStatus,
+        serverOrder: serverResult.ok ? serverResult.data : null,
+        fetchFailed: !serverResult.ok,
       });
 
-      return { historyItem, ok: true };
+      setLifecyclePending(false);
+      updateJobInList(jobId, prev => ({
+        ...prev,
+        pendingAction: null,
+        lastError: reconcile.kind === 'applied' ? null : reconcile.message,
+      }));
+
+      if (reconcile.kind === 'applied') {
+        const cash = resolveCodCashAfterServerCompleted({
+          isCod: activeJob.isCod,
+          submittedAmount: opts?.cashCollectedAmount,
+          submittedReason: opts?.cashCollectedReason,
+          serverCashCollected: reconcile.order.cashCollectedAmount,
+          serverCashReason: reconcile.order.cashCollectedReason,
+        });
+        const finished = finishLocalCompletion({
+          amount: cash.amount,
+          reason: cash.reason,
+          verified: cash.verified,
+          message: cash.message,
+        });
+        if (!cash.verified || cash.matchedSubmitted === false) {
+          Alert.alert('Delivery completed', cash.message);
+        }
+        return finished;
+      }
+
+      if (reconcile.kind === 'unchanged') {
+        Alert.alert('Complete not confirmed', reconcile.message);
+        setLastLifecycleError(reconcile.message);
+        return { ok: false, message: reconcile.message };
+      }
+
+      await restoreActiveDeliveries({ suppressCancelAlert: true });
+      Alert.alert(
+        reconcile.kind === 'unknown'
+          ? 'Complete status unknown'
+          : 'Complete failed',
+        reconcile.message,
+      );
+      setLastLifecycleError(reconcile.message);
+      return { ok: false, message: reconcile.message };
     },
-    [activeJob, updateJobInList],
+    [activeJob, isConnected, restoreActiveDeliveries, updateJobInList],
   );
 
   const withdrawFunds = useCallback((_amount: number): boolean => {

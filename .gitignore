@@ -156,6 +156,10 @@ coverage/
 
 AdminPortal/.env
 
+# Local ASP.NET secrets override (never commit)
+**/appsettings.Local.json
+**/secrets.json
+
 
 # ============================================================
 # Yarn

@@ -48,6 +48,41 @@ export type ApiAvailableOrder = {
   completedAt?: string | null;
   isDirectAssignment?: boolean;
   items?: ApiOrderItem[];
+  issueReports?: Array<{
+    id: number;
+    assignedOrderId: number;
+    orderId?: string;
+    orderNo?: string;
+    storeId?: string;
+    reasonCode: string;
+    reasonLabel?: string;
+    note?: string | null;
+    riderUserId: string;
+    requestId?: string | null;
+    createdAt: string;
+    orderStatus?: string;
+    status?: string;
+    statusLabel?: string;
+    acknowledgedAt?: string | null;
+    closedAt?: string | null;
+  }>;
+  failure?: {
+    requestStatus?: string | null;
+    reasonCode?: string | null;
+    reasonLabel?: string | null;
+    note?: string | null;
+    requestId?: string | null;
+    issueReportId?: number | null;
+    requestedAt?: string | null;
+    decidedAt?: string | null;
+    decisionNote?: string | null;
+    statusBeforeReturn?: string | null;
+    riderReturnedAt?: string | null;
+    storeReceivedAt?: string | null;
+    cashCollectedWarning?: boolean;
+    cashCollected?: number | null;
+    expectedCash?: number | null;
+  } | null;
 };
 
 export type ApiRiderPerformance = {
@@ -162,9 +197,9 @@ function colorForId(key: string): string {
  */
 export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
   const displayId = (
+    dto.orderId ||
     dto.displayOrderNo ||
     dto.orderNo ||
-    dto.orderId ||
     String(dto.id)
   ).trim();
   const customerName = joinParts(dto.firstName, dto.lastName) || 'Customer';
@@ -242,11 +277,46 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     backendId: dto.id,
     externalOrderId: dto.orderId,
     expectedCash,
+    cashCollectedAmount:
+      dto.cashCollected != null && Number.isFinite(Number(dto.cashCollected))
+        ? Number(dto.cashCollected)
+        : null,
+    cashCollectedReason: (dto.cashCollectedReason ?? '').trim() || null,
     backendStatus: dto.status ?? undefined,
     acceptedAt: dto.acceptedAt ?? undefined,
     pickedUpAt: dto.pickedUpAt ?? undefined,
     completedAt: dto.completedAt ?? undefined,
     isDirectAssignment: dto.isDirectAssignment ?? false,
+    issueReports: (dto.issueReports ?? []).map(r => ({
+      id: r.id,
+      reasonCode: r.reasonCode,
+      reasonLabel: r.reasonLabel,
+      note: r.note,
+      createdAt: r.createdAt,
+      status: r.status,
+      statusLabel: r.statusLabel,
+      acknowledgedAt: r.acknowledgedAt,
+      closedAt: r.closedAt,
+    })),
+    failure: dto.failure
+      ? {
+          requestStatus: dto.failure.requestStatus ?? undefined,
+          reasonCode: dto.failure.reasonCode ?? undefined,
+          reasonLabel: dto.failure.reasonLabel ?? undefined,
+          note: dto.failure.note ?? undefined,
+          requestId: dto.failure.requestId ?? undefined,
+          issueReportId: dto.failure.issueReportId ?? undefined,
+          requestedAt: dto.failure.requestedAt ?? undefined,
+          decidedAt: dto.failure.decidedAt ?? undefined,
+          decisionNote: dto.failure.decisionNote ?? undefined,
+          statusBeforeReturn: dto.failure.statusBeforeReturn ?? undefined,
+          riderReturnedAt: dto.failure.riderReturnedAt ?? undefined,
+          storeReceivedAt: dto.failure.storeReceivedAt ?? undefined,
+          cashCollectedWarning: !!dto.failure.cashCollectedWarning,
+          cashCollected: dto.failure.cashCollected ?? undefined,
+          expectedCash: dto.failure.expectedCash ?? undefined,
+        }
+      : undefined,
   };
 }
 
@@ -255,13 +325,90 @@ export function mapBackendStatusToDeliveryState(
   status?: string | null,
 ): DeliveryState {
   const raw = (status ?? '').trim().toLowerCase();
-  if (raw === 'completed') return 'COMPLETED';
-  if (raw === 'inprogress' || raw === 'in_progress') return 'ON_THE_WAY';
-  if (raw === 'accepted') return 'ACCEPTED';
-  return 'ACCEPTED';
+  switch (raw) {
+    case 'completed':
+      return 'COMPLETED';
+    case 'delivered':
+      return 'DELIVERED';
+    case 'arrivedatcustomer':
+    case 'arrived_at_customer':
+      return 'ARRIVED_AT_DESTINATION';
+    case 'ontheway':
+    case 'on_the_way':
+      return 'ON_THE_WAY';
+    case 'inprogress':
+    case 'in_progress':
+      return 'PICKUP_CONFIRMED';
+    case 'arrivedatpickup':
+    case 'arrived_at_pickup':
+      return 'ARRIVED_AT_PICKUP';
+    case 'navigatingtopickup':
+    case 'navigating_to_pickup':
+      return 'NAVIGATE_TO_PICKUP';
+    case 'accepted':
+      return 'ACCEPTED';
+    case 'returningtostore':
+    case 'returning_to_store':
+      return 'RETURNING_TO_STORE';
+    case 'awaitingstorereceipt':
+    case 'awaiting_store_receipt':
+      return 'AWAITING_STORE_RECEIPT';
+    default:
+      return 'ACCEPTED';
+  }
+}
+
+/** Local delivery UI state → server AssignedOrders.Status. */
+export function mapDeliveryStateToBackendStatus(
+  state: DeliveryState,
+): string {
+  switch (state) {
+    case 'ACCEPTED':
+      return 'Accepted';
+    case 'NAVIGATE_TO_PICKUP':
+      return 'NavigatingToPickup';
+    case 'ARRIVED_AT_PICKUP':
+      return 'ArrivedAtPickup';
+    case 'PICKUP_CONFIRMED':
+      return 'InProgress';
+    case 'ON_THE_WAY':
+      return 'OnTheWay';
+    case 'ARRIVED_AT_DESTINATION':
+      return 'ArrivedAtCustomer';
+    case 'DELIVERED':
+      return 'Delivered';
+    case 'COMPLETED':
+      return 'Completed';
+    case 'RETURNING_TO_STORE':
+      return 'ReturningToStore';
+    case 'AWAITING_STORE_RECEIPT':
+      return 'AwaitingStoreReceipt';
+    default:
+      return 'Accepted';
+  }
 }
 
 export function isCancelledBackendStatus(status?: string | null): boolean {
   const raw = (status ?? '').trim().toLowerCase();
   return raw === 'cancelled' || raw === 'canceled';
+}
+
+/** Statuses that still belong on the rider's Active list (server ActiveStatuses). */
+export function isLiveRiderActiveStatus(status?: string | null): boolean {
+  const raw = (status ?? '').trim().toLowerCase().replace(/_/g, '');
+  switch (raw) {
+    case 'accepted':
+    case 'navigatingtopickup':
+    case 'arrivedatpickup':
+    case 'inprogress':
+    case 'ontheway':
+    case 'arrivedatcustomer':
+    case 'delivered':
+    case 'returningtostore':
+    case 'awaitingstorereceipt':
+      return true;
+    default:
+      // Available / Cancelled / Completed / Failed / unknown → not an active job
+      return false;
+  }
 }

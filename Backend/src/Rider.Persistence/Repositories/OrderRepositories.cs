@@ -31,6 +31,16 @@ namespace Rider.Persistence.Repositories
 
         public async Task<List<AssignedOrder>> GetAvailableWithItemsAsync(Guid riderUserId)
         {
+            var riderStoreId = await _appContext.Users
+                .AsNoTracking()
+                .Where(u => u.UserId == riderUserId && u.DeletedAt == null)
+                .Select(u => u.StoreId)
+                .FirstOrDefaultAsync();
+
+            // Riders without a store assignment must not see the open pool.
+            if (string.IsNullOrWhiteSpace(riderStoreId))
+                return new List<AssignedOrder>();
+
             var rejectedIds = await _appContext.OrderRejections
                 .AsNoTracking()
                 .Where(r => r.RiderUserId == riderUserId)
@@ -43,6 +53,8 @@ namespace Rider.Persistence.Repositories
                 .Include(o => o.Batch)
                     .ThenInclude(b => b.Store)
                 .Where(o => o.Status == OrderStatuses.Available
+                    && o.Batch != null
+                    && o.Batch.StoreId == riderStoreId
                     && !rejectedIds.Contains(o.Id)
                     && (
                         // Open pool: not direct-held, unreserved
@@ -127,7 +139,7 @@ namespace Rider.Persistence.Repositories
         public Task<int> CountActiveForRiderAsync(Guid riderUserId)
             => _entities.CountAsync(o =>
                 o.AcceptedByUserId == riderUserId
-                && (o.Status == OrderStatuses.Accepted || o.Status == OrderStatuses.InProgress));
+                && OrderStatuses.ActiveStatuses.Contains(o.Status));
 
         public async Task<List<AssignedOrder>> GetActiveForRiderAsync(Guid riderUserId)
             => await _entities
@@ -136,8 +148,21 @@ namespace Rider.Persistence.Repositories
                 .Include(o => o.Batch)
                     .ThenInclude(b => b.Store)
                 .Where(o => o.AcceptedByUserId == riderUserId
-                    && (o.Status == OrderStatuses.Accepted || o.Status == OrderStatuses.InProgress))
+                    && OrderStatuses.ActiveStatuses.Contains(o.Status))
                 .OrderByDescending(o => o.AcceptedAt ?? o.CreatedAt)
+                .ToListAsync();
+
+        public async Task<List<AssignedOrder>> GetRecentlyCancelledForRiderAsync(
+            Guid riderUserId, DateTime sinceUtcInclusive)
+            => await _entities
+                .AsNoTracking()
+                .Include(o => o.Items)
+                .Include(o => o.Batch)
+                    .ThenInclude(b => b.Store)
+                .Where(o => o.AcceptedByUserId == riderUserId
+                    && o.Status == OrderStatuses.Cancelled
+                    && (o.UpdatedAt ?? o.CreatedAt) >= sinceUtcInclusive)
+                .OrderByDescending(o => o.UpdatedAt ?? o.CreatedAt)
                 .ToListAsync();
 
         public async Task<bool> TryAcceptAvailableAsync(long id, Guid riderUserId, DateTime acceptedAtUtc)
@@ -189,7 +214,7 @@ namespace Rider.Persistence.Repositories
             {
                 var rows = await _entities
                     .Where(o => o.Id == id
-                        && o.Status == OrderStatuses.InProgress
+                        && OrderStatuses.CompletablesStatuses.Contains(o.Status)
                         && o.AcceptedByUserId == riderUserId)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(o => o.Status, OrderStatuses.Completed)
@@ -204,7 +229,7 @@ namespace Rider.Persistence.Repositories
             {
                 var order = await _entities.FirstOrDefaultAsync(o => o.Id == id);
                 if (order == null
-                    || order.Status != OrderStatuses.InProgress
+                    || !OrderStatuses.IsCompletableStatus(order.Status)
                     || order.AcceptedByUserId != riderUserId)
                     return false;
 

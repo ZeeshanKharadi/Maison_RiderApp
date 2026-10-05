@@ -1,3 +1,5 @@
+import { apiBase } from './apiBase';
+
 export type ApiEnvelope<T> = {
   status: boolean;
   message: string;
@@ -73,11 +75,6 @@ export function isAdminPortalUser(user: UserData | null): boolean {
 
 export function isHeadOffice(user: UserData | null): boolean {
   return !!user?.roles?.includes('Administrator');
-}
-
-function apiBase(): string {
-  const env = import.meta.env.VITE_API_URL;
-  return env && env.length > 0 ? env.replace(/\/$/, '') : '';
 }
 
 /** Pull a human-readable message from ApiResponse or ProblemDetails bodies. */

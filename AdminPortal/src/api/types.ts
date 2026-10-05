@@ -48,6 +48,70 @@ export type OrderListDto = {
   updatedAt?: string | null;
 };
 
+export type OrderRejectionDto = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  riderUserId: string;
+  riderWorkerId?: string | null;
+  riderName?: string | null;
+  reason?: string | null;
+  isDirectAssignment: boolean;
+  createdAt: string;
+};
+
+export type DeliveryIssueReportDto = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  orderStatus?: string | null;
+  riderUserId: string;
+  riderWorkerId?: string | null;
+  riderName?: string | null;
+  reasonCode: string;
+  reasonLabel: string;
+  note?: string | null;
+  status?: string | null;
+  statusLabel?: string | null;
+  internalNote?: string | null;
+  acknowledgedByUserId?: string | null;
+  acknowledgedByName?: string | null;
+  acknowledgedAt?: string | null;
+  closedByUserId?: string | null;
+  closedByName?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  rowVersion?: string | null;
+  history?: DeliveryIssueTriageEventDto[];
+};
+
+export type DeliveryIssueReportPageDto = {
+  items: DeliveryIssueReportDto[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasMore: boolean;
+  dateFilterApplied: boolean;
+};
+
+export type DeliveryIssueTriageEventDto = {
+  id: number;
+  action: string;
+  previousStatus?: string | null;
+  newStatus?: string | null;
+  actorType?: string | null;
+  actorUserId?: string | null;
+  actorName?: string | null;
+  actorWorkerId?: string | null;
+  internalNote?: string | null;
+  at: string;
+};
+
 export type OrderItemDto = {
   itemId: number;
   description: string;
@@ -69,6 +133,38 @@ export type OrderDetailDto = OrderListDto & {
   orderTime?: string;
   batchTime?: string;
   items: OrderItemDto[];
+  statusHistory?: OrderLifecycleEventDto[];
+  issueReports?: DeliveryIssueReportDto[];
+  failure?: OrderFailureDto | null;
+  cashOutstandingToStore?: number;
+  requeueBlockedByUnreconciledCash?: boolean;
+  requeueBlockReason?: string | null;
+};
+
+export type OrderFailureDto = {
+  requestStatus?: string | null;
+  reasonCode?: string | null;
+  reasonLabel?: string | null;
+  note?: string | null;
+  requestId?: string | null;
+  issueReportId?: number | null;
+  requestedAt?: string | null;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
+  statusBeforeReturn?: string | null;
+  riderReturnedAt?: string | null;
+  storeReceivedAt?: string | null;
+  cashCollectedWarning?: boolean;
+  cashCollected?: number | null;
+  expectedCash?: number | null;
+};
+
+export type OrderLifecycleEventDto = {
+  status: string;
+  previousStatus?: string | null;
+  actorType?: string | null;
+  reason?: string | null;
+  at: string;
 };
 
 export type AdminNotificationDto = {
@@ -93,23 +189,11 @@ export type LiveSummary = {
   cashToCollectToday: number;
 };
 
-export type RiderSettlement = {
-  riderId: string;
-  workerId: string;
-  name: string;
-  storeId: string;
-  deliveryCount: number;
-  cancelledCount: number;
-  cashHeld: number;
-  payoutDue: number;
-  salesTotal: number;
-};
-
 export type PaymentsDashboard = {
   from: string;
   to: string;
-  storeId?: string;
-  orderCount: number;
+  storeId?: string | null;
+  orderCount?: number;
   totalSales: number;
   cashTotal: number;
   cardTotal: number;
@@ -118,7 +202,17 @@ export type PaymentsDashboard = {
   cashCollected: number;
   byDay: { date: string; orderCount: number; total: number; cash: number; card: number; other: number }[];
   byStore: { storeId: string; orderCount: number; total: number; cash: number; card: number; other: number }[];
-  byRider: RiderSettlement[];
+  byRider: {
+    riderId: string;
+    workerId: string;
+    name: string;
+    storeId: string;
+    deliveryCount: number;
+    cancelledCount: number;
+    cashHeld: number;
+    salesTotal: number;
+    payoutDue: number;
+  }[];
 };
 
 export type ReportsDto = {
@@ -130,7 +224,10 @@ export type ReportsDto = {
     cancelled: number;
     total: number;
   };
-  avgDeliveryTime: { sampleCount: number; avgMinutes?: number | null };
+  avgDeliveryTime: {
+    sampleCount: number;
+    avgMinutes?: number | null;
+  };
   perRiderPerDay: {
     date: string;
     riderId: string;

@@ -11,7 +11,9 @@ export type DeliveryState =
   | 'ON_THE_WAY'
   | 'ARRIVED_AT_DESTINATION'
   | 'DELIVERED'
-  | 'COMPLETED';
+  | 'COMPLETED'
+  | 'RETURNING_TO_STORE'
+  | 'AWAITING_STORE_RECEIPT';
 
 export type StatusTone = 'info' | 'success' | 'warning' | 'neutral';
 
@@ -128,6 +130,30 @@ export const DELIVERY_STATE_CONFIG: Record<DeliveryState, DeliveryStateConfig> =
       pillLabel: 'Completed',
       pillTone: 'success',
       timelineLabel: 'Completed',
+    },
+    RETURNING_TO_STORE: {
+      state: 'RETURNING_TO_STORE',
+      title: 'Return to store',
+      description:
+        'Manager approved return. Take the order back to the store, then confirm arrival.',
+      primaryAction: 'Confirm return at store',
+      secondaryAction: null,
+      progress: 70,
+      pillLabel: 'Returning',
+      pillTone: 'warning',
+      timelineLabel: 'Returning to store',
+    },
+    AWAITING_STORE_RECEIPT: {
+      state: 'AWAITING_STORE_RECEIPT',
+      title: 'Awaiting store receipt',
+      description:
+        'You confirmed return. Waiting for the manager to confirm receipt at the store.',
+      primaryAction: null,
+      secondaryAction: null,
+      progress: 85,
+      pillLabel: 'At store',
+      pillTone: 'warning',
+      timelineLabel: 'Awaiting store receipt',
     },
   };
 

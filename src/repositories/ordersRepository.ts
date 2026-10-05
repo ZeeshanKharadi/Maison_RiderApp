@@ -1,6 +1,6 @@
 import { AvailableOrder } from '../data/orders';
 import { API_PATHS } from '../api/config';
-import { apiEnvelope, HttpError } from '../api/httpClient';
+import { apiEnvelope, HttpError, TimeoutError } from '../api/httpClient';
 import {
   ApiAvailableOrder,
   ApiRiderPerformance,
@@ -9,7 +9,15 @@ import {
 import { ApiResult, fail, ok } from './types';
 
 export type OrderStatusPayload = {
-  status: 'Accepted' | 'InProgress' | 'Completed';
+  status:
+    | 'Accepted'
+    | 'NavigatingToPickup'
+    | 'ArrivedAtPickup'
+    | 'InProgress'
+    | 'OnTheWay'
+    | 'ArrivedAtCustomer'
+    | 'Delivered'
+    | 'Completed';
   cashCollected?: number;
   cashCollectedReason?: string;
   requestId?: string;
@@ -18,6 +26,37 @@ export type OrderStatusPayload = {
 export type RejectOrderPayload = {
   reason?: string;
   requestId?: string;
+};
+
+export type DeliveryIssueReason =
+  | 'CustomerUnreachable'
+  | 'CustomerRefused'
+  | 'AddressIssue'
+  | 'Other';
+
+export type ReportDeliveryIssuePayload = {
+  reason: DeliveryIssueReason;
+  note?: string;
+  requestId?: string;
+};
+
+export type DeliveryIssueReport = {
+  id: number;
+  assignedOrderId: number;
+  orderId: string;
+  orderNo: string;
+  storeId: string;
+  reasonCode: DeliveryIssueReason | string;
+  reasonLabel: string;
+  note?: string | null;
+  riderUserId: string;
+  requestId?: string | null;
+  createdAt: string;
+  orderStatus: string;
+  status?: string;
+  statusLabel?: string;
+  acknowledgedAt?: string | null;
+  closedAt?: string | null;
 };
 
 export type RiderPerformance = {
@@ -68,8 +107,11 @@ function dedupeAvailableOrders(orders: AvailableOrder[]): AvailableOrder[] {
 }
 
 function mapNetworkError(err: unknown, fallback: string): ApiResult<never> {
+  if (err instanceof TimeoutError) {
+    return fail('TIMEOUT', err.message);
+  }
   if (err instanceof HttpError) {
-    return fail(err.code, err.message);
+    return fail(err.code, err.message, err.statusCode);
   }
   return fail(
     'NETWORK',
@@ -121,12 +163,69 @@ export async function fetchActiveOrders(): Promise<ApiResult<AvailableOrder[]>> 
   }
 }
 
+/** Unacknowledged cancellations for this rider (server inbox; no time window). */
+export async function fetchRecentCancellations(): Promise<
+  ApiResult<AvailableOrder[]>
+> {
+  try {
+    const envelope = await apiEnvelope<ApiAvailableOrder[]>(
+      API_PATHS.recentCancellations,
+      { auth: true },
+    );
+
+    if (!envelope.status) {
+      return fail(
+        'RECENT_CANCELLATIONS_FAILED',
+        envelope.message || 'Failed to load cancellations',
+      );
+    }
+
+    const rows = Array.isArray(envelope.Data) ? envelope.Data : [];
+    return ok(rows.map(mapApiOrderToAvailable));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to reach cancellations API');
+  }
+}
+
+/** Server durable ack — marks cancel-inbox rows read for this rider. */
+export async function acknowledgeCancellations(
+  assignedOrderIds: number[],
+): Promise<ApiResult<void>> {
+  const ids = assignedOrderIds.filter(id => Number.isFinite(id) && id > 0);
+  if (ids.length === 0) return ok(undefined);
+  try {
+    const envelope = await apiEnvelope<string>(API_PATHS.acknowledgeCancellations, {
+      method: 'POST',
+      auth: true,
+      body: { assignedOrderIds: ids },
+    });
+    if (!envelope.status) {
+      return fail(
+        'ACK_CANCELLATIONS_FAILED',
+        envelope.message || 'Failed to acknowledge cancellations',
+      );
+    }
+    return ok(undefined);
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to reach acknowledge cancellations API');
+  }
+}
+
 export async function fetchOrderHistory(
   page = 1,
   pageSize = 20,
-): Promise<ApiResult<AvailableOrder[]>> {
+): Promise<
+  ApiResult<{
+    items: AvailableOrder[];
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
+  }>
+> {
   try {
-    const qs = `?page=${encodeURIComponent(String(page))}&pageSize=${encodeURIComponent(String(pageSize))}`;
+    const safePage = Math.max(1, page);
+    const safeSize = Math.min(100, Math.max(1, pageSize));
+    const qs = `?page=${encodeURIComponent(String(safePage))}&pageSize=${encodeURIComponent(String(safeSize))}`;
     const envelope = await apiEnvelope<ApiAvailableOrder[]>(
       `${API_PATHS.orderHistory}${qs}`,
       { auth: true },
@@ -140,16 +239,38 @@ export async function fetchOrderHistory(
     }
 
     const rows = Array.isArray(envelope.Data) ? envelope.Data : [];
-    return ok(rows.map(mapApiOrderToAvailable));
+    const items = rows.map(mapApiOrderToAvailable);
+    return ok({
+      items,
+      page: safePage,
+      pageSize: safeSize,
+      // API has no totalCount; another full page means older rows may exist.
+      hasMore: items.length >= safeSize,
+    });
   } catch (err) {
     return mapNetworkError(err, 'Unable to reach order history API');
   }
 }
 
-export async function fetchPerformance(): Promise<ApiResult<RiderPerformance>> {
+export async function fetchPerformance(opts?: {
+  from?: Date | string | null;
+  to?: Date | string | null;
+}): Promise<ApiResult<RiderPerformance>> {
   try {
+    const qs = new URLSearchParams();
+    if (opts?.from) {
+      const from =
+        opts.from instanceof Date ? opts.from.toISOString() : String(opts.from);
+      qs.set('from', from);
+    }
+    if (opts?.to) {
+      const to =
+        opts.to instanceof Date ? opts.to.toISOString() : String(opts.to);
+      qs.set('to', to);
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const envelope = await apiEnvelope<ApiRiderPerformance>(
-      API_PATHS.orderPerformance,
+      `${API_PATHS.orderPerformance}${suffix}`,
       { auth: true },
     );
 
@@ -178,9 +299,14 @@ export async function fetchPerformance(): Promise<ApiResult<RiderPerformance>> {
 
 export async function setAvailability(
   isOnline: boolean,
-): Promise<ApiResult<true>> {
+): Promise<
+  ApiResult<{ isOnline: boolean; currentOnlineStartedAt: string | null }>
+> {
   try {
-    const envelope = await apiEnvelope<string>(API_PATHS.availability, {
+    const envelope = await apiEnvelope<{
+      isOnline?: boolean;
+      currentOnlineStartedAt?: string | null;
+    }>(API_PATHS.availability, {
       method: 'POST',
       auth: true,
       body: { isOnline },
@@ -193,7 +319,11 @@ export async function setAvailability(
       );
     }
 
-    return ok(true);
+    const data = envelope.Data;
+    return ok({
+      isOnline: Boolean(data?.isOnline ?? isOnline),
+      currentOnlineStartedAt: data?.currentOnlineStartedAt ?? null,
+    });
   } catch (err) {
     return mapNetworkError(err, 'Unable to update availability');
   }
@@ -262,6 +392,101 @@ export async function rejectOrder(
     return ok(true);
   } catch (err) {
     return mapNetworkError(err, 'Unable to reject order');
+  }
+}
+
+export async function reportDeliveryIssue(
+  backendId: number,
+  payload: ReportDeliveryIssuePayload,
+): Promise<ApiResult<DeliveryIssueReport>> {
+  const requestId = payload.requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<DeliveryIssueReport>(
+      API_PATHS.orderReportIssue(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': requestId },
+        body: {
+          reason: payload.reason,
+          note: payload.note,
+          requestId,
+        },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'REPORT_ISSUE_FAILED',
+        envelope.message || 'Failed to report delivery issue',
+      );
+    }
+
+    return ok(envelope.Data);
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to report delivery issue');
+  }
+}
+
+export async function requestFailedDelivery(
+  backendId: number,
+  payload: ReportDeliveryIssuePayload,
+): Promise<ApiResult<AvailableOrder>> {
+  const requestId = payload.requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<ApiAvailableOrder>(
+      API_PATHS.orderRequestFailedDelivery(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': requestId },
+        body: {
+          reason: payload.reason,
+          note: payload.note,
+          requestId,
+        },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'FAILED_DELIVERY_REQUEST_FAILED',
+        envelope.message || 'Failed to submit failure request',
+      );
+    }
+
+    return ok(mapApiOrderToAvailable(envelope.Data));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to submit failure request');
+  }
+}
+
+export async function confirmReturnToStore(
+  backendId: number,
+  requestId?: string,
+): Promise<ApiResult<AvailableOrder>> {
+  const id = requestId?.trim() || createRequestId();
+  try {
+    const envelope = await apiEnvelope<ApiAvailableOrder>(
+      API_PATHS.orderConfirmReturnToStore(backendId),
+      {
+        method: 'POST',
+        auth: true,
+        headers: { 'Idempotency-Key': id },
+        body: { requestId: id },
+      },
+    );
+
+    if (!envelope.status || !envelope.Data) {
+      return fail(
+        'CONFIRM_RETURN_FAILED',
+        envelope.message || 'Failed to confirm return',
+      );
+    }
+
+    return ok(mapApiOrderToAvailable(envelope.Data));
+  } catch (err) {
+    return mapNetworkError(err, 'Unable to confirm return');
   }
 }
 

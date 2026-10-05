@@ -2,22 +2,32 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   BackHandler,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import {
+  RouteProp,
+  useNavigation,
+  useRoute,
+} from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
 import {
   AppHeader,
   AppButton,
   SectionHeader,
 } from '../components/ui';
 import { MainStackParamList } from '../navigation/MainNavigator';
-import { APP_NAME_SHORT, APP_SUPPORT_EMAIL } from '../constants/app';
+import { APP_NAME_SHORT } from '../constants/app';
+import { useRiderSession } from '../context/RiderSessionContext';
+import {
+  buildSupportMailtoUrl,
+  resolveSupportContact,
+} from '../support/supportContact';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
@@ -60,46 +70,123 @@ const SECTIONS: {
     id: 'support',
     icon: 'headset',
     title: 'Contact Support',
-    blurb: 'Chat or email our team',
+    blurb: 'Call or email our support team',
   },
   {
     id: 'report',
     icon: 'alert-circle-outline',
-    title: 'Report Issue',
-    blurb: 'Something went wrong?',
+    title: 'Report a delivery issue',
+    blurb: 'Flag a problem on an active order',
   },
   {
     id: 'feedback',
     icon: 'message-text-outline',
     title: 'Feedback',
-    blurb: 'Tell us what to improve',
+    blurb: 'Email general feedback to support',
   },
   {
     id: 'privacy',
     icon: 'shield-outline',
-    title: 'Privacy Policy',
-    blurb: 'How we handle your data',
+    title: 'Privacy (summary)',
+    blurb: 'Draft summary — full policy not in this build',
   },
   {
     id: 'terms',
     icon: 'file-document-outline',
-    title: 'Terms',
-    blurb: 'Rider agreement',
+    title: 'Terms (summary)',
+    blurb: 'Draft summary — full terms not in this build',
   },
 ];
 
+const FEEDBACK_SUBJECT = `${APP_NAME_SHORT} — Rider feedback`;
+
 export default function HelpScreen() {
-  const navigation = useNavigation();
+  const navigation =
+    useNavigation<StackNavigationProp<MainStackParamList, 'Help'>>();
   const route = useRoute<RouteProp<MainStackParamList, 'Help'>>();
+  const { activeJob } = useRiderSession();
   const [active, setActive] = useState<HelpSection | null>(
     route.params?.section ?? null,
   );
-  const [message, setMessage] = useState('');
+
+  const supportContact = useMemo(() => resolveSupportContact(), []);
+
+  const openSupportEmail = async (opts?: { subject?: string }) => {
+    if (supportContact.kind !== 'available' || !supportContact.email) {
+      Alert.alert(
+        'Email unavailable',
+        'Support email is not configured in this app build.',
+      );
+      return;
+    }
+    const url = opts?.subject
+      ? buildSupportMailtoUrl(supportContact.email.address, {
+          subject: opts.subject,
+        })
+      : supportContact.email.mailtoUrl;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(
+        'Unable to open email',
+        `Could not launch your mail app. Write to ${supportContact.email.address} from any email client.`,
+      );
+    }
+  };
+
+  const openSupportPhone = async () => {
+    if (supportContact.kind !== 'available' || !supportContact.phone) return;
+    try {
+      await Linking.openURL(supportContact.phone.telUrl);
+    } catch {
+      Alert.alert(
+        'Unable to place call',
+        `Could not launch the phone app. Call ${supportContact.phone.display} directly.`,
+      );
+    }
+  };
+
+  const openReportDeliveryIssue = () => {
+    if (!activeJob) {
+      Alert.alert(
+        'Active order required',
+        'Reporting a delivery issue needs an active order. Accept a delivery first, then use Report issue from Active Delivery or Help.',
+      );
+      return;
+    }
+    navigation.navigate('ActiveDelivery', { openReportIssue: true });
+  };
+
+  const openGeneralFeedback = () => {
+    void openSupportEmail({ subject: FEEDBACK_SUBJECT });
+  };
+
+  const onSelectSection = (id: HelpSection) => {
+    if (id === 'report') {
+      openReportDeliveryIssue();
+      return;
+    }
+    if (id === 'feedback') {
+      openGeneralFeedback();
+      return;
+    }
+    setActive(id);
+  };
 
   useEffect(() => {
-    if (route.params?.section) {
-      setActive(route.params.section);
+    const section = route.params?.section;
+    if (!section) return;
+    if (section === 'report') {
+      openReportDeliveryIssue();
+      return;
     }
+    if (section === 'feedback') {
+      openGeneralFeedback();
+      return;
+    }
+    setActive(section);
+    // Intentionally only react to deep-link section changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.params?.section]);
 
   useEffect(() => {
@@ -119,15 +206,6 @@ export default function HelpScreen() {
     return SECTIONS.find(s => s.id === active)?.title ?? 'Help';
   }, [active]);
 
-  const submitForm = (kind: string) => {
-    Alert.alert(
-      'Saved locally',
-      `${kind} was noted on this device only. It was not submitted to a support server.`,
-    );
-    setMessage('');
-    setActive(null);
-  };
-
   return (
     <View style={styles.container}>
       <AppHeader
@@ -146,7 +224,7 @@ export default function HelpScreen() {
               <TouchableOpacity
                 key={s.id}
                 style={styles.card}
-                onPress={() => setActive(s.id)}
+                onPress={() => onSelectSection(s.id)}
                 accessibilityRole="button"
                 accessibilityLabel={s.title}>
                 <Icon name={s.icon} size={24} color={colors.primaryDark} />
@@ -173,45 +251,44 @@ export default function HelpScreen() {
 
         {active === 'support' ? (
           <View style={styles.block}>
-            <Text style={styles.body}>
-              Support hours: 8:00 AM – 10:00 PM. Reach us at
-              {APP_SUPPORT_EMAIL} or start an in-app chat.
-            </Text>
-            <AppButton
-              label="Start chat"
-              icon="chat-outline"
-              fullWidth
-              onPress={() =>
-                Alert.alert('Support', 'Connecting you with support…')
-              }
-            />
-          </View>
-        ) : null}
-
-        {active === 'report' || active === 'feedback' ? (
-          <View style={styles.block}>
-            <Text style={styles.label}>
-              {active === 'report' ? 'Describe the issue' : 'Your feedback'}
-            </Text>
-            <TextInput
-              style={styles.input}
-              value={message}
-              onChangeText={setMessage}
-              multiline
-              placeholder="Type here…"
-              placeholderTextColor={colors.textMuted}
-              accessibilityLabel={
-                active === 'report' ? 'Issue description' : 'Feedback'
-              }
-            />
-            <AppButton
-              label="Submit"
-              fullWidth
-              disabled={!message.trim()}
-              onPress={() =>
-                submitForm(active === 'report' ? 'Issue report' : 'Feedback')
-              }
-            />
+            {supportContact.kind === 'available' ? (
+              <>
+                <Text style={styles.body}>
+                  Reach support by phone or email. In-app chat is not available
+                  in this build.
+                  {supportContact.phone
+                    ? `\nPhone: ${supportContact.phone.display}`
+                    : ''}
+                  {supportContact.email
+                    ? `\nEmail: ${supportContact.email.address}`
+                    : ''}
+                </Text>
+                {supportContact.phone ? (
+                  <AppButton
+                    label="Call support"
+                    icon="phone"
+                    fullWidth
+                    onPress={() => void openSupportPhone()}
+                    style={styles.supportBtn}
+                  />
+                ) : null}
+                {supportContact.email ? (
+                  <AppButton
+                    label="Email support"
+                    icon="email-outline"
+                    fullWidth
+                    variant="outline"
+                    onPress={() => void openSupportEmail()}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <Text style={styles.body}>
+                Support contact is not configured in this app build. Ask your
+                administrator to provide a support email or phone number (and
+                optional published hours) before this action can be enabled.
+              </Text>
+            )}
           </View>
         ) : null}
 
@@ -276,17 +353,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: spacing.md,
   },
-  label: { ...typography.caption, marginBottom: spacing.xs },
-  input: {
-    ...typography.body,
-    minHeight: 120,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    textAlignVertical: 'top',
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-    backgroundColor: colors.background,
+  supportBtn: {
+    marginBottom: spacing.sm,
   },
 });

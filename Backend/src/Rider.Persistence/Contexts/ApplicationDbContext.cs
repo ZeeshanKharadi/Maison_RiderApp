@@ -24,6 +24,8 @@ namespace Rider.Persistence.Contexts
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
         public DbSet<OrderLifecycleAudit> OrderLifecycleAudits { get; set; }
         public DbSet<OrderRejection> OrderRejections { get; set; }
+        public DbSet<DeliveryIssueReport> DeliveryIssueReports { get; set; }
+        public DbSet<DeliveryIssueTriageEvent> DeliveryIssueTriageEvents { get; set; }
         public DbSet<RiderAvailabilityInterval> RiderAvailabilityIntervals { get; set; }
         public DbSet<AdminNotification> AdminNotifications { get; set; }
 
@@ -40,6 +42,8 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.UserName).HasColumnName("Username");
                 entity.Property(e => e.Cnic).HasColumnName("cnic");
                 entity.Property(e => e.PhoneNumber).HasColumnName("phoneNumber");
+                entity.Property(e => e.EmergencyContactNumber).HasMaxLength(50);
+                entity.Property(e => e.EmergencyContactName).HasMaxLength(200);
                 entity.Property(e => e.Department).HasColumnName("department");
                 entity.Property(e => e.CostCenter).HasColumnName("costCenter");
                 entity.Property(e => e.StoreId).HasMaxLength(50);
@@ -156,6 +160,27 @@ namespace Rider.Persistence.Contexts
                 entity.HasIndex(e => e.HandoverRequestId)
                     .IsUnique()
                     .HasFilter("[HandoverRequestId] IS NOT NULL");
+                entity.Property(e => e.FailureRequestStatus).HasMaxLength(30);
+                entity.Property(e => e.FailureReasonCode).HasMaxLength(40);
+                entity.Property(e => e.FailureNote).HasMaxLength(500);
+                entity.Property(e => e.FailureRequestId).HasMaxLength(100);
+                entity.HasIndex(e => e.FailureRequestId)
+                    .IsUnique()
+                    .HasFilter("[FailureRequestId] IS NOT NULL");
+                entity.Property(e => e.FailureDecisionNote).HasMaxLength(500);
+                entity.Property(e => e.StatusBeforeReturn).HasMaxLength(30);
+                entity.HasOne<DeliveryIssueReport>()
+                    .WithMany()
+                    .HasForeignKey(e => e.FailureIssueReportId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<AppUser>()
+                    .WithMany()
+                    .HasForeignKey(e => e.FailureDecidedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<AppUser>()
+                    .WithMany()
+                    .HasForeignKey(e => e.StoreReceivedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
                 entity.Property(e => e.OrderTime).HasMaxLength(50);
                 entity.Property(e => e.Status).HasMaxLength(30).HasDefaultValue("Available");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
@@ -198,6 +223,10 @@ namespace Rider.Persistence.Contexts
                 entity.Property(e => e.OrderId).HasMaxLength(50);
                 entity.Property(e => e.Priority).HasMaxLength(20);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                entity.Property(e => e.IsDeleted).HasDefaultValue(false);
+                entity.HasIndex(e => new { e.UserId, e.CreatedAt })
+                    .HasFilter("[IsDeleted] = 0")
+                    .HasDatabaseName("IX_RiderNotifications_User_Active_Created");
                 entity.HasOne(e => e.User)
                     .WithMany()
                     .HasForeignKey(e => e.UserId)
@@ -261,6 +290,62 @@ namespace Rider.Persistence.Contexts
                 entity.HasOne(e => e.Rider)
                     .WithMany()
                     .HasForeignKey(e => e.RiderUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<DeliveryIssueReport>(entity =>
+            {
+                entity.ToTable("DeliveryIssueReports");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ReasonCode).HasMaxLength(40).IsRequired();
+                entity.Property(e => e.Note).HasMaxLength(500);
+                entity.Property(e => e.RequestId).HasMaxLength(100);
+                entity.Property(e => e.Status).HasMaxLength(20).IsRequired().HasDefaultValue("New");
+                entity.Property(e => e.InternalNote).HasMaxLength(1000);
+                entity.HasIndex(e => e.AssignedOrderId);
+                entity.HasIndex(e => e.CreatedAt);
+                entity.HasIndex(e => new { e.Status, e.CreatedAt });
+                entity.HasIndex(e => e.RequestId).IsUnique()
+                    .HasFilter("[RequestId] IS NOT NULL");
+                if (Database.IsSqlServer())
+                    entity.Property(e => e.RowVersion).IsRowVersion();
+                else
+                    entity.Property(e => e.RowVersion).IsConcurrencyToken();
+                entity.HasOne(e => e.Order)
+                    .WithMany()
+                    .HasForeignKey(e => e.AssignedOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Rider)
+                    .WithMany()
+                    .HasForeignKey(e => e.RiderUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.AcknowledgedByUser)
+                    .WithMany()
+                    .HasForeignKey(e => e.AcknowledgedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.ClosedByUser)
+                    .WithMany()
+                    .HasForeignKey(e => e.ClosedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<DeliveryIssueTriageEvent>(entity =>
+            {
+                entity.ToTable("DeliveryIssueTriageEvents");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ActorType).HasMaxLength(30);
+                entity.Property(e => e.Action).HasMaxLength(30).IsRequired();
+                entity.Property(e => e.PreviousStatus).HasMaxLength(20);
+                entity.Property(e => e.NewStatus).HasMaxLength(20);
+                entity.Property(e => e.InternalNote).HasMaxLength(1000);
+                entity.HasIndex(e => new { e.DeliveryIssueReportId, e.CreatedAt, e.Id });
+                entity.HasOne(e => e.Report)
+                    .WithMany()
+                    .HasForeignKey(e => e.DeliveryIssueReportId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Actor)
+                    .WithMany()
+                    .HasForeignKey(e => e.ActorUserId)
                     .OnDelete(DeleteBehavior.Restrict);
             });
 

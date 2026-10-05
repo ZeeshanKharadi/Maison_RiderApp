@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,8 +20,10 @@ import {
   confirmDialog,
 } from '../components/ui';
 import { RejectReasonSheet } from '../components/ui/OrderSheets';
+import NoConnectionBanner from '../components/NoConnectionBanner';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useRiderSession } from '../context/RiderSessionContext';
+import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import { navigate } from '../navigation/RootNavigation';
 import {
   formatPostedAgo,
@@ -29,6 +32,11 @@ import {
 } from '../data/orders';
 import { formatMoney, formatTime } from '../utils/format';
 import { MainStackParamList } from '../navigation/MainNavigator';
+import {
+  navigationInputForKind,
+  openNavigationPlan,
+  resolveNavigationPlan,
+} from '../delivery/navigationDestination';
 import {
   colors,
   elevation,
@@ -44,9 +52,10 @@ export default function OrderDetailsScreen() {
   const navigation = useNavigation();
   const route = useRoute<DetailsRoute>();
   const { orderId, backendId } = route.params;
-  const { getOrderById, resolveOrder, acceptOrder, rejectOrder } =
+  const { getOrderById, resolveOrder, acceptOrder, rejectOrder, accepting } =
     useAvailableOrders();
   const { activeJobs, isOnline } = useRiderSession();
+  const { isConnected } = useNetworkConnectivity();
   const [rejectOpen, setRejectOpen] = useState(false);
   const [order, setOrder] = useState(() => getOrderById(orderId));
   const [resolving, setResolving] = useState(!getOrderById(orderId));
@@ -81,7 +90,14 @@ export default function OrderDetailsScreen() {
   }, [navigation]);
 
   const handleAccept = useCallback(async () => {
-    if (!order) return;
+    if (!order || busy || accepting) return;
+    if (!isConnected) {
+      Alert.alert(
+        'No connection',
+        'Connect to the internet to accept orders. Accepts are not queued offline.',
+      );
+      return;
+    }
     if (!isOnline) {
       Alert.alert('Offline', 'Go online before accepting orders.');
       return;
@@ -104,7 +120,7 @@ export default function OrderDetailsScreen() {
     if (result.ok) {
       goDashboard();
     }
-  }, [order, activeJobs, acceptOrder, goDashboard, isOnline]);
+  }, [order, busy, accepting, activeJobs, acceptOrder, goDashboard, isOnline, isConnected]);
 
   const handleRejectConfirm = useCallback(
     async (reason: RejectReason) => {
@@ -143,6 +159,26 @@ export default function OrderDetailsScreen() {
     },
     [order],
   );
+
+  /** Prefer store when it has coords/address; otherwise customer dropoff. */
+  const openNavigate = useCallback(async () => {
+    if (!order) return;
+
+    const storePlan = resolveNavigationPlan(
+      navigationInputForKind(order, 'store'),
+    );
+    const plan =
+      storePlan.kind !== 'unavailable'
+        ? storePlan
+        : resolveNavigationPlan(navigationInputForKind(order, 'customer'));
+
+    await openNavigationPlan(plan, {
+      canOpenURL: url => Linking.canOpenURL(url),
+      openURL: url => Linking.openURL(url),
+      alert: (title, message, buttons) => Alert.alert(title, message, buttons),
+      platformOS: Platform.OS,
+    });
+  }, [order]);
 
   const priorityTone = useMemo(() => {
     if (!order) return 'neutral' as const;
@@ -198,6 +234,7 @@ export default function OrderDetailsScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}>
+        <NoConnectionBanner detail="Connect to the internet to accept or reject. Actions are not queued offline." />
         <View style={styles.statusRow}>
           <StatusPill label="Available" tone="info" />
           <Text style={styles.posted}>{formatPostedAgo(order.postedAt)}</Text>
@@ -224,7 +261,13 @@ export default function OrderDetailsScreen() {
         </View>
 
         <View style={styles.summary}>
-          <SummaryCell label="Fee" value={formatMoney(order.deliveryFee)} highlight />
+          {order.deliveryFee != null && order.deliveryFee > 0 ? (
+            <SummaryCell
+              label="Fee"
+              value={formatMoney(order.deliveryFee)}
+              highlight
+            />
+          ) : null}
           <SummaryCell label="Order" value={formatMoney(order.orderAmount)} />
           <SummaryCell
             label="Distance"
@@ -327,36 +370,33 @@ export default function OrderDetailsScreen() {
             onPress={() => contactAction('Call customer')}
           />
           <AppButton
-            label="Message"
-            icon="message-text-outline"
-            variant="ghost"
-            style={styles.dummyBtn}
-            onPress={() => contactAction('Message customer')}
-          />
-          <AppButton
             label="Navigate"
             icon="navigation-variant"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => contactAction('Navigate')}
+            onPress={() => void openNavigate()}
           />
         </View>
+        <Text style={styles.messageHint}>
+          In-app messaging is not available in this build — use Call when a
+          phone number is listed.
+        </Text>
 
         <View style={styles.primaryActions}>
           <AppButton
-            label={busy ? 'Accepting…' : 'Accept order'}
+            label={busy || accepting ? 'Accepting…' : 'Accept order'}
             icon="check"
             variant="secondary"
             fullWidth
             onPress={() => void handleAccept()}
-            disabled={busy}
+            disabled={busy || accepting || !isConnected}
           />
           <AppButton
             label="Reject order"
             variant="outline"
             fullWidth
             onPress={() => setRejectOpen(true)}
-            disabled={busy}
+            disabled={busy || accepting || !isConnected}
             style={{ marginTop: spacing.sm }}
           />
         </View>
@@ -505,10 +545,15 @@ const styles = StyleSheet.create({
   dummyRow: {
     flexDirection: 'row',
     gap: spacing.xs,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xs,
   },
   dummyBtn: {
     flex: 1,
+  },
+  messageHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
   },
   primaryActions: {
     marginTop: spacing.xs,

@@ -10,8 +10,21 @@ export function getGreeting(date = new Date()): string {
   return 'Good evening';
 }
 
-export function formatShiftClock(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
+export function formatShiftClock(date: Date, now = new Date()): string {
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+  // Cross-midnight / other day: include local date so TZ is clear on device.
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   });

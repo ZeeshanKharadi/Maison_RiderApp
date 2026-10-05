@@ -77,7 +77,9 @@ namespace Rider.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during user login");
-                return BadRequest(new ApiResponse<string>(false, "Unable to login", null));
+                // Surface root cause so deploy/config issues are visible (e.g. missing columns).
+                var detail = ex.GetBaseException().Message;
+                return BadRequest(new ApiResponse<string>(false, $"Unable to login: {detail}", null));
             }
         }
 
@@ -139,10 +141,10 @@ namespace Rider.WebAPI.Controllers
 
         [HttpPost("Logout")]
         [Authorize]
-        public async Task<IActionResult> Logout()
+        public async Task<IActionResult> Logout([FromBody] LogoutRequest? request)
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            var result = await _userService.Logout(userIdClaim);
+            var result = await _userService.Logout(userIdClaim, request?.deviceToken);
             return Ok(result);
         }
 
@@ -169,6 +171,24 @@ namespace Rider.WebAPI.Controllers
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var result = await _userService.UpdateProfile(req, userIdClaim);
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Rider self-service profile patch. Identity is JWT NameIdentifier only.
+        /// Editable: phoneNumber, emergencyContactNumber, emergencyContactName.
+        /// </summary>
+        [HttpPatch("profile")]
+        [Authorize]
+        public async Task<IActionResult> PatchProfile([FromBody] PatchRiderProfileRequest req)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrWhiteSpace(userIdClaim))
+                return Unauthorized();
+
+            var result = await _userService.PatchRiderProfileAsync(userIdClaim, req ?? new PatchRiderProfileRequest());
+            if (!result.status)
+                return BadRequest(result);
             return Ok(result);
         }
 
@@ -213,6 +233,30 @@ namespace Rider.WebAPI.Controllers
                 return Unauthorized();
 
             var result = await _notifications.MarkAllReadAsync(uid);
+            return Ok(result);
+        }
+
+        [HttpDelete("Notifications/{id:long}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteNotification(long id)
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.SoftDeleteAsync(uid, id);
+            if (!result.status)
+                return NotFound(result);
+            return Ok(result);
+        }
+
+        [HttpDelete("Notifications")]
+        [Authorize]
+        public async Task<IActionResult> DeleteAllNotifications()
+        {
+            if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+                return Unauthorized();
+
+            var result = await _notifications.SoftDeleteAllAsync(uid);
             return Ok(result);
         }
 

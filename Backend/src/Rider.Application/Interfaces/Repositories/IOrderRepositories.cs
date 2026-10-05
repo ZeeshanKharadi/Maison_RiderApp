@@ -16,6 +16,12 @@ namespace Rider.Application.Interfaces.Repositories
             string storeId, string status, Guid? riderId, DateTime? fromUtc, DateTime? toUtc);
         Task<List<AssignedOrder>> GetActiveForRiderAsync(Guid riderUserId);
         Task<int> CountActiveForRiderAsync(Guid riderUserId);
+        /// <summary>
+        /// Recently cancelled orders still attributed to this rider (AcceptedByUserId).
+        /// Used for restore/reconnect awareness — not part of the Active list.
+        /// </summary>
+        Task<List<AssignedOrder>> GetRecentlyCancelledForRiderAsync(
+            Guid riderUserId, DateTime sinceUtcInclusive);
         Task<List<AssignedOrder>> GetHistoryForRiderAsync(Guid riderUserId, int skip, int take);
         Task<bool> HasRiderRejectedAsync(long assignedOrderId, Guid riderUserId);
         Task<bool> TryAcceptAvailableAsync(long id, Guid riderUserId, DateTime acceptedAtUtc);

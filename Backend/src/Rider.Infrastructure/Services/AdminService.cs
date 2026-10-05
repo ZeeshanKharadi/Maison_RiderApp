@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Rider.Application.DTOs.Admin;
 using Rider.Application.DTOs.Orders;
@@ -21,6 +22,8 @@ namespace Rider.Infrastructure.Services
         private readonly IPasswordCrypto _passwordCrypto;
         private readonly PasswordVerifier _passwordVerifier;
         private readonly IOpsEventPublisher _opsEvents;
+        private readonly IRiderNotificationService _riderNotifications;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<AdminService> _logger;
 
         public AdminService(
@@ -28,12 +31,16 @@ namespace Rider.Infrastructure.Services
             IPasswordCrypto passwordCrypto,
             PasswordVerifier passwordVerifier,
             IOpsEventPublisher opsEvents,
+            IRiderNotificationService riderNotifications,
+            IConfiguration configuration,
             ILogger<AdminService> logger)
         {
             _unitOfWork = unitOfWork;
             _passwordCrypto = passwordCrypto;
             _passwordVerifier = passwordVerifier;
             _opsEvents = opsEvents;
+            _riderNotifications = riderNotifications;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -66,6 +73,59 @@ namespace Rider.Infrastructure.Services
             var stores = await StoreLookupAsync();
             var list = riders.Select(u => MapRider(u, stores)).ToList();
             return Ok(list, "Riders");
+        }
+
+        public async Task<ApiResponse<List<AdminLiveRiderDto>>> ListLiveMapRidersAsync(AdminActor actor, string storeId)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<List<AdminLiveRiderDto>>(scoped.message);
+
+            var staleSeconds = int.TryParse(_configuration["Location:StaleSeconds"], out var ss) && ss > 0
+                ? ss
+                : 90;
+
+            var riders = await _unitOfWork.UserRepository.ListRidersAsync(scoped.storeId);
+            var stores = await StoreLookupAsync();
+            var onlineCutoff = DateTime.UtcNow - OnlineWindow;
+            var staleBefore = DateTime.UtcNow.AddSeconds(-staleSeconds);
+
+            var result = new List<AdminLiveRiderDto>();
+            foreach (var u in riders.Where(r => r.IsActive))
+            {
+                var active = await _unitOfWork.AssignedOrderRepository.GetActiveForRiderAsync(u.UserId);
+                if (active.Count == 0)
+                    continue;
+
+                var primary = active
+                    .OrderByDescending(o => OrderStatuses.ProgressionIndex(o.Status))
+                    .First();
+
+                var hasLocation = u.LastLatitude.HasValue && u.LastLongitude.HasValue && u.LocationUpdatedAt.HasValue;
+                var isStale = !hasLocation || u.LocationUpdatedAt < staleBefore;
+
+                result.Add(new AdminLiveRiderDto
+                {
+                    riderUserId = u.UserId,
+                    workerId = u.ThirdPartyEmployeeId,
+                    name = u.UserName,
+                    storeId = u.StoreId,
+                    storeName = stores.TryGetValue(u.StoreId ?? "", out var sn) ? sn : u.StoreId,
+                    isOnline = u.IsAvailableOnline
+                        && u.LastSeenAt.HasValue
+                        && u.LastSeenAt.Value >= onlineCutoff,
+                    activeOrderCount = active.Count,
+                    deliveryStatus = primary.Status,
+                    latitude = u.LastLatitude,
+                    longitude = u.LastLongitude,
+                    locationUpdatedAt = u.LocationUpdatedAt,
+                    hasLocation = hasLocation,
+                    isStale = isStale,
+                    staleAfterSeconds = staleSeconds
+                });
+            }
+
+            return Ok(result.OrderBy(r => r.workerId).ToList(), "Live map riders");
         }
 
         public async Task<ApiResponse<AdminRiderDto>> GetRiderAsync(AdminActor actor, Guid riderId)
@@ -238,11 +298,12 @@ namespace Rider.Infrastructure.Services
 
             var dto = new LiveBoardSummaryDto
             {
-                available = orders.Count(o => o.Status == "Available"),
-                accepted = orders.Count(o => o.Status == "Accepted"),
-                inProgress = orders.Count(o => o.Status == "InProgress"),
-                completedToday = orders.Count(o => o.Status == "Completed" && (o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt) >= today),
-                cancelledToday = orders.Count(o => o.Status == "Cancelled" && (o.UpdatedAt ?? o.CreatedAt) >= today),
+                available = orders.Count(o => o.Status == OrderStatuses.Available),
+                accepted = orders.Count(o => o.Status == OrderStatuses.Accepted),
+                inProgress = orders.Count(o =>
+                    OrderStatuses.IsActiveStatus(o.Status) && o.Status != OrderStatuses.Accepted),
+                completedToday = orders.Count(o => o.Status == OrderStatuses.Completed && (o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt) >= today),
+                cancelledToday = orders.Count(o => o.Status == OrderStatuses.Cancelled && (o.UpdatedAt ?? o.CreatedAt) >= today),
                 onlineRiders = riders.Count(r => r.IsActive && r.IsAvailableOnline
                     && r.LastSeenAt.HasValue && r.LastSeenAt.Value >= onlineCutoff),
                 cashToCollectToday = orders
@@ -260,11 +321,395 @@ namespace Rider.Infrastructure.Services
             if (scoped.denied)
                 return Fail<List<AdminOrderListDto>>(scoped.message);
 
+            // Rejected is an event column on Live Ops, not an AssignedOrders.Status value.
+            if (string.Equals(query.status, OrderStatuses.Rejected, StringComparison.OrdinalIgnoreCase))
+                return Ok(new List<AdminOrderListDto>(), "Orders");
+
             var (fromUtc, toUtc) = NormalizeRange(query.from, query.to);
             var orders = await _unitOfWork.AssignedOrderRepository
                 .QueryForAdminAsync(scoped.storeId, query.status, query.riderId, fromUtc, toUtc);
 
             return Ok(orders.Select(MapOrderList).ToList(), "Orders");
+        }
+
+        public async Task<ApiResponse<List<AdminOrderRejectionDto>>> ListOrderRejectionsAsync(
+            AdminActor actor, string storeId, DateTime? from, DateTime? to)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<List<AdminOrderRejectionDto>>(scoped.message);
+
+            var (fromUtc, toUtc) = NormalizeRange(from, to, defaultDays: 7);
+
+            var q = _unitOfWork.Context.Set<OrderRejection>()
+                .AsNoTracking()
+                .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                .Include(r => r.Rider)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(scoped.storeId))
+                q = q.Where(r => r.Order != null && r.Order.Batch != null
+                    && r.Order.Batch.StoreId == scoped.storeId);
+
+            if (fromUtc.HasValue)
+                q = q.Where(r => r.CreatedAt >= fromUtc.Value);
+            if (toUtc.HasValue)
+                q = q.Where(r => r.CreatedAt < toUtc.Value);
+
+            var rows = await q.OrderByDescending(r => r.CreatedAt).Take(500).ToListAsync();
+
+            var list = rows.Select(r => new AdminOrderRejectionDto
+            {
+                id = r.Id,
+                assignedOrderId = r.AssignedOrderId,
+                orderId = r.Order?.OrderId,
+                orderNo = r.Order?.OrderNo,
+                storeId = r.Order?.Batch?.StoreId,
+                riderUserId = r.RiderUserId,
+                riderWorkerId = r.Rider?.ThirdPartyEmployeeId,
+                riderName = r.Rider?.UserName,
+                reason = r.Reason,
+                isDirectAssignment = r.IsDirectAssignment,
+                createdAt = r.CreatedAt
+            }).ToList();
+
+            return Ok(list, "Order rejections");
+        }
+
+        public async Task<ApiResponse<AdminDeliveryIssueReportPageDto>> ListDeliveryIssueReportsAsync(
+            AdminActor actor, string storeId, DateTime? from, DateTime? to,
+            string status = null, string q = null, bool includeClosed = false,
+            int page = 1, int pageSize = 50)
+        {
+            var scoped = ScopeStore(actor, storeId);
+            if (scoped.denied)
+                return Fail<AdminDeliveryIssueReportPageDto>(scoped.message);
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 100) pageSize = 100;
+
+            var statusFilter = string.IsNullOrWhiteSpace(status) ? null : status.Trim();
+            if (!string.IsNullOrWhiteSpace(statusFilter)
+                && !string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+                && !DeliveryIssueStatuses.IsValid(statusFilter))
+            {
+                return Fail<AdminDeliveryIssueReportPageDto>(
+                    "Invalid status. Use New, Acknowledged, Closed, or Open");
+            }
+
+            var isOpenQueue =
+                string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(statusFilter, DeliveryIssueStatuses.New, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(statusFilter, DeliveryIssueStatuses.Acknowledged, StringComparison.OrdinalIgnoreCase)
+                || (string.IsNullOrWhiteSpace(statusFilter) && !includeClosed);
+
+            // Open queue: all New/Acknowledged for the store, regardless of report date.
+            // Closed / historical: apply date range (default last 7 days when omitted).
+            var dateFilterApplied = !isOpenQueue;
+            DateTime? fromUtc = null;
+            DateTime? toUtc = null;
+            if (dateFilterApplied)
+            {
+                (fromUtc, toUtc) = NormalizeRange(from, to, defaultDays: 7);
+            }
+
+            var qset = _unitOfWork.Context.Set<DeliveryIssueReport>()
+                .AsNoTracking()
+                .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                .Include(r => r.Rider)
+                .Include(r => r.AcknowledgedByUser)
+                .Include(r => r.ClosedByUser)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(scoped.storeId))
+                qset = qset.Where(r => r.Order != null && r.Order.Batch != null
+                    && r.Order.Batch.StoreId == scoped.storeId);
+
+            if (fromUtc.HasValue)
+                qset = qset.Where(r => r.CreatedAt >= fromUtc.Value);
+            if (toUtc.HasValue)
+                qset = qset.Where(r => r.CreatedAt < toUtc.Value);
+
+            if (isOpenQueue
+                || string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+                || (string.IsNullOrWhiteSpace(statusFilter) && !includeClosed))
+            {
+                if (string.Equals(statusFilter, DeliveryIssueStatuses.New, StringComparison.OrdinalIgnoreCase))
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.New);
+                else if (string.Equals(statusFilter, DeliveryIssueStatuses.Acknowledged, StringComparison.OrdinalIgnoreCase))
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.Acknowledged);
+                else
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.New
+                        || r.Status == DeliveryIssueStatuses.Acknowledged);
+            }
+            else if (!string.IsNullOrWhiteSpace(statusFilter))
+            {
+                var normalized = DeliveryIssueStatuses.Normalize(statusFilter);
+                qset = qset.Where(r => r.Status == normalized);
+            }
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var term = q.Trim();
+                qset = qset.Where(r =>
+                    (r.Order != null && (r.Order.OrderId.Contains(term) || r.Order.OrderNo.Contains(term)))
+                    || (r.Rider != null && (
+                        (r.Rider.UserName != null && r.Rider.UserName.Contains(term))
+                        || (r.Rider.ThirdPartyEmployeeId != null && r.Rider.ThirdPartyEmployeeId.Contains(term))))
+                    || (r.ReasonCode != null && r.ReasonCode.Contains(term))
+                    || (r.Note != null && r.Note.Contains(term))
+                    || (r.InternalNote != null && r.InternalNote.Contains(term)));
+            }
+
+            var ordered = qset
+                .OrderBy(r => r.Status == DeliveryIssueStatuses.New ? 0
+                    : r.Status == DeliveryIssueStatuses.Acknowledged ? 1 : 2)
+                .ThenByDescending(r => r.CreatedAt);
+
+            var totalCount = await ordered.CountAsync();
+            var rows = await ordered
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var list = rows.Select(MapIssueReportDto).ToList();
+            return Ok(new AdminDeliveryIssueReportPageDto
+            {
+                items = list,
+                page = page,
+                pageSize = pageSize,
+                totalCount = totalCount,
+                hasMore = page * pageSize < totalCount,
+                dateFilterApplied = dateFilterApplied
+            }, "Delivery issue reports");
+        }
+
+        public async Task<ApiResponse<AdminDeliveryIssueReportDto>> GetDeliveryIssueReportAsync(
+            AdminActor actor, long id)
+        {
+            var report = await LoadIssueForAdminAsync(id);
+            if (report == null || !CanSeeStore(actor, report.Order?.Batch?.StoreId))
+                return Fail<AdminDeliveryIssueReportDto>("Issue report not found");
+
+            var dto = MapIssueReportDto(report);
+            dto.history = await LoadIssueHistoryAsync(id);
+            return Ok(dto, "Success");
+        }
+
+        public async Task<ApiResponse<AdminDeliveryIssueReportDto>> AcknowledgeDeliveryIssueAsync(
+            AdminActor actor, long id, DeliveryIssueTriageRequest request)
+            => await ApplyTriageAsync(actor, id, request, DeliveryIssueTriageActions.Acknowledged);
+
+        public async Task<ApiResponse<AdminDeliveryIssueReportDto>> UpdateDeliveryIssueNoteAsync(
+            AdminActor actor, long id, DeliveryIssueTriageRequest request)
+            => await ApplyTriageAsync(actor, id, request, DeliveryIssueTriageActions.NoteUpdated);
+
+        public async Task<ApiResponse<AdminDeliveryIssueReportDto>> CloseDeliveryIssueAsync(
+            AdminActor actor, long id, DeliveryIssueTriageRequest request)
+            => await ApplyTriageAsync(actor, id, request, DeliveryIssueTriageActions.Closed);
+
+        private async Task<ApiResponse<AdminDeliveryIssueReportDto>> ApplyTriageAsync(
+            AdminActor actor, long id, DeliveryIssueTriageRequest request, string action)
+        {
+            request ??= new DeliveryIssueTriageRequest();
+            if (string.IsNullOrWhiteSpace(request.rowVersion))
+                return Fail<AdminDeliveryIssueReportDto>("rowVersion is required");
+
+            byte[] expectedVersion;
+            try
+            {
+                expectedVersion = Convert.FromBase64String(request.rowVersion.Trim());
+            }
+            catch
+            {
+                return Fail<AdminDeliveryIssueReportDto>("Invalid rowVersion");
+            }
+
+            var note = string.IsNullOrWhiteSpace(request.internalNote) ? null : request.internalNote.Trim();
+            if (note != null && note.Length > 1000)
+                note = note[..1000];
+
+            if (action == DeliveryIssueTriageActions.NoteUpdated && string.IsNullOrWhiteSpace(note))
+                return Fail<AdminDeliveryIssueReportDto>("internalNote is required when updating the note");
+
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
+            {
+                var report = await _unitOfWork.Context.Set<DeliveryIssueReport>()
+                    .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                    .Include(r => r.Rider)
+                    .FirstOrDefaultAsync(r => r.Id == id);
+
+                if (report == null || !CanSeeStore(actor, report.Order?.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminDeliveryIssueReportDto>("Issue report not found");
+                }
+
+                // Snapshot delivery fields — triage must never mutate them.
+                var order = report.Order!;
+                var statusBefore = order.Status;
+                var cashBefore = order.CashCollected;
+                var handedBefore = order.CashHandedOverAmount;
+                var handedAtBefore = order.CashHandedOverAt;
+
+                if (report.RowVersion != null
+                    && !report.RowVersion.SequenceEqual(expectedVersion))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminDeliveryIssueReportDto>(
+                        "Issue was updated by another admin; refresh and try again");
+                }
+
+                // For SQL Server, set original concurrency token from client.
+                _unitOfWork.Context.Entry(report).Property(r => r.RowVersion).OriginalValue = expectedVersion;
+
+                var previous = report.Status ?? DeliveryIssueStatuses.New;
+                var now = DateTime.UtcNow;
+                string newStatus = previous;
+                string historyAction = action;
+
+                if (action == DeliveryIssueTriageActions.Acknowledged)
+                {
+                    if (!DeliveryIssueStatuses.CanAcknowledge(previous))
+                    {
+                        await tx.RollbackAsync();
+                        return Fail<AdminDeliveryIssueReportDto>(
+                            previous == DeliveryIssueStatuses.Acknowledged
+                                ? "Issue is already acknowledged"
+                                : "Only New issues can be acknowledged");
+                    }
+                    newStatus = DeliveryIssueStatuses.Acknowledged;
+                    report.AcknowledgedAt = now;
+                    report.AcknowledgedByUserId = actor.UserId;
+                }
+                else if (action == DeliveryIssueTriageActions.Closed)
+                {
+                    if (!DeliveryIssueStatuses.CanClose(previous))
+                    {
+                        await tx.RollbackAsync();
+                        return Fail<AdminDeliveryIssueReportDto>(
+                            previous == DeliveryIssueStatuses.Closed
+                                ? "Issue is already closed"
+                                : "Acknowledge the issue before closing it");
+                    }
+                    newStatus = DeliveryIssueStatuses.Closed;
+                    report.ClosedAt = now;
+                    report.ClosedByUserId = actor.UserId;
+                }
+                else if (action == DeliveryIssueTriageActions.NoteUpdated)
+                {
+                    if (!DeliveryIssueStatuses.CanUpdateNote(previous))
+                    {
+                        await tx.RollbackAsync();
+                        return Fail<AdminDeliveryIssueReportDto>("Cannot update notes on a closed issue");
+                    }
+                    newStatus = previous;
+                }
+                else
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminDeliveryIssueReportDto>("Unsupported triage action");
+                }
+
+                if (note != null)
+                    report.InternalNote = note;
+
+                report.Status = newStatus;
+                report.UpdatedAt = now;
+                if (!string.Equals(
+                        _unitOfWork.Context.Database.ProviderName,
+                        "Microsoft.EntityFrameworkCore.SqlServer",
+                        StringComparison.Ordinal))
+                    report.RowVersion = Guid.NewGuid().ToByteArray();
+
+                await _unitOfWork.Context.Set<DeliveryIssueTriageEvent>().AddAsync(new DeliveryIssueTriageEvent
+                {
+                    DeliveryIssueReportId = report.Id,
+                    ActorUserId = actor.UserId,
+                    ActorType = actor.IsHeadOffice ? "Administrator" : "Manager",
+                    Action = historyAction,
+                    PreviousStatus = previous,
+                    NewStatus = newStatus,
+                    InternalNote = note,
+                    CreatedAt = now
+                });
+
+                try
+                {
+                    await _unitOfWork.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminDeliveryIssueReportDto>(
+                        "Issue was updated by another admin; refresh and try again");
+                }
+
+                if (order.Status != statusBefore
+                    || order.CashCollected != cashBefore
+                    || order.CashHandedOverAmount != handedBefore
+                    || order.CashHandedOverAt != handedAtBefore)
+                {
+                    await tx.RollbackAsync();
+                    _logger.LogError("Triage unexpectedly mutated order {OrderId}", order.Id);
+                    return Fail<AdminDeliveryIssueReportDto>("Unable to update issue");
+                }
+
+                await tx.CommitAsync();
+
+                var fresh = await LoadIssueForAdminAsync(id);
+                var dto = MapIssueReportDto(fresh!);
+                dto.history = await LoadIssueHistoryAsync(id);
+                return Ok(dto, action == DeliveryIssueTriageActions.Closed
+                    ? "Issue closed"
+                    : action == DeliveryIssueTriageActions.Acknowledged
+                        ? "Issue acknowledged"
+                        : "Internal note saved");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Triage failed for issue {IssueId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminDeliveryIssueReportDto>("Unable to update issue");
+            }
+        }
+
+        private async Task<DeliveryIssueReport?> LoadIssueForAdminAsync(long id)
+        {
+            return await _unitOfWork.Context.Set<DeliveryIssueReport>()
+                .AsNoTracking()
+                .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                .Include(r => r.Rider)
+                .Include(r => r.AcknowledgedByUser)
+                .Include(r => r.ClosedByUser)
+                .FirstOrDefaultAsync(r => r.Id == id);
+        }
+
+        private async Task<List<AdminDeliveryIssueTriageEventDto>> LoadIssueHistoryAsync(long reportId)
+        {
+            var events = await _unitOfWork.Context.Set<DeliveryIssueTriageEvent>()
+                .AsNoTracking()
+                .Include(e => e.Actor)
+                .Where(e => e.DeliveryIssueReportId == reportId)
+                .OrderBy(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .ToListAsync();
+
+            return events.Select(e => new AdminDeliveryIssueTriageEventDto
+            {
+                id = e.Id,
+                action = e.Action,
+                previousStatus = e.PreviousStatus,
+                newStatus = e.NewStatus,
+                actorType = e.ActorType,
+                actorUserId = e.ActorUserId,
+                actorName = e.Actor?.UserName,
+                actorWorkerId = e.Actor?.ThirdPartyEmployeeId,
+                internalNote = e.InternalNote,
+                at = e.CreatedAt
+            }).ToList();
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> GetOrderAsync(AdminActor actor, long id)
@@ -273,7 +718,45 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            return Ok(MapOrderDetail(order), "Success");
+            var dto = MapOrderDetail(order);
+            var audits = await _unitOfWork.Context.Set<OrderLifecycleAudit>()
+                .AsNoTracking()
+                .Where(a => a.AssignedOrderId == id)
+                .OrderBy(a => a.CreatedAt)
+                .ThenBy(a => a.Id)
+                .ToListAsync();
+
+            dto.statusHistory = audits.Select(a => new AdminOrderLifecycleEventDto
+            {
+                status = a.NewStatus,
+                previousStatus = a.PreviousStatus,
+                actorType = a.ActorType,
+                reason = a.Reason,
+                at = a.CreatedAt
+            }).ToList();
+
+            var issues = await _unitOfWork.Context.Set<DeliveryIssueReport>()
+                .AsNoTracking()
+                .Include(r => r.Rider)
+                .Include(r => r.Order!).ThenInclude(o => o.Batch)
+                .Include(r => r.AcknowledgedByUser)
+                .Include(r => r.ClosedByUser)
+                .Where(r => r.AssignedOrderId == id)
+                .OrderByDescending(r => r.CreatedAt)
+                .ThenByDescending(r => r.Id)
+                .ToListAsync();
+
+            dto.issueReports = issues.Select(r =>
+            {
+                var mapped = MapIssueReportDto(r);
+                mapped.orderStatus = order.Status;
+                mapped.storeId = order.Batch?.StoreId;
+                mapped.orderId = order.OrderId;
+                mapped.orderNo = order.OrderNo;
+                return mapped;
+            }).ToList();
+
+            return Ok(dto, "Success");
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> CancelOrderAsync(AdminActor actor, long id, string reason)
@@ -285,12 +768,31 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            if (order.Status is "Completed")
+            if (order.Status is OrderStatuses.Completed)
                 return Fail<AdminOrderDetailDto>("Completed orders cannot be cancelled");
 
+            if (!OrderStatuses.CanAdminCancel(order.Status, order.FailureRequestStatus))
+            {
+                if (string.Equals(order.FailureRequestStatus, FailureRequestStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                    return Fail<AdminOrderDetailDto>(
+                        "Resolve or reject the pending failure request before cancelling");
+                if (order.Status is OrderStatuses.ReturningToStore or OrderStatuses.AwaitingStoreReceipt)
+                    return Fail<AdminOrderDetailDto>(
+                        "Confirm store receipt before cancelling (or wait until Failed)");
+                return Fail<AdminOrderDetailDto>("Order cannot be cancelled in its current state");
+            }
+
+            // Capture before mutate — used only if SaveChanges commits.
             var previous = order.Status;
+            var assignedRiderId = order.AcceptedByUserId;
+            var notifyRider = assignedRiderId.HasValue
+                && OrderStatuses.IsActiveStatus(previous);
+            var storeId = order.Batch?.StoreId;
+            var externalOrderId = order.OrderId;
+            var reasonTrimmed = reason.Trim();
+
             order.Status = OrderStatuses.Cancelled;
-            order.CancelReason = reason.Trim();
+            order.CancelReason = reasonTrimmed;
             order.UpdatedAt = DateTime.UtcNow;
 
             await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
@@ -300,76 +802,461 @@ namespace Rider.Infrastructure.Services
                 ActorType = "Admin",
                 PreviousStatus = previous,
                 NewStatus = OrderStatuses.Cancelled,
-                Reason = reason.Trim(),
+                Reason = reasonTrimmed,
                 CreatedAt = DateTime.UtcNow
             });
 
             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
-            await _unitOfWork.SaveChangesAsync();
 
             try
             {
-                await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Cancelled);
+                await _unitOfWork.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Pickup (or another writer) committed first — do not notify/publish.
+                _unitOfWork.Context.ChangeTracker.Clear();
+                return await CancelConflictFromCommittedStateAsync(actor, id);
+            }
+
+            try
+            {
+                await _opsEvents.PublishOrderChangedAsync(storeId, id, externalOrderId, OrderStatuses.Cancelled);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Ops publish after cancel failed");
             }
 
+            // Notify only the assigned rider (not the whole store). Skip if cancel
+            // applied to an unassigned Available order, or if previous state was not active.
+            if (notifyRider)
+            {
+                try
+                {
+                    await _riderNotifications.NotifyOrderCancelledAsync(
+                        assignedRiderId!.Value,
+                        externalOrderId,
+                        id,
+                        reasonTrimmed);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Rider cancel notification failed for order {OrderId}", externalOrderId);
+                }
+            }
+
             var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
             return Ok(MapOrderDetail(fresh), "Order cancelled");
         }
 
-        public async Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id)
+        /// <summary>
+        /// Maps the committed row after a lost cancel race into a business failure.
+        /// Never treats the lost attempt as cancelled.
+        /// </summary>
+        private async Task<ApiResponse<AdminOrderDetailDto>> CancelConflictFromCommittedStateAsync(
+            AdminActor actor, long id)
         {
-            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
-            if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+            var current = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+            if (current == null || !CanSeeStore(actor, current.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
-            if (order.Status is "Completed" or "InProgress" or "Accepted")
-                return Fail<AdminOrderDetailDto>("Only Available or Cancelled orders can be requeued");
+            if (current.Status == OrderStatuses.Cancelled)
+                return Fail<AdminOrderDetailDto>("Order was already cancelled");
 
-            var previous = order.Status;
-            order.Status = OrderStatuses.Available;
-            order.AcceptedByUserId = null;
-            order.AcceptedAt = null;
-            order.PickedUpAt = null;
-            order.CompletedAt = null;
-            order.IsDirectAssignment = false;
-            order.CancelReason = null;
-            order.UpdatedAt = DateTime.UtcNow;
+            if (current.Status == OrderStatuses.Completed)
+                return Fail<AdminOrderDetailDto>("Completed orders cannot be cancelled");
 
-            // Clear rejection holds so the order reappears in the pool
-            var rejections = await _unitOfWork.Context.Set<OrderRejection>()
-                .Where(r => r.AssignedOrderId == id)
-                .ToListAsync();
-            _unitOfWork.Context.Set<OrderRejection>().RemoveRange(rejections);
+            return Fail<AdminOrderDetailDto>(
+                $"Order was updated concurrently (now {current.Status}); refresh and try again");
+        }
 
-            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
-            {
-                AssignedOrderId = id,
-                ActorUserId = actor.UserId,
-                ActorType = "Admin",
-                PreviousStatus = previous,
-                NewStatus = OrderStatuses.Available,
-                Reason = "Requeued",
-                CreatedAt = DateTime.UtcNow
-            });
-
-            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
-            await _unitOfWork.SaveChangesAsync();
-
+        public async Task<ApiResponse<AdminOrderDetailDto>> RequeueOrderAsync(AdminActor actor, long id)
+        {
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
             try
             {
-                await _opsEvents.PublishOrderChangedAsync(order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Available);
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (!OrderStatuses.CanAdminRequeue(order.Status))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Only Available, Cancelled, or Failed orders can be requeued");
+                }
+
+                // Under row lock — concurrent handover cannot sneak past this check.
+                // Any prior CashCollected > 0 blocks Failed→Requeue (handover does not unlock).
+                if (CashSemantics.BlocksFailedRequeue(
+                        order.Status, order.CashCollected, order.CashHandedOverAmount))
+                {
+                    var collected = order.CashCollected!.Value;
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        $"Cannot requeue: this Failed order has {collected:0.00} cash collected. " +
+                        "Requeue is blocked even after COD handover so a later rider cannot inherit " +
+                        "or overwrite another rider's cash fields. Cancel the order instead, or wait " +
+                        "for a per-rider cash ledger. Cash amounts are preserved.");
+                }
+
+                var previous = order.Status;
+                var cashCollectedBefore = order.CashCollected;
+                var handedBefore = order.CashHandedOverAmount;
+                order.Status = OrderStatuses.Available;
+                order.AcceptedByUserId = null;
+                order.AcceptedAt = null;
+                order.PickedUpAt = null;
+                order.CompletedAt = null;
+                order.IsDirectAssignment = false;
+                order.CancelReason = null;
+                // Preserve COD expected / collected / handover — never zero on requeue.
+                OrderService.ClearFailureFields(order);
+                order.UpdatedAt = DateTime.UtcNow;
+
+                var rejections = await _unitOfWork.Context.Set<OrderRejection>()
+                    .Where(r => r.AssignedOrderId == id)
+                    .ToListAsync();
+                _unitOfWork.Context.Set<OrderRejection>().RemoveRange(rejections);
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = previous,
+                    NewStatus = OrderStatuses.Available,
+                    Reason = "Requeued",
+                    CashCollected = cashCollectedBefore,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+
+                try
+                {
+                    await _unitOfWork.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    await tx.RollbackAsync();
+                    _unitOfWork.Context.ChangeTracker.Clear();
+                    return Fail<AdminOrderDetailDto>(
+                        "Order changed concurrently (e.g. cash handover); refresh and try again");
+                }
+
+                // Defensive: cash amounts must never be zeroed by requeue.
+                if (order.CashCollected != cashCollectedBefore
+                    || order.CashHandedOverAmount != handedBefore)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Unable to requeue without changing COD amounts");
+                }
+
+                await tx.CommitAsync();
+
+                try
+                {
+                    await _opsEvents.PublishOrderChangedAsync(
+                        order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Available);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Ops publish after requeue failed");
+                }
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Order requeued as Available");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Ops publish after requeue failed");
+                _logger.LogError(ex, "Requeue failed for order {OrderId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to requeue order");
             }
+        }
 
-            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
-            return Ok(MapOrderDetail(fresh), "Order requeued as Available");
+        public async Task<ApiResponse<AdminOrderDetailDto>> RejectFailureRequestAsync(
+            AdminActor actor, long id, FailureDecisionRequest request)
+        {
+            request ??= new FailureDecisionRequest();
+            var note = string.IsNullOrWhiteSpace(request.note) ? null : request.note.Trim();
+            if (note != null && note.Length > 500)
+                note = note[..500];
+
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
+            {
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (!string.Equals(order.FailureRequestStatus, FailureRequestStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync();
+                    if (string.Equals(order.FailureRequestStatus, FailureRequestStatuses.Rejected, StringComparison.OrdinalIgnoreCase))
+                        return Ok(MapOrderDetail(order), "Failure request already rejected");
+                    return Fail<AdminOrderDetailDto>("No pending failure request to reject");
+                }
+
+                if (OrderStatuses.IsFailedDeliveryFlowStatus(order.Status) || order.Status == OrderStatuses.Failed)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Return already in progress; cannot reject");
+                }
+
+                if (order.Status is OrderStatuses.Completed or OrderStatuses.Cancelled)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>($"Order is already {order.Status}");
+                }
+
+                var previous = order.Status;
+                var now = DateTime.UtcNow;
+                order.FailureRequestStatus = FailureRequestStatuses.Rejected;
+                order.FailureDecidedAt = now;
+                order.FailureDecidedByUserId = actor.UserId;
+                order.FailureDecisionNote = note ?? "Rejected — continue delivery";
+                order.UpdatedAt = now;
+                // Status unchanged — rider continues delivery. COD untouched.
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = previous,
+                    NewStatus = previous,
+                    Reason = "FailureRejected" + (note != null ? $": {note}" : ""),
+                    RequestId = string.IsNullOrWhiteSpace(request.requestId) ? null : request.requestId.Trim(),
+                    CreatedAt = now
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                try
+                {
+                    await _opsEvents.PublishOrderChangedAsync(
+                        order.Batch?.StoreId, id, order.OrderId, order.Status);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Ops publish after failure reject failed");
+                }
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Failure request rejected — rider continues delivery");
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Order changed concurrently; refresh and try again");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Reject failure request failed for order {OrderId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to reject failure request");
+            }
+        }
+
+        public async Task<ApiResponse<AdminOrderDetailDto>> ApproveFailureReturnAsync(
+            AdminActor actor, long id, FailureDecisionRequest request)
+        {
+            request ??= new FailureDecisionRequest();
+            var note = string.IsNullOrWhiteSpace(request.note) ? null : request.note.Trim();
+            if (note != null && note.Length > 500)
+                note = note[..500];
+
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
+            {
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (order.Status == OrderStatuses.ReturningToStore
+                    && string.Equals(
+                        order.FailureRequestStatus,
+                        FailureRequestStatuses.ReturnApproved,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.CommitAsync();
+                    return Ok(MapOrderDetail(order), "Return already approved");
+                }
+
+                if (!string.Equals(order.FailureRequestStatus, FailureRequestStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("No pending failure request to approve");
+                }
+
+                if (!OrderStatuses.IsActiveStatus(order.Status)
+                    || OrderStatuses.IsFailedDeliveryFlowStatus(order.Status)
+                    || order.Status is OrderStatuses.Completed or OrderStatuses.Cancelled or OrderStatuses.Failed)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        order.Status is OrderStatuses.Completed or OrderStatuses.Cancelled
+                            ? $"Order is already {order.Status}"
+                            : "Order is not eligible for return approval");
+                }
+
+                var previous = order.Status;
+                var now = DateTime.UtcNow;
+                order.StatusBeforeReturn = previous;
+                order.Status = OrderStatuses.ReturningToStore;
+                order.FailureRequestStatus = FailureRequestStatuses.ReturnApproved;
+                order.FailureDecidedAt = now;
+                order.FailureDecidedByUserId = actor.UserId;
+                order.FailureDecisionNote = note ?? "Return to store approved";
+                order.UpdatedAt = now;
+                // Approval instructs return — does not claim already returned. COD untouched.
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = previous,
+                    NewStatus = OrderStatuses.ReturningToStore,
+                    Reason = "FailureReturnApproved" + (note != null ? $": {note}" : ""),
+                    RequestId = string.IsNullOrWhiteSpace(request.requestId) ? null : request.requestId.Trim(),
+                    CreatedAt = now
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                try
+                {
+                    await _opsEvents.PublishOrderChangedAsync(
+                        order.Batch?.StoreId, id, order.OrderId, OrderStatuses.ReturningToStore);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Ops publish after return approve failed");
+                }
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Return to store approved — rider must confirm arrival");
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Order changed concurrently; refresh and try again");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Approve failure return failed for order {OrderId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to approve return");
+            }
+        }
+
+        public async Task<ApiResponse<AdminOrderDetailDto>> ConfirmStoreReceiptAsync(
+            AdminActor actor, long id, FailureDecisionRequest request)
+        {
+            request ??= new FailureDecisionRequest();
+            var note = string.IsNullOrWhiteSpace(request.note) ? null : request.note.Trim();
+            if (note != null && note.Length > 500)
+                note = note[..500];
+
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
+            {
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (order.Status == OrderStatuses.Failed
+                    && string.Equals(
+                        order.FailureRequestStatus,
+                        FailureRequestStatuses.StoreReceived,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.CommitAsync();
+                    return Ok(MapOrderDetail(order), "Store receipt already confirmed");
+                }
+
+                if (order.Status != OrderStatuses.AwaitingStoreReceipt
+                    || !string.Equals(
+                        order.FailureRequestStatus,
+                        FailureRequestStatuses.RiderReturned,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        "Rider must confirm return before store receipt can be recorded");
+                }
+
+                var previous = order.Status;
+                var now = DateTime.UtcNow;
+                order.Status = OrderStatuses.Failed;
+                order.FailureRequestStatus = FailureRequestStatuses.StoreReceived;
+                order.StoreReceivedAt = now;
+                order.StoreReceivedByUserId = actor.UserId;
+                if (note != null)
+                    order.FailureDecisionNote = note;
+                order.UpdatedAt = now;
+                // COD preserved — if cash collected, manager must use cash handover.
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = previous,
+                    NewStatus = OrderStatuses.Failed,
+                    Reason = "StoreReceiptConfirmed" + (note != null ? $": {note}" : ""),
+                    RequestId = string.IsNullOrWhiteSpace(request.requestId) ? null : request.requestId.Trim(),
+                    CashCollected = order.CashCollected,
+                    CreatedAt = now
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                try
+                {
+                    await _opsEvents.PublishOrderChangedAsync(
+                        order.Batch?.StoreId, id, order.OrderId, OrderStatuses.Failed);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Ops publish after store receipt failed");
+                }
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Store receipt confirmed — order is Failed; cancel or requeue when ready");
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Order changed concurrently; refresh and try again");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Confirm store receipt failed for order {OrderId}", id);
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to confirm store receipt");
+            }
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> SetCashCollectedAsync(AdminActor actor, long id, decimal? cashCollected)
@@ -627,8 +1514,9 @@ namespace Rider.Infrastructure.Services
                     name = g.Key.Name,
                     completed = g.Count(x => x.Status == "Completed"),
                     cancelled = g.Count(x => x.Status == "Cancelled"),
-                    accepted = g.Count(x => x.Status == "Accepted"),
-                    inProgress = g.Count(x => x.Status == "InProgress")
+                    accepted = g.Count(x => x.Status == OrderStatuses.Accepted),
+                    inProgress = g.Count(x =>
+                        OrderStatuses.IsActiveStatus(x.Status) && x.Status != OrderStatuses.Accepted)
                 })
                 .OrderByDescending(x => x.date)
                 .ThenBy(x => x.workerId)
@@ -638,11 +1526,12 @@ namespace Rider.Infrastructure.Services
             {
                 status = new StatusSummaryDto
                 {
-                    available = orders.Count(o => o.Status == "Available"),
-                    accepted = orders.Count(o => o.Status == "Accepted"),
-                    inProgress = orders.Count(o => o.Status == "InProgress"),
-                    completed = orders.Count(o => o.Status == "Completed"),
-                    cancelled = orders.Count(o => o.Status == "Cancelled"),
+                    available = orders.Count(o => o.Status == OrderStatuses.Available),
+                    accepted = orders.Count(o => o.Status == OrderStatuses.Accepted),
+                    inProgress = orders.Count(o =>
+                        OrderStatuses.IsActiveStatus(o.Status) && o.Status != OrderStatuses.Accepted),
+                    completed = orders.Count(o => o.Status == OrderStatuses.Completed),
+                    cancelled = orders.Count(o => o.Status == OrderStatuses.Cancelled),
                     total = orders.Count
                 },
                 avgDeliveryTime = new AvgDeliveryTimeDto
@@ -921,6 +1810,16 @@ namespace Rider.Infrastructure.Services
             dto.lng = o.Lng;
             dto.orderTime = o.OrderTime;
             dto.batchTime = o.Batch?.Time;
+            dto.failure = OrderService.MapFailure(o);
+            dto.cashOutstandingToStore = CashOutstandingToStore(o);
+            dto.requeueBlockedByUnreconciledCash = CashSemantics.BlocksFailedRequeue(
+                o.Status, o.CashCollected, o.CashHandedOverAmount);
+            dto.requeueBlockReason = dto.requeueBlockedByUnreconciledCash
+                ? $"Cannot requeue: {o.CashCollected:0.00} cash was collected on this Failed order. " +
+                  "Requeue stays blocked after handover — a second rider must not inherit or overwrite " +
+                  "prior cash fields. Cancel instead, or await a per-rider cash ledger. " +
+                  "Collected/handover amounts are preserved."
+                : null;
             dto.items = (o.Items ?? Enumerable.Empty<AssignedOrderItem>())
                 .Select(i => new AssignOrderItemDto
                 {
@@ -935,6 +1834,36 @@ namespace Rider.Infrastructure.Services
                 .ToList();
             return dto;
         }
+
+        private static AdminDeliveryIssueReportDto MapIssueReportDto(DeliveryIssueReport r) => new()
+        {
+            id = r.Id,
+            assignedOrderId = r.AssignedOrderId,
+            orderId = r.Order?.OrderId,
+            orderNo = r.Order?.OrderNo,
+            storeId = r.Order?.Batch?.StoreId,
+            orderStatus = r.Order?.Status,
+            riderUserId = r.RiderUserId,
+            riderWorkerId = r.Rider?.ThirdPartyEmployeeId,
+            riderName = r.Rider?.UserName,
+            reasonCode = r.ReasonCode,
+            reasonLabel = DeliveryIssueReasons.DisplayLabel(r.ReasonCode),
+            note = r.Note,
+            status = r.Status ?? DeliveryIssueStatuses.New,
+            statusLabel = DeliveryIssueStatuses.DisplayLabel(r.Status ?? DeliveryIssueStatuses.New),
+            internalNote = r.InternalNote,
+            acknowledgedByUserId = r.AcknowledgedByUserId,
+            acknowledgedByName = r.AcknowledgedByUser?.UserName,
+            acknowledgedAt = r.AcknowledgedAt,
+            closedByUserId = r.ClosedByUserId,
+            closedByName = r.ClosedByUser?.UserName,
+            closedAt = r.ClosedAt,
+            createdAt = r.CreatedAt,
+            updatedAt = r.UpdatedAt == default ? r.CreatedAt : r.UpdatedAt,
+            rowVersion = r.RowVersion == null || r.RowVersion.Length == 0
+                ? ""
+                : Convert.ToBase64String(r.RowVersion)
+        };
 
         private static List<string> RolesOf(AppUser user) =>
             user.UserRoles?

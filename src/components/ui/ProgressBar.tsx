@@ -1,3 +1,4 @@
+import React from 'react';
 import { StyleSheet, View, ViewStyle } from 'react-native';
 import { colors, radius } from '../../theme';
 
