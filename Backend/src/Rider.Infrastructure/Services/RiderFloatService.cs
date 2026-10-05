@@ -28,26 +28,98 @@ namespace Rider.Infrastructure.Services
             return await BuildSummaryAsync(riderUserId, actor.IsHeadOffice ? null : actor.StoreId);
         }
 
+        public async Task<ApiResponse<FloatStoreBoardDto>> GetStoreBoardAsync(AdminActor actor, string? storeId)
+        {
+            var scope = ResolveStoreScope(actor, storeId);
+            if (!actor.IsHeadOffice && string.IsNullOrWhiteSpace(scope))
+                return new ApiResponse<FloatStoreBoardDto>(false, "Store scope required", null);
+
+            var q = _unitOfWork.Context.Set<RiderFloatLedger>().AsNoTracking();
+            if (!string.IsNullOrWhiteSpace(scope))
+            {
+                var scopeNorm = scope.Trim().ToLower();
+                // Include ledger rows for this store OR for riders assigned to this store
+                // (covers store-id label mismatches on older rows).
+                var riderIdsInStore = await _unitOfWork.Context.Set<AppUser>()
+                    .AsNoTracking()
+                    .Where(u => u.StoreId != null && u.StoreId.ToLower() == scopeNorm)
+                    .Select(u => u.UserId)
+                    .ToListAsync();
+                q = q.Where(e =>
+                    e.StoreId.ToLower() == scopeNorm
+                    || riderIdsInStore.Contains(e.RiderUserId));
+            }
+
+            var pendingRows = await q
+                .Where(e => e.EntryType == FloatEntryTypes.Issue && e.Status == FloatIssueStatuses.PendingAck)
+                .OrderBy(e => e.CreatedAt)
+                .Take(100)
+                .ToListAsync();
+
+            var recentRows = await q
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(50)
+                .ToListAsync();
+
+            var pending = new List<FloatLedgerEntryDto>();
+            foreach (var row in pendingRows)
+                pending.Add(await MapAsync(row));
+
+            var recent = new List<FloatLedgerEntryDto>();
+            foreach (var row in recentRows)
+                recent.Add(await MapAsync(row));
+
+            var riderIds = recentRows.Select(r => r.RiderUserId)
+                .Concat(pendingRows.Select(p => p.RiderUserId))
+                .Distinct()
+                .ToList();
+
+            var riders = new List<FloatRiderBalanceDto>();
+            foreach (var rid in riderIds)
+            {
+                var rider = await _unitOfWork.UserRepository.GetByUserIdAsync(rid);
+                if (rider == null || !CanAccessRider(actor, rider)) continue;
+                var outstanding = await SumOutstandingAsync(rid);
+                var pendingAmt = pendingRows.Where(p => p.RiderUserId == rid).Sum(p => p.Amount);
+                if (outstanding <= 0 && pendingAmt <= 0) continue;
+                riders.Add(new FloatRiderBalanceDto
+                {
+                    riderUserId = rid,
+                    riderWorkerId = rider.ThirdPartyEmployeeId,
+                    riderName = rider.UserName,
+                    storeId = rider.StoreId,
+                    outstandingFloat = outstanding,
+                    pendingAcknowledgmentTotal = pendingAmt
+                });
+            }
+
+            return new ApiResponse<FloatStoreBoardDto>(true, "Float store board", new FloatStoreBoardDto
+            {
+                storeId = scope,
+                totalOutstanding = riders.Sum(r => r.outstandingFloat),
+                pendingAcknowledgmentTotal = pending.Sum(p => p.amount),
+                pendingAcknowledgments = pending,
+                recentActivity = recent,
+                riders = riders.OrderByDescending(r => r.outstandingFloat).ToList(),
+                asOfUtc = DateTime.UtcNow
+            });
+        }
+
         public async Task<ApiResponse<List<FloatLedgerEntryDto>>> GetPendingAcknowledgmentsAsync(
             AdminActor actor, string? storeId)
         {
-            var scope = actor.IsHeadOffice
-                ? (string.IsNullOrWhiteSpace(storeId) ? null : storeId.Trim())
-                : actor.StoreId;
-            if (!actor.IsHeadOffice && string.IsNullOrWhiteSpace(scope))
-                return new ApiResponse<List<FloatLedgerEntryDto>>(false, "Store scope required", null);
+            var board = await GetStoreBoardAsync(actor, storeId);
+            if (!board.status || board.Data == null)
+                return new ApiResponse<List<FloatLedgerEntryDto>>(board.status, board.message, new List<FloatLedgerEntryDto>());
+            return new ApiResponse<List<FloatLedgerEntryDto>>(
+                true, "Pending float acknowledgments", board.Data.pendingAcknowledgments);
+        }
 
-            var q = _unitOfWork.Context.Set<RiderFloatLedger>()
-                .AsNoTracking()
-                .Where(e => e.EntryType == FloatEntryTypes.Issue && e.Status == FloatIssueStatuses.PendingAck);
-            if (!string.IsNullOrWhiteSpace(scope))
-                q = q.Where(e => e.StoreId == scope);
-
-            var rows = await q.OrderBy(e => e.CreatedAt).Take(100).ToListAsync();
-            var list = new List<FloatLedgerEntryDto>();
-            foreach (var row in rows)
-                list.Add(await MapAsync(row));
-            return new ApiResponse<List<FloatLedgerEntryDto>>(true, "Pending float acknowledgments", list);
+        private static string? ResolveStoreScope(AdminActor actor, string? storeId)
+        {
+            if (actor.IsHeadOffice)
+                return string.IsNullOrWhiteSpace(storeId) ? null : storeId.Trim();
+            return string.IsNullOrWhiteSpace(actor.StoreId) ? null : actor.StoreId.Trim();
         }
 
         public async Task<ApiResponse<FloatLedgerEntryDto>> IssueAsync(AdminActor actor, FloatMutationRequest request)
@@ -288,21 +360,21 @@ namespace Rider.Infrastructure.Services
             if (rider == null) return FailSummary("Rider not found");
 
             var outstanding = await SumOutstandingAsync(riderUserId);
-            var pendingQ = _unitOfWork.Context.Set<RiderFloatLedger>()
+            // Rider summary shows all of that rider's float (not filtered by ledger store),
+            // so history remains visible after ack even if store labels differ.
+            var pending = await _unitOfWork.Context.Set<RiderFloatLedger>()
                 .AsNoTracking()
                 .Where(e => e.RiderUserId == riderUserId
                     && e.EntryType == FloatEntryTypes.Issue
-                    && e.Status == FloatIssueStatuses.PendingAck);
-            if (!string.IsNullOrWhiteSpace(storeScope))
-                pendingQ = pendingQ.Where(e => e.StoreId == storeScope);
-
-            var pending = await pendingQ.OrderBy(e => e.CreatedAt).ToListAsync();
-            var historyQ = _unitOfWork.Context.Set<RiderFloatLedger>()
+                    && e.Status == FloatIssueStatuses.PendingAck)
+                .OrderBy(e => e.CreatedAt)
+                .ToListAsync();
+            var recent = await _unitOfWork.Context.Set<RiderFloatLedger>()
                 .AsNoTracking()
-                .Where(e => e.RiderUserId == riderUserId);
-            if (!string.IsNullOrWhiteSpace(storeScope))
-                historyQ = historyQ.Where(e => e.StoreId == storeScope);
-            var recent = await historyQ.OrderByDescending(e => e.CreatedAt).Take(30).ToListAsync();
+                .Where(e => e.RiderUserId == riderUserId)
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(30)
+                .ToListAsync();
 
             var pendingDtos = new List<FloatLedgerEntryDto>();
             foreach (var p in pending) pendingDtos.Add(await MapAsync(p));

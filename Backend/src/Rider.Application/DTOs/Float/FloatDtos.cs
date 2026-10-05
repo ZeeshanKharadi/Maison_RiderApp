@@ -60,4 +60,26 @@ namespace Rider.Application.DTOs.Float
         [Required]
         public string requestId { get; set; } = "";
     }
+
+    public class FloatRiderBalanceDto
+    {
+        public Guid riderUserId { get; set; }
+        public string? riderWorkerId { get; set; }
+        public string? riderName { get; set; }
+        public string? storeId { get; set; }
+        public decimal outstandingFloat { get; set; }
+        public decimal pendingAcknowledgmentTotal { get; set; }
+    }
+
+    /// <summary>Store-scoped board: pending acks, recent ledger, riders with float.</summary>
+    public class FloatStoreBoardDto
+    {
+        public string? storeId { get; set; }
+        public decimal totalOutstanding { get; set; }
+        public decimal pendingAcknowledgmentTotal { get; set; }
+        public List<FloatLedgerEntryDto> pendingAcknowledgments { get; set; } = new();
+        public List<FloatLedgerEntryDto> recentActivity { get; set; } = new();
+        public List<FloatRiderBalanceDto> riders { get; set; } = new();
+        public DateTime asOfUtc { get; set; }
+    }
 }

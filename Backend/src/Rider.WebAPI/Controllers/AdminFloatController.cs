@@ -20,6 +20,14 @@ namespace Rider.WebAPI.Controllers
             _float = floatService;
         }
 
+        [HttpGet("board")]
+        public async Task<IActionResult> Board([FromQuery] string? storeId = null)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null) return error;
+            return Ok(await _float.GetStoreBoardAsync(actor, storeId));
+        }
+
         [HttpGet("pending")]
         public async Task<IActionResult> Pending([FromQuery] string? storeId = null)
         {
