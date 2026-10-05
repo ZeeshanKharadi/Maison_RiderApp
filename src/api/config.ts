@@ -20,6 +20,8 @@ export const API_PATHS = {
   riderLocation: '/api/Order/location',
   finance: '/api/Order/Finance',
   financeSummary: '/api/Order/Finance/summary',
+  floatSummary: '/api/Order/float/summary',
+  floatAcknowledge: '/api/Order/float/acknowledge',
   orderById: (id: number | string) => `/api/Order/${id}`,
   orderStatus: (id: number | string) => `/api/Order/${id}/status`,
   orderReject: (id: number | string) => `/api/Order/${id}/reject`,

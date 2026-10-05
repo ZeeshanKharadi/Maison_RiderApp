@@ -14,6 +14,7 @@ const NAV = [
   { to: '/operations', label: 'Live operations', icon: 'bi-broadcast', end: false },
   { to: '/live-map', label: 'Live map', icon: 'bi-geo-alt', end: false },
   { to: '/riders', label: 'Riders', icon: 'bi-people', end: false },
+  { to: '/float', label: 'Change float', icon: 'bi-wallet2', end: false },
   { to: '/payments', label: 'Payments', icon: 'bi-cash-stack', end: false },
   { to: '/reports', label: 'Reports', icon: 'bi-graph-up', end: false },
 ];

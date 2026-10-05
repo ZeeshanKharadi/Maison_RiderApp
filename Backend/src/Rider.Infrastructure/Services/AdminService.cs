@@ -1265,6 +1265,16 @@ namespace Rider.Infrastructure.Services
             if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
                 return Fail<AdminOrderDetailDto>("Order not found");
 
+            if (cashCollected.HasValue && cashCollected.Value < 0)
+                return Fail<AdminOrderDetailDto>("Cash collected cannot be negative");
+
+            var alreadyHanded = order.CashHandedOverAmount ?? 0m;
+            if (cashCollected.HasValue && cashCollected.Value < alreadyHanded)
+            {
+                return Fail<AdminOrderDetailDto>(
+                    $"Cash collected ({cashCollected.Value:0.00}) cannot be below cash already handed over ({alreadyHanded:0.00})");
+            }
+
             order.CashCollected = cashCollected;
             order.CashSemanticsNote = CashSemantics.AdminCorrected;
             order.UpdatedAt = DateTime.UtcNow;

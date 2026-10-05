@@ -6,6 +6,7 @@ import LiveMapPage from './pages/LiveMapPage';
 import LoginPage from './pages/LoginPage';
 import OperationsPage from './pages/OperationsPage';
 import OrderDetailPage from './pages/OrderDetailPage';
+import FloatPage from './pages/FloatPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ReportsPage from './pages/ReportsPage';
 import RidersPage from './pages/RidersPage';
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/operations/:id" element={<OrderDetailPage />} />
             <Route path="/live-map" element={<LiveMapPage />} />
             <Route path="/riders" element={<RidersPage />} />
+            <Route path="/float" element={<FloatPage />} />
             <Route path="/payments" element={<PaymentsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />

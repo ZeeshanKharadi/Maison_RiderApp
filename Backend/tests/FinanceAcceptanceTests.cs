@@ -83,7 +83,7 @@ public class FinanceAcceptanceTests : IDisposable
             }).Build(),
             NullLogger<AdminService>.Instance);
 
-        _finance = new RiderFinanceService(uow);
+        _finance = new RiderFinanceService(uow, new RiderFloatService(uow));
         _adminActor = new AdminActor
         {
             UserId = _adminId,
@@ -100,12 +100,12 @@ public class FinanceAcceptanceTests : IDisposable
     public async Task Fixture_collections_handover_isolation_and_idempotent_retry()
     {
         var idA = await SeedAndCompleteAsync("OA", expected: 1000m, collected: 1000m);
-        var idB = await SeedAndCompleteAsync("OB", expected: 500m, collected: 450m, reason: "short change");
+        var idB = await SeedAndCompleteAsync("OB", expected: 500m, collected: 500m);
 
         var summary = (await _finance.GetSummaryAsync(_riderA, null, null)).Data!;
-        Assert.Equal(1450m, summary.cashCollectedTotal);
-        Assert.Equal(50m, summary.codShortageTotal);
-        Assert.Equal(1450m, summary.cashHeld);
+        Assert.Equal(1500m, summary.cashCollectedTotal);
+        Assert.Equal(0m, summary.codShortageTotal);
+        Assert.Equal(1500m, summary.cashHeld);
         Assert.Equal(0m, summary.cashHandedOverTotal);
         Assert.True(summary.compensationAvailable);
         Assert.Equal(100m, summary.calculatedCompensation); // 2 * fixed 50 — not COD
@@ -118,7 +118,7 @@ public class FinanceAcceptanceTests : IDisposable
         Assert.True(ho.status, ho.message);
 
         summary = (await _finance.GetSummaryAsync(_riderA, null, null)).Data!;
-        Assert.Equal(450m, summary.cashHeld);
+        Assert.Equal(500m, summary.cashHeld);
         Assert.Equal(1000m, summary.cashHandedOverTotal);
 
         var retry = await _admin.ConfirmCashHandoverAsync(_adminActor, idA, new CashHandoverRequest
@@ -128,7 +128,7 @@ public class FinanceAcceptanceTests : IDisposable
         });
         Assert.True(retry.status, retry.message);
         summary = (await _finance.GetSummaryAsync(_riderA, null, null)).Data!;
-        Assert.Equal(450m, summary.cashHeld);
+        Assert.Equal(500m, summary.cashHeld);
 
         var orderA = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == idA);
         Assert.Equal(1000m, orderA.CashHandedOverAmount);
@@ -147,7 +147,7 @@ public class FinanceAcceptanceTests : IDisposable
                 Roles = new List<string> { RoleNames.Manager }
             },
             idB,
-            new CashHandoverRequest { amount = 450m, requestId = "ho-b-steal" });
+            new CashHandoverRequest { amount = 500m, requestId = "ho-b-steal" });
         Assert.False(bHandover.status);
 
         var still = await _db.AssignedOrders.AsNoTracking().FirstAsync(o => o.Id == idB);

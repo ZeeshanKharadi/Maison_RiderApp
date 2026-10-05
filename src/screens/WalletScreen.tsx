@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   ListRenderItem,
   RefreshControl,
@@ -14,6 +15,7 @@ import { useSideMenu } from '../context/SideMenuContext';
 import { useAuth } from '../services/AuthContext';
 import {
   AppHeader,
+  AppButton,
   EmptyState,
   SectionHeader,
 } from '../components/ui';
@@ -22,6 +24,11 @@ import {
   RiderFinanceSummary,
   RiderFinanceTransaction,
 } from '../repositories/financeRepository';
+import {
+  acknowledgeFloat,
+  fetchFloatSummary,
+  FloatSummary,
+} from '../repositories/floatRepository';
 import { formatMoney } from '../utils/format';
 import { colors, radius, spacing, typography } from '../theme';
 
@@ -51,6 +58,8 @@ export default function WalletScreen() {
   const [transactions, setTransactions] = useState<RiderFinanceTransaction[]>(
     [],
   );
+  const [floatSummary, setFloatSummary] = useState<FloatSummary | null>(null);
+  const [ackBusyId, setAckBusyId] = useState<number | null>(null);
   const [state, setState] = useState<LoadState>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -60,26 +69,47 @@ export default function WalletScreen() {
     else setState('loading');
     setErrorMessage(null);
 
-    const result = await fetchFinancePage({ page: 1, pageSize: 50 });
+    const [result, floatResult] = await Promise.all([
+      fetchFinancePage({ page: 1, pageSize: 50 }),
+      fetchFloatSummary(),
+    ]);
     if (!result.ok) {
       setState('error');
       setErrorMessage(result.error.message);
       setSummary(null);
       setTransactions([]);
+      setFloatSummary(null);
       setRefreshing(false);
       return;
     }
 
     setSummary(result.data.summary);
     setTransactions(result.data.transactions);
+    setFloatSummary(floatResult.ok ? floatResult.data : null);
     setState(
       result.data.transactions.length === 0 &&
-        result.data.summary.cashCollectedTotal === 0
+        result.data.summary.cashCollectedTotal === 0 &&
+        !(floatResult.ok && floatResult.data.outstandingFloat > 0) &&
+        !(floatResult.ok && floatResult.data.pendingAcknowledgments.length > 0)
         ? 'empty'
         : 'ready',
     );
     setRefreshing(false);
   }, []);
+
+  const onAcknowledge = useCallback(
+    async (issueId: number) => {
+      setAckBusyId(issueId);
+      const res = await acknowledgeFloat(issueId);
+      setAckBusyId(null);
+      if (!res.ok) {
+        Alert.alert('Acknowledge failed', res.error.message);
+        return;
+      }
+      void load(true);
+    },
+    [load],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -148,15 +178,81 @@ export default function WalletScreen() {
             summary ? (
               <View style={styles.headerBlock}>
                 <View style={styles.card}>
-                  <Text style={styles.cardLabel}>Cash currently held</Text>
+                  <Text style={styles.cardLabel}>Total owed to store</Text>
                   <Text style={styles.cardAmount}>
-                    {formatMoney(summary.cashHeld)}
+                    {formatMoney(
+                      summary.totalOwedToStore ??
+                        summary.cashHeld +
+                          (summary.floatOutstanding ??
+                            floatSummary?.outstandingFloat ??
+                            0),
+                    )}
                   </Text>
                   <Text style={styles.cardHint}>
-                    Actual collections minus store handovers. Not earnings and
-                    not withdrawable.
+                    COD held + change float. Tips stay with you. Not earnings.
                   </Text>
                 </View>
+
+                <SectionHeader title="Change float" />
+                <View style={styles.grid}>
+                  <Metric
+                    label="Outstanding float"
+                    value={formatMoney(
+                      summary.floatOutstanding ??
+                        floatSummary?.outstandingFloat ??
+                        0,
+                    )}
+                  />
+                  <Metric
+                    label="COD held"
+                    value={formatMoney(summary.cashHeld)}
+                  />
+                </View>
+                {floatSummary?.pendingAcknowledgments?.length ? (
+                  <View style={{ marginBottom: spacing.md }}>
+                    <Text style={styles.cardHint}>
+                      Pending acknowledgment — confirm you received this float.
+                    </Text>
+                    {floatSummary.pendingAcknowledgments.map(item => (
+                      <View key={item.id} style={styles.txRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.txTitle}>
+                            Issue · {formatMoney(item.amount)}
+                          </Text>
+                          <Text style={styles.txMeta}>
+                            {new Date(item.createdAt).toLocaleString()}
+                          </Text>
+                        </View>
+                        <AppButton
+                          label={ackBusyId === item.id ? '…' : 'Acknowledge'}
+                          variant="secondary"
+                          onPress={() => void onAcknowledge(item.id)}
+                          disabled={ackBusyId != null}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                {floatSummary?.recent?.length ? (
+                  <View style={{ marginBottom: spacing.md }}>
+                    {floatSummary.recent.slice(0, 5).map(item => (
+                      <View key={`${item.entryType}-${item.id}`} style={styles.txRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.txTitle}>
+                            Float · {item.entryType}
+                            {item.status ? ` · ${item.status}` : ''}
+                          </Text>
+                          <Text style={styles.txMeta}>
+                            {new Date(item.createdAt).toLocaleString()}
+                          </Text>
+                        </View>
+                        <Text style={styles.txAmount}>
+                          {formatMoney(item.amount)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
 
                 <SectionHeader title="COD cash" />
                 <View style={styles.grid}>

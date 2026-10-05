@@ -801,26 +801,37 @@ namespace Rider.Infrastructure.Services
                         string? cashSemantics = null;
                         if (RequiresCashOnComplete(order, expected))
                         {
+                            if (!expected.HasValue || expected.Value <= 0)
+                            {
+                                await tx.RollbackAsync();
+                                return new ApiResponse<AvailableOrderDto>(
+                                    false,
+                                    "Expected COD amount is unknown for this order. Contact the store before completing.",
+                                    null);
+                            }
                             if (!request.cashCollected.HasValue)
                             {
                                 await tx.RollbackAsync();
                                 return new ApiResponse<AvailableOrderDto>(false, "cashCollected is required for COD/cash orders", null);
                             }
-                            if (expected.HasValue && request.cashCollected.Value != expected.Value
-                                && string.IsNullOrWhiteSpace(request.cashCollectedReason))
+                            if (request.cashCollected.Value != expected.Value)
                             {
                                 await tx.RollbackAsync();
-                                return new ApiResponse<AvailableOrderDto>(false, "cashCollectedReason is required when amount differs from expected", null);
+                                return new ApiResponse<AvailableOrderDto>(
+                                    false,
+                                    $"Collected amount must equal expected COD ({expected.Value:0.00}). Underpayment is not allowed; tips are not recorded here.",
+                                    null);
                             }
-                            cashCollected = request.cashCollected;
+                            cashCollected = expected.Value;
                             cashReason = request.cashCollectedReason;
                             cashSemantics = CashSemantics.RiderCollected;
                         }
                         else if (request.cashCollected.HasValue)
                         {
-                            cashCollected = request.cashCollected;
-                            cashReason = request.cashCollectedReason;
-                            cashSemantics = CashSemantics.RiderCollected;
+                            // Prepaid / non-COD: ignore cash payload — do not invent COD.
+                            cashCollected = null;
+                            cashReason = null;
+                            cashSemantics = null;
                         }
 
                         // Detach then conditional UPDATE so concurrent completions yield one financial effect.

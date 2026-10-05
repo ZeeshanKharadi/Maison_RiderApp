@@ -618,15 +618,18 @@ export function RiderSessionProvider({
             message: 'Enter the cash amount collected.',
           };
         }
-        const expected = activeJob.expectedCash ?? activeJob.orderAmount;
-        if (
-          expected != null &&
-          Number(amount) !== Number(expected) &&
-          !(opts?.cashCollectedReason ?? '').trim()
-        ) {
+        const expected = activeJob.expectedCash;
+        if (expected == null || !Number.isFinite(Number(expected))) {
           return {
             ok: false,
-            message: 'A reason is required when cash differs from expected.',
+            message:
+              'Expected COD is unknown. Contact the store before completing.',
+          };
+        }
+        if (Number(amount) !== Number(expected)) {
+          return {
+            ok: false,
+            message: `Collected amount must equal expected COD (${expected}).`,
           };
         }
       }

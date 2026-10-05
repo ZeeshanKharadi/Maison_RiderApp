@@ -536,21 +536,17 @@ export default function ActiveDeliveryScreen() {
       return;
     }
     const expected = activeJob.expectedCash;
-    if (expected == null && !codReason.trim()) {
+    if (expected == null || !Number.isFinite(Number(expected))) {
       Alert.alert(
-        'Expected cash unknown',
-        'POS did not provide expected cash. Enter the amount collected and a short note.',
+        'Expected COD unknown',
+        'POS did not provide expected COD. Contact the store before completing.',
       );
       return;
     }
-    if (
-      expected != null &&
-      Number(amount) !== Number(expected) &&
-      !codReason.trim()
-    ) {
+    if (Number(amount) !== Number(expected)) {
       Alert.alert(
-        'Reason required',
-        'Enter a reason when collected cash differs from expected.',
+        'Amount must match expected COD',
+        `Collect exactly ${formatMoney(expected)}. Tips stay with you and are not entered here.`,
       );
       return;
     }
@@ -912,10 +908,14 @@ export default function ActiveDeliveryScreen() {
           </View>
         }>
         <Text style={styles.codHint}>
-          Enter the cash collected from {activeJob.customerName}. Expected:{' '}
+          Collect exactly the expected COD from {activeJob.customerName}. Tips
+          stay with you and are not entered here.
+        </Text>
+        <Text style={styles.codLabel}>Expected COD</Text>
+        <Text style={styles.codExpected}>
           {activeJob.expectedCash != null
             ? formatMoney(activeJob.expectedCash)
-            : 'not provided by POS — add a note'}.
+            : 'Unknown — contact store'}
         </Text>
         <Text style={styles.codLabel}>Amount collected</Text>
         <TextInput
@@ -926,14 +926,12 @@ export default function ActiveDeliveryScreen() {
           placeholder="0.00"
           placeholderTextColor={colors.textMuted}
         />
-        <Text style={styles.codLabel}>
-          Reason (required if amount differs)
-        </Text>
+        <Text style={styles.codLabel}>Note (optional)</Text>
         <TextInput
           style={[styles.codInput, styles.codReason]}
           value={codReason}
           onChangeText={setCodReason}
-          placeholder="e.g. customer short-changed / tip included"
+          placeholder="Optional note"
           placeholderTextColor={colors.textMuted}
         />
       </BottomSheet>
@@ -1289,6 +1287,11 @@ const styles = StyleSheet.create({
   codLabel: {
     ...typography.caption,
     marginBottom: spacing.xxs,
+  },
+  codExpected: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
   },
   codInput: {
     ...typography.body,
