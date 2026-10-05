@@ -76,13 +76,16 @@ export async function login(
     return ok(mapApiUser(envelope.Data.userData, id));
   } catch (err) {
     if (err instanceof HttpError) {
-      return fail(err.code, err.message);
+      if (err.code === 'NETWORK' || err.statusCode === 0) {
+        return fail('NETWORK', err.message);
+      }
+      return fail(err.code, err.message, err.statusCode);
     }
     return fail(
       'NETWORK',
       err instanceof Error
         ? err.message
-        : 'Unable to reach login API. Is the backend running?',
+        : 'Unable to reach login API. Check your connection and API_BASE_URL.',
     );
   }
 }

@@ -71,7 +71,13 @@ export default function LoginScreen() {
           await AsyncStorage.removeItem('rememberedCredentials');
         }
       } else {
-        Alert.alert('Login Failed', result.message || 'Invalid credentials');
+        const title =
+          /reach the server|network|connection|API_BASE_URL/i.test(
+            result.message || '',
+          )
+            ? 'Connection error'
+            : 'Login Failed';
+        Alert.alert(title, result.message || 'Invalid credentials');
       }
     } catch {
       Alert.alert('Login Error', 'An unexpected error occurred');

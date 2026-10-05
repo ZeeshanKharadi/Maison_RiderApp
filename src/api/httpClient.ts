@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, connectionErrorMessage } from './config';
 import { getAccessToken } from './tokenStorage';
 
 export type ApiEnvelope<T> = {
@@ -119,6 +119,13 @@ export async function apiRequest<T>(
       throw new TimeoutError(
         'Request timed out. The server may have received it — refresh before retrying.',
       );
+    }
+    // fetch network failures (offline, DNS, refused) — clear message for login/accept/status
+    if (
+      err instanceof TypeError ||
+      (err instanceof Error && /network request failed|failed to fetch|networkerror/i.test(err.message))
+    ) {
+      throw new HttpError(0, connectionErrorMessage(err), 'NETWORK');
     }
     throw err;
   } finally {

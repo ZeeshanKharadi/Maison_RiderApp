@@ -1,5 +1,5 @@
 import { AvailableOrder } from '../data/orders';
-import { API_PATHS } from '../api/config';
+import { API_PATHS, connectionErrorMessage } from '../api/config';
 import { apiEnvelope, HttpError, TimeoutError } from '../api/httpClient';
 import {
   ApiAvailableOrder,
@@ -111,12 +111,12 @@ function mapNetworkError(err: unknown, fallback: string): ApiResult<never> {
     return fail('TIMEOUT', err.message);
   }
   if (err instanceof HttpError) {
+    if (err.code === 'NETWORK' || err.statusCode === 0) {
+      return fail('NETWORK', err.message || connectionErrorMessage(err));
+    }
     return fail(err.code, err.message, err.statusCode);
   }
-  return fail(
-    'NETWORK',
-    err instanceof Error ? err.message : fallback,
-  );
+  return fail('NETWORK', connectionErrorMessage(err) || fallback);
 }
 
 /**

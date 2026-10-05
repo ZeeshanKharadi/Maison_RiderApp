@@ -310,6 +310,15 @@ export default function OrderDetailPage() {
     order.expectedCash != null ||
     order.cashCollected != null ||
     order.cash != null;
+  const handoverComplete =
+    isCodLike
+    && cashCollectedAmt > 0
+    && cashOutstanding <= 0.0001
+    && (handedOver || Number(order.cashHandedOverAmount ?? 0) >= cashCollectedAmt);
+  const handoverPending =
+    isCodLike
+    && cashCollectedAmt > 0
+    && cashOutstanding > 0.0001;
   const failurePending = failureStatus === 'Pending';
   const canApproveReturn = failurePending;
   const canRejectFailure = failurePending;
@@ -322,7 +331,22 @@ export default function OrderDetailPage() {
       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mt-2">
         <div>
           <h1 className="page-title">Order #{order.orderId || order.orderNo}</h1>
-          <p className="page-sub">{order.storeId} · <span className={`status-pill status-${order.status}`}>{statusLabel(order.status)}</span></p>
+          <p className="page-sub">
+            {order.storeId} ·{' '}
+            <span className={`status-pill status-${order.status}`}>{statusLabel(order.status)}</span>
+            {handoverPending && (
+              <>
+                {' · '}
+                <span className="status-pill status-Failed">COD handover pending</span>
+              </>
+            )}
+            {handoverComplete && (
+              <>
+                {' · '}
+                <span className="status-pill status-Completed">COD handed over</span>
+              </>
+            )}
+          </p>
         </div>
         <div className="d-flex gap-2">
           {canCancel && (
@@ -462,20 +486,35 @@ export default function OrderDetailPage() {
             <hr className="my-2" />
             <p className="mb-1">Expected cash <strong>{order.expectedCash != null ? money(order.expectedCash) : '—'}</strong></p>
             <p className="mb-1">Cash collected <strong>{order.cashCollected != null ? money(order.cashCollected) : '—'}</strong></p>
+            <p className="mb-1">
+              COD handover status{' '}
+              <strong>
+                {handoverComplete
+                  ? 'Handed over successfully'
+                  : handoverPending
+                    ? 'Pending'
+                    : isCodLike
+                      ? 'Awaiting collection'
+                      : '—'}
+              </strong>
+            </p>
             <p className="mb-2">
               Cash handed over{' '}
               <strong>
-                {handedOver
-                  ? `${money(order.cashHandedOverAmount)} · ${dt(order.cashHandedOverAt)}`
+                {handedOver || Number(order.cashHandedOverAmount ?? 0) > 0
+                  ? `${money(order.cashHandedOverAmount)} · ${dt(order.cashHandedOverAt) || '—'}`
                   : '—'}
               </strong>
+              {handoverPending ? (
+                <span className="text-muted"> · outstanding {money(cashOutstanding)}</span>
+              ) : null}
             </p>
             {showLegacyNote && (
               <div className="alert alert-warning py-2 small mb-3">
                 Legacy cash note: <code>{order.cashSemanticsNote}</code> — collected vs handed-over may be ambiguous for this order.
               </div>
             )}
-            {isCodLike && !handedOver && (
+            {handoverPending && (
               <button
                 className="btn btn-maison mb-3"
                 type="button"
@@ -484,6 +523,11 @@ export default function OrderDetailPage() {
               >
                 Confirm COD handover
               </button>
+            )}
+            {handoverComplete && (
+              <div className="alert alert-success py-2 small mb-3">
+                COD handover accepted — cash handed over successfully for this order.
+              </div>
             )}
             {isCodLike && (
               <form className="d-flex flex-column gap-2" onSubmit={saveCashCorrection}>

@@ -1,4 +1,5 @@
 import { AvailableOrder, PaymentMethod, TimelineEvent } from '../../data/orders';
+import { toApiIso } from '../../utils/apiDate';
 import { DeliveryState } from '../../delivery/stateMachine';
 
 /** Matches backend AvailableOrderDto / AssignOrderItemDto */
@@ -145,40 +146,41 @@ function buildTimeline(
   acceptedAt?: string | null,
   pickedUpAt?: string | null,
 ): TimelineEvent[] {
-  const created = new Date(createdAt);
-  const safe = Number.isNaN(created.getTime()) ? new Date() : created;
-  const acceptedDone = !!(acceptedAt && !Number.isNaN(new Date(acceptedAt).getTime()));
-  const pickupDone = !!(pickedUpAt && !Number.isNaN(new Date(pickedUpAt).getTime()));
+  const createdIso = toApiIso(createdAt);
+  const acceptedIso = acceptedAt ? toApiIso(acceptedAt, false) : '';
+  const pickupIso = pickedUpAt ? toApiIso(pickedUpAt, false) : '';
+  const acceptedDone = !!acceptedIso;
+  const pickupDone = !!pickupIso;
 
   return [
     {
       id: 'created',
       label: 'Order created',
-      at: safe.toISOString(),
+      at: createdIso,
       done: true,
     },
     {
       id: 'assigned',
       label: 'Assigned via AssignOrder',
-      at: safe.toISOString(),
+      at: createdIso,
       done: true,
     },
     {
       id: 'offered',
       label: 'Offered to you',
-      at: safe.toISOString(),
+      at: createdIso,
       done: true,
     },
     {
       id: 'accepted',
       label: 'Accepted',
-      at: acceptedDone ? acceptedAt! : '',
+      at: acceptedDone ? acceptedIso : '',
       done: acceptedDone,
     },
     {
       id: 'pickup',
       label: pickupDone ? 'Picked up' : 'Pickup pending',
-      at: pickupDone ? pickedUpAt! : '',
+      at: pickupDone ? pickupIso : '',
       done: pickupDone,
     },
   ];
@@ -266,7 +268,7 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     specialInstructions: comment || undefined,
     items: Math.max(itemCount, lineItems.length, 1),
     packageInfo,
-    postedAt: dto.createdAt || new Date().toISOString(),
+    postedAt: toApiIso(dto.createdAt),
     imageColor: colorForId(displayId),
     timeline: buildTimeline(
       dto.createdAt || new Date().toISOString(),
@@ -283,9 +285,9 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
         : null,
     cashCollectedReason: (dto.cashCollectedReason ?? '').trim() || null,
     backendStatus: dto.status ?? undefined,
-    acceptedAt: dto.acceptedAt ?? undefined,
-    pickedUpAt: dto.pickedUpAt ?? undefined,
-    completedAt: dto.completedAt ?? undefined,
+    acceptedAt: dto.acceptedAt ? toApiIso(dto.acceptedAt, false) || undefined : undefined,
+    pickedUpAt: dto.pickedUpAt ? toApiIso(dto.pickedUpAt, false) || undefined : undefined,
+    completedAt: dto.completedAt ? toApiIso(dto.completedAt, false) || undefined : undefined,
     isDirectAssignment: dto.isDirectAssignment ?? false,
     issueReports: (dto.issueReports ?? []).map(r => ({
       id: r.id,

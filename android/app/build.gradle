@@ -3,6 +3,12 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 apply plugin: "com.google.gms.google-services"
 apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
+
+// Build-specific env files (API_BASE_URL, GOOGLE_MAPS_API_KEY) — no secrets beyond Maps key.
+project.ext.envConfigFiles = [
+    debug: ".env.development",
+    release: ".env.production",
+]
 apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
 
 /**
@@ -115,6 +121,33 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+
+    applicationVariants.all { variant ->
+        if (variant.buildType.name == "release") {
+            def apiUrl = (project.env.get("API_BASE_URL", "") ?: "").trim()
+            if (!apiUrl) {
+                throw new GradleException(
+                    "Release build requires API_BASE_URL in .env.production (HTTPS). See .env.example."
+                )
+            }
+            if (!apiUrl.toLowerCase().startsWith("https://")) {
+                throw new GradleException(
+                    "Release API_BASE_URL must use HTTPS (got: ${apiUrl}). No LAN/http fallback."
+                )
+            }
+            if (apiUrl.contains("REPLACE_WITH_YOUR_DEPLOYED_API_HOST")) {
+                throw new GradleException(
+                    "Replace API_BASE_URL placeholder in .env.production before a release build."
+                )
+            }
+            def host = apiUrl.replaceFirst("(?i)^https://", "").split("/")[0].toLowerCase()
+            if (host == "localhost" || host == "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.")) {
+                throw new GradleException(
+                    "Release API_BASE_URL must not be a LAN/localhost address (got: ${apiUrl})."
+                )
+            }
         }
     }
 }

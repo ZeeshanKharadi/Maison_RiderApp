@@ -61,6 +61,7 @@ export default function SideMenu() {
     () => [
       { icon: 'view-dashboard-outline', label: 'Dashboard', target: { kind: 'tab', screen: 'Dashboard' } },
       { icon: 'truck-delivery-outline', label: 'Orders', target: { kind: 'tab', screen: 'Orders' } },
+      { icon: 'clipboard-list-outline', label: 'My Orders', target: { kind: 'stack', screen: 'MyOrders' } },
       { icon: 'history', label: 'History', target: { kind: 'stack', screen: 'RouteHistory' } },
       { icon: 'chart-line', label: 'Performance', target: { kind: 'stack', screen: 'Performance' } },
       { icon: 'wallet-outline', label: 'Wallet', target: { kind: 'tab', screen: 'Wallet' } },

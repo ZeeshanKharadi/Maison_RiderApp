@@ -11,6 +11,7 @@ import { AvailableOrdersProvider } from '../context/AvailableOrdersContext';
 import { AccountProvider } from '../context/AccountContext';
 import { useRiderNotificationPoll } from '../hooks/useRiderNotificationPoll';
 import HistoryScreen from '../screens/HistoryScreen';
+import MyOrdersScreen from '../screens/MyOrdersScreen';
 import PerformanceScreen from '../screens/PerformanceScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -20,6 +21,7 @@ import ActiveDeliveryScreen from '../screens/ActiveDeliveryScreen';
 
 export type MainStackParamList = {
   Tabs: undefined;
+  MyOrders: undefined;
   RouteHistory: undefined;
   Performance: undefined;
   Notifications: undefined;
@@ -48,6 +50,7 @@ export default function MainNavigator() {
               <View style={{ flex: 1 }}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                   <Stack.Screen name="Tabs" component={TabNavigator} />
+                  <Stack.Screen name="MyOrders" component={MyOrdersScreen} />
                   <Stack.Screen name="RouteHistory" component={HistoryScreen} />
                   <Stack.Screen name="Performance" component={PerformanceScreen} />
                   <Stack.Screen

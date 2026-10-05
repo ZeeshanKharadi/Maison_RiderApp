@@ -1,9 +1,50 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, apiBlob } from '../api/client';
-import { daysAgoInput, money, PaymentsDashboard, RiderDto, StoreDto, todayInput } from '../api/types';
+import {
+  daysAgoInput,
+  money,
+  OrderListDto,
+  PaymentsDashboard,
+  RiderDto,
+  StoreDto,
+  todayInput,
+} from '../api/types';
+
+function isCodLike(o: OrderListDto): boolean {
+  const pay = (o.paymentMethod || '').toLowerCase();
+  return (
+    pay.includes('cash') ||
+    pay.includes('cod') ||
+    o.expectedCash != null ||
+    o.cashCollected != null ||
+    o.cash != null
+  );
+}
+
+function cashOutstanding(o: OrderListDto): number {
+  const collected = Number(o.cashCollected ?? 0);
+  const handed = Number(o.cashHandedOverAmount ?? 0);
+  return Math.max(0, collected - handed);
+}
+
+function isHandoverPending(o: OrderListDto): boolean {
+  return isCodLike(o) && Number(o.cashCollected ?? 0) > 0 && cashOutstanding(o) > 0.0001;
+}
+
+function isHandoverComplete(o: OrderListDto): boolean {
+  const collected = Number(o.cashCollected ?? 0);
+  return (
+    isCodLike(o) &&
+    collected > 0 &&
+    cashOutstanding(o) <= 0.0001 &&
+    (!!o.cashHandedOverAt || Number(o.cashHandedOverAmount ?? 0) >= collected)
+  );
+}
 
 export default function PaymentsPage() {
   const [data, setData] = useState<PaymentsDashboard | null>(null);
+  const [orders, setOrders] = useState<OrderListDto[]>([]);
   const [stores, setStores] = useState<StoreDto[]>([]);
   const [riders, setRiders] = useState<RiderDto[]>([]);
   const [storeId, setStoreId] = useState('');
@@ -18,15 +59,21 @@ export default function PaymentsPage() {
     if (to) qs.set('to', to);
     if (storeId) qs.set('storeId', storeId);
     if (riderId) qs.set('riderId', riderId);
-    const [p, s, r] = await Promise.all([
+    const orderQs = new URLSearchParams(qs);
+    // Completed + Failed often hold collected COD cash awaiting handover.
+    const [p, s, r, completed, failed] = await Promise.all([
       api<PaymentsDashboard>(`/api/Admin/Payments?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
       api<RiderDto[]>('/api/Admin/Riders'),
+      api<OrderListDto[]>(`/api/Admin/Orders?${orderQs.toString()}&status=Completed`),
+      api<OrderListDto[]>(`/api/Admin/Orders?${orderQs.toString()}&status=Failed`),
     ]);
     if (!p.status) throw new Error(p.message);
     setData(p.Data);
     setStores(s.Data || []);
     setRiders(r.Data || []);
+    const merged = [...(completed.Data || []), ...(failed.Data || [])];
+    setOrders(merged);
   }
 
   useEffect(() => {
@@ -42,6 +89,15 @@ export default function PaymentsPage() {
     if (riderId) qs.set('riderId', riderId);
     return qs.toString();
   }
+
+  const pendingHandover = useMemo(
+    () => orders.filter(isHandoverPending),
+    [orders],
+  );
+  const handedOver = useMemo(
+    () => orders.filter(isHandoverComplete),
+    [orders],
+  );
 
   return (
     <div>
@@ -84,6 +140,77 @@ export default function PaymentsPage() {
         <div className="kpi"><div className="kpi-label">Other</div><div className="kpi-value">{money(data?.otherTotal)}</div></div>
         <div className="kpi"><div className="kpi-label">Cash to collect</div><div className="kpi-value">{money(data?.cashToCollect)}</div></div>
         <div className="kpi"><div className="kpi-label">Cash collected</div><div className="kpi-value">{money(data?.cashCollected)}</div></div>
+      </div>
+
+      <div className="row g-3 mb-3">
+        <div className="col-lg-6">
+          <div className="panel">
+            <h2 className="h5 mb-3">COD handover pending ({pendingHandover.length})</h2>
+            <div className="table-responsive">
+              <table className="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th>Rider</th>
+                    <th>Collected</th>
+                    <th>Outstanding</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingHandover.map((o) => (
+                    <tr key={o.id}>
+                      <td>
+                        <Link to={`/operations/${o.id}`}>#{o.orderId || o.orderNo}</Link>
+                        <div className="small text-muted">{o.storeId}</div>
+                      </td>
+                      <td>{o.acceptedByWorkerId || '—'}</td>
+                      <td>{money(o.cashCollected)}</td>
+                      <td>{money(cashOutstanding(o))}</td>
+                      <td><span className="status-pill status-Failed">Pending</span></td>
+                    </tr>
+                  ))}
+                  {pendingHandover.length === 0 && (
+                    <tr><td colSpan={5} className="text-muted">No COD handovers pending in this range.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div className="col-lg-6">
+          <div className="panel">
+            <h2 className="h5 mb-3">COD handed over ({handedOver.length})</h2>
+            <div className="table-responsive">
+              <table className="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th>Rider</th>
+                    <th>Handed over</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {handedOver.map((o) => (
+                    <tr key={o.id}>
+                      <td>
+                        <Link to={`/operations/${o.id}`}>#{o.orderId || o.orderNo}</Link>
+                        <div className="small text-muted">{o.storeId}</div>
+                      </td>
+                      <td>{o.acceptedByWorkerId || '—'}</td>
+                      <td>{money(o.cashHandedOverAmount)}</td>
+                      <td><span className="status-pill status-Completed">Handed over</span></td>
+                    </tr>
+                  ))}
+                  {handedOver.length === 0 && (
+                    <tr><td colSpan={4} className="text-muted">No completed COD handovers in this range.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="panel">
