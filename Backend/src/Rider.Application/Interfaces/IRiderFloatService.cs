@@ -10,7 +10,6 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<FloatLedgerEntryDto>> AcknowledgeAsync(Guid riderUserId, FloatAcknowledgeRequest request);
 
         Task<ApiResponse<FloatSummaryDto>> GetSummaryAsync(AdminActor actor, Guid riderUserId);
-        Task<ApiResponse<FloatStoreBoardDto>> GetStoreBoardAsync(AdminActor actor, string? storeId);
         Task<ApiResponse<List<FloatLedgerEntryDto>>> GetPendingAcknowledgmentsAsync(AdminActor actor, string? storeId);
         Task<ApiResponse<FloatLedgerEntryDto>> IssueAsync(AdminActor actor, FloatMutationRequest request);
         Task<ApiResponse<FloatLedgerEntryDto>> RecordReturnAsync(AdminActor actor, FloatMutationRequest request);
