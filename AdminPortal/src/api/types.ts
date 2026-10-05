@@ -90,6 +90,15 @@ export type DeliveryIssueReportDto = {
   history?: DeliveryIssueTriageEventDto[];
 };
 
+export type DeliveryIssueReportPageDto = {
+  items: DeliveryIssueReportDto[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasMore: boolean;
+  dateFilterApplied: boolean;
+};
+
 export type DeliveryIssueTriageEventDto = {
   id: number;
   action: string;

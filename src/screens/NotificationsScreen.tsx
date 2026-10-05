@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   ListRenderItem,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -112,15 +113,27 @@ export default function NotificationsScreen() {
     markAllNotificationsRead,
     deleteNotification,
     clearAllNotifications,
+    notificationsError,
+    refreshNotifications,
   } = useAccount();
 
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<NotificationCategory | 'all'>('all');
+  const [refreshing, setRefreshing] = useState(false);
 
   const data = useMemo(
     () => filterNotifications(query, category),
     [filterNotifications, query, category],
   );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshNotifications();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshNotifications]);
 
   const onRead = useCallback(
     (id: string) => markNotificationRead(id),
@@ -134,7 +147,9 @@ export default function NotificationsScreen() {
         message: 'Remove this notification?',
         confirmLabel: 'Delete',
         destructive: true,
-        onConfirm: () => deleteNotification(id),
+        onConfirm: () => {
+          void deleteNotification(id);
+        },
       });
     },
     [deleteNotification],
@@ -146,7 +161,9 @@ export default function NotificationsScreen() {
       message: 'Delete every notification?',
       confirmLabel: 'Clear all',
       destructive: true,
-      onConfirm: clearAllNotifications,
+      onConfirm: () => {
+        void clearAllNotifications();
+      },
     });
   };
 
@@ -158,6 +175,25 @@ export default function NotificationsScreen() {
   );
 
   const keyExtractor = useCallback((item: AppNotification) => item.id, []);
+
+  const empty = notificationsError ? (
+    <EmptyState
+      icon="cloud-off-outline"
+      title="Couldn’t load notifications"
+      message={notificationsError}
+      variant="error"
+      actionLabel="Try again"
+      onAction={() => {
+        void onRefresh();
+      }}
+    />
+  ) : (
+    <EmptyState
+      icon="bell-outline"
+      title="No notifications"
+      message="Try another filter or check back later."
+    />
+  );
 
   return (
     <View style={styles.container}>
@@ -215,12 +251,9 @@ export default function NotificationsScreen() {
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <EmptyState
-            icon="bell-outline"
-            title="No notifications"
-            message="Try another filter or check back later."
-          />
+        ListEmptyComponent={empty}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         initialNumToRender={8}
         windowSize={7}

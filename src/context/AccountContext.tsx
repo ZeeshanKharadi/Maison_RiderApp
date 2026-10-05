@@ -20,24 +20,13 @@ import {
   NotificationCategory,
   RiderProfile,
 } from '../data/account';
-import type { User } from '../services/AuthContext';
 import notificationService from '../services/NotificationService';
 import { buildRiderProfilePatchBody } from '../utils/riderProfilePatch';
 import { shouldRegisterPushToken } from '../utils/pushRegistration';
-
-function profileFromAuthUser(
-  profile: RiderProfile,
-  authUser: User | null,
-): RiderProfile {
-  if (!authUser) return profile;
-  return {
-    ...profile,
-    fullName: authUser.name || profile.fullName,
-    email: authUser.email || profile.email,
-    phone: authUser.phone ?? profile.phone,
-    emergencyContact: authUser.emergencyContact ?? profile.emergencyContact,
-  };
-}
+import {
+  profileSeedForUser,
+  shouldApplyInboxForRider,
+} from '../utils/accountSession';
 
 export type UpdateProfileResult = {
   ok: boolean;
@@ -53,6 +42,8 @@ type AccountContextValue = {
   settings: AppSettings;
   notifications: AppNotification[];
   unreadCount: number;
+  /** Set when the latest inbox fetch for this rider failed. */
+  notificationsError: string | null;
   updateProfile: (patch: Partial<RiderProfile>) => Promise<UpdateProfileResult>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   markNotificationRead: (id: string) => void;
@@ -75,42 +66,87 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<RiderProfile>(DEFAULT_PROFILE);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsError, setNotificationsError] = useState<string | null>(
+    null,
+  );
   const [ready, setReady] = useState(false);
   const clearAllInFlightRef = useRef(false);
+  /** Active rider id for ignoring late inbox responses after logout/switch. */
+  const activeUserIdRef = useRef<string | null>(user?.id ?? null);
+  const settingsLanguageRef = useRef<AppSettings['language']>(
+    DEFAULT_SETTINGS.language,
+  );
 
   useEffect(() => {
-    let mounted = true;
+    settingsLanguageRef.current = settings.language;
+  }, [settings.language]);
+
+  useEffect(() => {
+    const nextUserId = user?.id ?? null;
+    activeUserIdRef.current = nextUserId;
+
+    // Clear rider-scoped UI immediately — never show the previous rider's data.
+    setNotifications([]);
+    setNotificationsError(null);
+    setProfile(profileSeedForUser(user, settingsLanguageRef.current));
+    void accountRepository.saveNotifications([]);
+
+    let cancelled = false;
+
     (async () => {
-      const [p, s] = await Promise.all([
-        accountRepository.loadProfile(),
-        accountRepository.loadSettings(),
-      ]);
-      if (!mounted) return;
-      // Prefer server auth user over stale local profile for identity fields.
-      const base = p.ok ? p.data : DEFAULT_PROFILE;
-      setProfile(profileFromAuthUser(base, user));
+      // Device-level settings (incl. push preference) survive rider changes.
+      const s = await accountRepository.loadSettings();
+      if (cancelled) return;
       if (s.ok) {
         setSettings(s.data);
+        settingsLanguageRef.current = s.data.language;
         notificationService.setPushPreferred(s.data.pushNotifications);
+        // Re-apply language onto the cleared profile seed.
+        setProfile(profileSeedForUser(user, s.data.language));
       }
 
-      if (user) {
-        const n = await notificationsRepository.fetchNotifications();
-        if (n.ok) setNotifications(n.data);
+      if (!nextUserId) {
+        setReady(true);
+        return;
+      }
+
+      const n = await notificationsRepository.fetchNotifications();
+      if (cancelled) return;
+      if (!shouldApplyInboxForRider(nextUserId, activeUserIdRef.current)) {
+        return;
+      }
+
+      if (n.ok) {
+        setNotifications(n.data);
+        setNotificationsError(null);
+        await accountRepository.saveNotifications(n.data);
+      } else {
+        setNotifications([]);
+        setNotificationsError(
+          n.error.message || 'Could not load notifications.',
+        );
+        await accountRepository.saveNotifications([]);
       }
 
       setReady(true);
     })();
+
     return () => {
-      mounted = false;
+      cancelled = true;
     };
   }, [user?.id]);
 
-  // Keep local profile in sync with backend auth user (login / CurrentUser).
+  // Keep local profile identity fields in sync with backend auth user.
   useEffect(() => {
     if (!user) return;
     setProfile(prev => {
-      const next = profileFromAuthUser(prev, user);
+      const next = {
+        ...prev,
+        fullName: user.name || prev.fullName,
+        email: user.email || prev.email,
+        phone: user.phone ?? prev.phone,
+        emergencyContact: user.emergencyContact ?? prev.emergencyContact,
+      };
       if (
         next.fullName === prev.fullName &&
         next.email === prev.email &&
@@ -153,7 +189,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           };
         }
 
-        // Refresh auth user so other screens / second load see server values.
         await refreshUser();
 
         const next: RiderProfile = {
@@ -196,7 +231,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      // Local-only preferences (language).
       const next = { ...profile, language: patch.language! };
       const result = await accountRepository.saveProfile(next);
       if (!result.ok) {
@@ -247,7 +281,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       const next = { ...settings, ...patch };
       const result = await accountRepository.saveSettings(next);
       if (!result.ok) {
-        // Server push already changed — keep preference aligned with intent.
         if (patch.pushNotifications !== undefined) {
           notificationService.setPushPreferred(settings.pushNotifications);
           if (shouldRegisterPushToken(settings.pushNotifications)) {
@@ -277,19 +310,39 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   );
 
   const syncNotifications = useCallback(async (items: AppNotification[]) => {
+    const uid = activeUserIdRef.current;
+    if (!uid) return;
     setNotifications(items);
+    setNotificationsError(null);
     await accountRepository.saveNotifications(items);
   }, []);
 
   const refreshNotifications = useCallback(async () => {
+    const uid = activeUserIdRef.current;
+    if (!uid) {
+      setNotifications([]);
+      setNotificationsError(null);
+      return;
+    }
+
     const result = await notificationsRepository.fetchNotifications();
+    if (!shouldApplyInboxForRider(uid, activeUserIdRef.current)) return;
+
     if (result.ok) {
       await syncNotifications(result.data);
+      return;
     }
+
+    setNotifications([]);
+    setNotificationsError(
+      result.error.message || 'Could not load notifications.',
+    );
+    await accountRepository.saveNotifications([]);
   }, [syncNotifications]);
 
   const markNotificationRead = useCallback(
     (id: string) => {
+      if (!activeUserIdRef.current) return;
       const next = notifications.map(n =>
         n.id === id ? { ...n, read: true } : n,
       );
@@ -300,6 +353,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   );
 
   const markAllNotificationsRead = useCallback(() => {
+    if (!activeUserIdRef.current) return;
     const next = notifications.map(n => ({ ...n, read: true }));
     void syncNotifications(next);
     void notificationsRepository.markAllNotificationsRead();
@@ -307,6 +361,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   const deleteNotification = useCallback(
     async (id: string) => {
+      const uid = activeUserIdRef.current;
+      if (!uid) return;
+
       let snapshot: AppNotification[] = [];
       setNotifications(prev => {
         snapshot = prev;
@@ -314,6 +371,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       });
 
       const result = await notificationsRepository.deleteNotification(id);
+      if (!shouldApplyInboxForRider(uid, activeUserIdRef.current)) return;
+
       if (result.ok) {
         setNotifications(current => {
           const persist = current.filter(n => n.id !== id);
@@ -324,6 +383,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       }
 
       const refreshed = await notificationsRepository.fetchNotifications();
+      if (!shouldApplyInboxForRider(uid, activeUserIdRef.current)) return;
+
       if (refreshed.ok) {
         await syncNotifications(refreshed.data);
       } else {
@@ -341,6 +402,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   const clearAllNotifications = useCallback(async () => {
     if (clearAllInFlightRef.current) return;
+    const uid = activeUserIdRef.current;
+    if (!uid) return;
+
     clearAllInFlightRef.current = true;
 
     let snapshot: AppNotification[] = [];
@@ -351,13 +415,18 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       });
 
       const result = await notificationsRepository.deleteAllNotifications();
+      if (!shouldApplyInboxForRider(uid, activeUserIdRef.current)) return;
+
       if (result.ok) {
         setNotifications([]);
+        setNotificationsError(null);
         await accountRepository.saveNotifications([]);
         return;
       }
 
       const refreshed = await notificationsRepository.fetchNotifications();
+      if (!shouldApplyInboxForRider(uid, activeUserIdRef.current)) return;
+
       if (refreshed.ok) {
         await syncNotifications(refreshed.data);
       } else {
@@ -406,6 +475,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       settings,
       notifications,
       unreadCount,
+      notificationsError,
       updateProfile,
       updateSettings,
       markNotificationRead,
@@ -422,6 +492,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       settings,
       notifications,
       unreadCount,
+      notificationsError,
       updateProfile,
       updateSettings,
       markNotificationRead,

@@ -357,6 +357,18 @@ namespace Rider.Application.DTOs.Admin
         public List<AdminDeliveryIssueTriageEventDto> history { get; set; } = new();
     }
 
+    /// <summary>Paged delivery-issue list for Live Ops open queue / history.</summary>
+    public class AdminDeliveryIssueReportPageDto
+    {
+        public List<AdminDeliveryIssueReportDto> items { get; set; } = new();
+        public int page { get; set; }
+        public int pageSize { get; set; }
+        public int totalCount { get; set; }
+        public bool hasMore { get; set; }
+        /// <summary>True when CreatedAt was constrained by from/to (Closed / historical).</summary>
+        public bool dateFilterApplied { get; set; }
+    }
+
     public class AdminDeliveryIssueTriageEventDto
     {
         public long id { get; set; }

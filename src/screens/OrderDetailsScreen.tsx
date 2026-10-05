@@ -261,7 +261,13 @@ export default function OrderDetailsScreen() {
         </View>
 
         <View style={styles.summary}>
-          <SummaryCell label="Fee" value={formatMoney(order.deliveryFee)} highlight />
+          {order.deliveryFee != null && order.deliveryFee > 0 ? (
+            <SummaryCell
+              label="Fee"
+              value={formatMoney(order.deliveryFee)}
+              highlight
+            />
+          ) : null}
           <SummaryCell label="Order" value={formatMoney(order.orderAmount)} />
           <SummaryCell
             label="Distance"
@@ -364,13 +370,6 @@ export default function OrderDetailsScreen() {
             onPress={() => contactAction('Call customer')}
           />
           <AppButton
-            label="Message"
-            icon="message-text-outline"
-            variant="ghost"
-            style={styles.dummyBtn}
-            onPress={() => contactAction('Message customer')}
-          />
-          <AppButton
             label="Navigate"
             icon="navigation-variant"
             variant="ghost"
@@ -378,6 +377,10 @@ export default function OrderDetailsScreen() {
             onPress={() => void openNavigate()}
           />
         </View>
+        <Text style={styles.messageHint}>
+          In-app messaging is not available in this build — use Call when a
+          phone number is listed.
+        </Text>
 
         <View style={styles.primaryActions}>
           <AppButton
@@ -542,10 +545,15 @@ const styles = StyleSheet.create({
   dummyRow: {
     flexDirection: 'row',
     gap: spacing.xs,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xs,
   },
   dummyBtn: {
     flex: 1,
+  },
+  messageHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
   },
   primaryActions: {
     marginTop: spacing.xs,

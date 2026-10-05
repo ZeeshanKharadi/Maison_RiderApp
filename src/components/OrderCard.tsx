@@ -51,7 +51,7 @@ function OrderCardComponent({
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
       onPress={() => onPress(order)}
       accessibilityRole="button"
-      accessibilityLabel={`Order ${order.id} for ${order.customerName}. Fee ${formatMoney(order.deliveryFee)}. Double tap for details.`}>
+      accessibilityLabel={`Order ${order.id} for ${order.customerName}. Order ${formatMoney(order.orderAmount)}. Double tap for details.`}>
       <View style={styles.accent} />
       <View style={styles.body}>
         <View style={styles.topRow}>
@@ -62,8 +62,12 @@ function OrderCardComponent({
             </Text>
           </View>
           <View style={styles.feeCol}>
-            <Text style={styles.fee}>{formatMoney(order.deliveryFee)}</Text>
-            <Text style={styles.feeLabel}>Delivery fee</Text>
+            <Text style={styles.fee}>{formatMoney(order.orderAmount)}</Text>
+            <Text style={styles.feeLabel}>
+              {order.deliveryFee != null && order.deliveryFee > 0
+                ? `Fee ${formatMoney(order.deliveryFee)}`
+                : 'Order total'}
+            </Text>
           </View>
         </View>
 

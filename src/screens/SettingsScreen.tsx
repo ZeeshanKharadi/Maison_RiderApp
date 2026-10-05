@@ -127,6 +127,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="shield-outline"
             label="Privacy"
+            value="Summary only"
             onPress={() =>
               navigate('MainDrawer', { screen: 'Help', params: { section: 'privacy' } })
             }
@@ -149,6 +150,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="file-document-outline"
             label="Terms"
+            value="Summary only"
             onPress={() =>
               navigate('MainDrawer', { screen: 'Help', params: { section: 'terms' } })
             }

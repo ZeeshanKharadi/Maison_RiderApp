@@ -46,13 +46,21 @@ function inDateRange(iso: string, range: HistoryDateRange, now = new Date()) {
     return d >= y && d < today;
   }
   if (range === 'last7') {
+    // Exactly 7 calendar days ending today (today and the prior 6 days).
     const week = new Date(today);
-    week.setDate(week.getDate() - 7);
+    week.setDate(week.getDate() - 6);
     return d >= week;
   }
   const month = new Date(today);
   month.setDate(month.getDate() - 30);
   return d >= month;
+}
+
+function riderEarning(item: DeliveryHistoryItem): number | null {
+  const fee = item.deliveryFee;
+  const tip = item.tip ?? 0;
+  if (fee == null || !Number.isFinite(fee)) return null;
+  return fee + (Number.isFinite(tip) ? tip : 0);
 }
 
 export function filterAndSortHistory(
@@ -102,13 +110,17 @@ export function filterAndSortHistory(
           new Date(a.deliveredAt).getTime() - new Date(b.deliveredAt).getTime()
         );
       case 'highest_amount':
-        return b.deliveryFee + b.tip - (a.deliveryFee + a.tip);
+        // Order total is supplied by the API; rider fee/tip often are not.
+        return b.orderAmount - a.orderAmount;
       case 'lowest_amount':
-        return a.deliveryFee + a.tip - (b.deliveryFee + b.tip);
+        return a.orderAmount - b.orderAmount;
       case 'longest_distance':
-        return b.distanceMiles - a.distanceMiles;
+        return (b.distanceMiles ?? -1) - (a.distanceMiles ?? -1);
       case 'shortest_distance':
-        return a.distanceMiles - b.distanceMiles;
+        return (
+          (a.distanceMiles ?? Number.POSITIVE_INFINITY) -
+          (b.distanceMiles ?? Number.POSITIVE_INFINITY)
+        );
       case 'newest':
       default:
         return (
@@ -121,20 +133,28 @@ export function filterAndSortHistory(
 }
 
 export type HistoryArchiveStats = {
+  /** Delivered rows in the given set (loaded and/or filtered — not a server grand total). */
+  deliveredCount: number;
+  cancelledCount: number;
   todayDeliveries: number;
-  todayEarnings: number;
   weeklyDeliveries: number;
   monthlyDeliveries: number;
-  avgRating: number;
-  avgDeliveryTime: number;
-  completionRate: number;
-  totalDeliveries: number;
-  totalEarnings: number;
+  avgRating: number | null;
+  avgDeliveryTime: number | null;
+  completionRate: number | null;
+  hasEarnings: boolean;
+  totalEarnings: number | null;
+  todayEarnings: number | null;
+  highestEarning: number | null;
+  hasDistance: boolean;
+  longestDistance: number | null;
+  /** COD trip count — not earnings. */
   codDeliveries: number;
+  /** Sum of server-verified COD cash on delivered COD rows. */
+  hasCodAmounts: boolean;
+  totalCodCollected: number | null;
   cardDeliveries: number;
-  highestEarning: number;
-  longestDistance: number;
-  shortestDeliveryMin: number;
+  shortestDeliveryMin: number | null;
 };
 
 export function computeHistoryArchiveStats(
@@ -143,7 +163,7 @@ export function computeHistoryArchiveStats(
 ): HistoryArchiveStats {
   const today = startOfDay(now);
   const week = new Date(today);
-  week.setDate(week.getDate() - 7);
+  week.setDate(week.getDate() - 6);
   const month = new Date(today);
   month.setDate(month.getDate() - 30);
 
@@ -153,43 +173,68 @@ export function computeHistoryArchiveStats(
   const weekItems = delivered.filter(i => new Date(i.deliveredAt) >= week);
   const monthItems = delivered.filter(i => new Date(i.deliveredAt) >= month);
 
-  const earn = (i: DeliveryHistoryItem) => i.deliveryFee + i.tip;
+  const earnings = delivered
+    .map(riderEarning)
+    .filter((v): v is number => v != null);
+  const hasEarnings = earnings.length > 0;
+
+  const distances = delivered
+    .map(i => i.distanceMiles)
+    .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
+  const hasDistance = distances.length > 0;
+
   const rated = delivered.filter(i => i.rating != null);
   const timed = delivered.filter(i => i.durationMin > 0);
 
-  const totalEarnings = delivered.reduce((s, i) => s + earn(i), 0);
-  const avgRating =
-    rated.length > 0
-      ? rated.reduce((s, i) => s + (i.rating || 0), 0) / rated.length
-      : 0;
-  const avgDeliveryTime =
-    timed.length > 0
-      ? timed.reduce((s, i) => s + i.durationMin, 0) / timed.length
-      : 0;
-
   const denom = delivered.length + cancelled.length;
   const completionRate =
-    denom > 0 ? Math.round((delivered.length / denom) * 100) : 100;
+    denom > 0 ? Math.round((delivered.length / denom) * 100) : null;
 
-  const earningsList = delivered.map(earn);
-  const distances = delivered.map(i => i.distanceMiles);
+  const codWithAmount = delivered.filter(
+    i =>
+      i.isCod &&
+      i.cashCollectedAmount != null &&
+      Number.isFinite(i.cashCollectedAmount),
+  );
+  const hasCodAmounts = codWithAmount.length > 0;
+  const totalCodCollected = hasCodAmounts
+    ? codWithAmount.reduce((s, i) => s + (i.cashCollectedAmount ?? 0), 0)
+    : null;
+
+  const todayEarnings = hasEarnings
+    ? todayItems.reduce((s, i) => s + (riderEarning(i) ?? 0), 0)
+    : null;
+
   const durations = timed.map(i => i.durationMin);
 
   return {
+    deliveredCount: delivered.length,
+    cancelledCount: cancelled.length,
     todayDeliveries: todayItems.length,
-    todayEarnings: todayItems.reduce((s, i) => s + earn(i), 0),
     weeklyDeliveries: weekItems.length,
     monthlyDeliveries: monthItems.length,
-    avgRating,
-    avgDeliveryTime,
+    avgRating:
+      rated.length > 0
+        ? rated.reduce((s, i) => s + (i.rating || 0), 0) / rated.length
+        : null,
+    avgDeliveryTime:
+      timed.length > 0
+        ? timed.reduce((s, i) => s + i.durationMin, 0) / timed.length
+        : null,
     completionRate,
-    totalDeliveries: delivered.length,
-    totalEarnings,
+    hasEarnings,
+    totalEarnings: hasEarnings
+      ? earnings.reduce((s, v) => s + v, 0)
+      : null,
+    todayEarnings,
+    highestEarning: hasEarnings ? Math.max(...earnings) : null,
+    hasDistance,
+    longestDistance: hasDistance ? Math.max(...distances) : null,
     codDeliveries: delivered.filter(i => i.isCod).length,
+    hasCodAmounts,
+    totalCodCollected,
     cardDeliveries: delivered.filter(i => i.paymentMethod === 'card').length,
-    highestEarning: earningsList.length ? Math.max(...earningsList) : 0,
-    longestDistance: distances.length ? Math.max(...distances) : 0,
-    shortestDeliveryMin: durations.length ? Math.min(...durations) : 0,
+    shortestDeliveryMin: durations.length ? Math.min(...durations) : null,
   };
 }
 
@@ -202,4 +247,15 @@ export function countActiveHistoryFilters(filters: HistoryFilters): number {
   if (filters.status !== 'all') n += 1;
   if (filters.sort !== 'newest') n += 1;
   return n;
+}
+
+/** Merge pages without duplicating ids (newer page wins order). */
+export function mergeHistoryPages(
+  existing: DeliveryHistoryItem[],
+  incoming: DeliveryHistoryItem[],
+): DeliveryHistoryItem[] {
+  if (existing.length === 0) return incoming;
+  const seen = new Set(existing.map(i => i.id));
+  const appended = incoming.filter(i => !seen.has(i.id));
+  return [...existing, ...appended];
 }

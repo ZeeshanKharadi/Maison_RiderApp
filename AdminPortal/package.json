@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test src/operations/boardStatuses.test.ts",
+    "test": "node --experimental-strip-types --test src/operations/boardStatuses.test.ts src/operations/issuePages.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

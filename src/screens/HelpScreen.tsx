@@ -87,14 +87,14 @@ const SECTIONS: {
   {
     id: 'privacy',
     icon: 'shield-outline',
-    title: 'Privacy Policy',
-    blurb: 'How we handle your data',
+    title: 'Privacy (summary)',
+    blurb: 'Draft summary — full policy not in this build',
   },
   {
     id: 'terms',
     icon: 'file-document-outline',
-    title: 'Terms',
-    blurb: 'Rider agreement',
+    title: 'Terms (summary)',
+    blurb: 'Draft summary — full terms not in this build',
   },
 ];
 

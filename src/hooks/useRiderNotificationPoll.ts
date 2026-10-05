@@ -3,12 +3,14 @@ import { AppState } from 'react-native';
 import { useAccount } from '../context/AccountContext';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useRiderSession } from '../context/RiderSessionContext';
+import { useAuth } from '../services/AuthContext';
 import * as notificationsRepository from '../repositories/notificationsRepository';
 import {
   isOrderCancellationNotification,
   shouldAlertNotification,
   showOrderNotificationAlert,
 } from '../utils/notificationAlert';
+import { shouldApplyInboxForRider } from '../utils/accountSession';
 
 const POLL_MS = 8_000;
 
@@ -16,13 +18,18 @@ const POLL_MS = 8_000;
  * Polls server notifications while the rider is logged in.
  * Inbox always syncs. Local/system alerts honor pushNotifications.
  * Cancel catch-up still restores active delivery even when push is OFF.
+ * Restarts when the authenticated rider changes so late polls cannot leak.
  */
 export function useRiderNotificationPoll(enabled: boolean) {
+  const { user } = useAuth();
+  const riderId = user?.id ?? null;
   const { settings, syncNotifications, notifications } = useAccount();
   const { refreshOrders } = useAvailableOrders();
   const { restoreActiveDeliveries } = useRiderSession();
   const alertedRef = useRef<Set<string>>(new Set());
   const notificationsRef = useRef(notifications);
+  const riderIdRef = useRef(riderId);
+  riderIdRef.current = riderId;
 
   useEffect(() => {
     notificationsRef.current = notifications;
@@ -32,17 +39,26 @@ export function useRiderNotificationPoll(enabled: boolean) {
   }, [notifications]);
 
   useEffect(() => {
-    if (!enabled) return;
+    alertedRef.current = new Set();
+  }, [riderId]);
+
+  useEffect(() => {
+    if (!enabled || !riderId) return;
 
     let alive = true;
     let initialPollDone = false;
+    const pollForUserId = riderId;
 
     const poll = async () => {
       const result = await notificationsRepository.fetchNotifications();
-      if (!alive || !result.ok) return;
+      if (!alive) return;
+      if (!shouldApplyInboxForRider(pollForUserId, riderIdRef.current)) return;
+      if (!result.ok) return;
 
       const incoming = result.data;
       await syncNotifications(incoming);
+
+      if (!shouldApplyInboxForRider(pollForUserId, riderIdRef.current)) return;
 
       if (!initialPollDone) {
         for (const n of incoming) {
@@ -86,6 +102,7 @@ export function useRiderNotificationPoll(enabled: boolean) {
     };
   }, [
     enabled,
+    riderId,
     settings.pushNotifications,
     syncNotifications,
     refreshOrders,

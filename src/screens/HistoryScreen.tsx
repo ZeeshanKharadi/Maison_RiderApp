@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   ListRenderItem,
   StyleSheet,
@@ -12,6 +13,7 @@ import { useNavigation } from '@react-navigation/native';
 import HistoryDeliveryCard from '../components/HistoryDeliveryCard';
 import HistoryFilterSheet from '../components/ui/HistoryFilterSheet';
 import {
+  AppButton,
   AppHeader,
   EmptyState,
   SearchBar,
@@ -26,10 +28,17 @@ import {
   DEFAULT_HISTORY_FILTERS,
   filterAndSortHistory,
   HistoryFilters,
+  mergeHistoryPages,
 } from '../data/historyQuery';
 import { mapOrderToHistoryItem } from '../api/mappers/historyMapper';
 import * as ordersRepository from '../repositories/ordersRepository';
+import type { RiderPerformance } from '../repositories/ordersRepository';
 import { formatMoney } from '../utils/format';
+import {
+  formatDateRangeLabel,
+  performanceSevenCalendarDayWindow,
+  performanceTodayWindow,
+} from '../utils/performanceRange';
 import {
   colors,
   elevation,
@@ -39,37 +48,100 @@ import {
   typography,
 } from '../theme';
 
+const PAGE_SIZE = 20;
+
 /**
- * Delivery Archive — loads from GET /api/Order/History.
+ * Delivery Archive — loads from GET /api/Order/History with pagination.
  */
 export default function HistoryScreen() {
   const navigation = useNavigation();
 
   const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
   const [draft, setDraft] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [serverToday, setServerToday] = useState<RiderPerformance | null>(null);
+  const [serverWeek, setServerWeek] = useState<RiderPerformance | null>(null);
+  const [weekRangeLabel, setWeekRangeLabel] = useState('');
+  const [todayRangeLabel, setTodayRangeLabel] = useState('');
+
+  const loadServerTotals = useCallback(async () => {
+    const now = new Date();
+    const todayWin = performanceTodayWindow(now);
+    const weekWin = performanceSevenCalendarDayWindow(now);
+    setTodayRangeLabel(formatDateRangeLabel(todayWin.from, todayWin.to));
+    setWeekRangeLabel(formatDateRangeLabel(weekWin.from, weekWin.to));
+
+    const [todayRes, weekRes] = await Promise.all([
+      ordersRepository.fetchPerformance({
+        from: todayWin.from,
+        to: todayWin.to,
+      }),
+      ordersRepository.fetchPerformance({
+        from: weekWin.from,
+        to: weekWin.to,
+      }),
+    ]);
+    setServerToday(todayRes.ok ? todayRes.data : null);
+    setServerWeek(weekRes.ok ? weekRes.data : null);
+  }, []);
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
     setError(false);
     setErrorMessage(null);
-    const result = await ordersRepository.fetchOrderHistory(1, 50);
+    setLoadMoreError(null);
+    setPage(1);
+
+    const [result] = await Promise.all([
+      ordersRepository.fetchOrderHistory(1, PAGE_SIZE),
+      loadServerTotals(),
+    ]);
+
     if (!result.ok) {
       setError(true);
       setErrorMessage(result.error.message);
       setHistory([]);
+      setHasMore(false);
       setLoading(false);
       return;
     }
-    setHistory(result.data.map(mapOrderToHistoryItem));
+
+    setHistory(result.data.items.map(mapOrderToHistoryItem));
+    setHasMore(result.data.hasMore);
     setLoading(false);
-  }, []);
+  }, [loadServerTotals]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    const nextPage = page + 1;
+    const result = await ordersRepository.fetchOrderHistory(nextPage, PAGE_SIZE);
+    if (!result.ok) {
+      // Keep already-loaded rows; offer Retry on the failed page.
+      setLoadMoreError(
+        result.error.message || 'Could not load older deliveries.',
+      );
+      setLoadingMore(false);
+      return;
+    }
+    const mapped = result.data.items.map(mapOrderToHistoryItem);
+    setHistory(prev => mergeHistoryPages(prev, mapped));
+    setPage(nextPage);
+    setHasMore(result.data.hasMore);
+    setLoadMoreError(null);
+    setLoadingMore(false);
+  }, [hasMore, loading, loadingMore, page]);
 
   useEffect(() => {
     void loadHistory();
@@ -80,10 +152,7 @@ export default function HistoryScreen() {
     [history, query, filters],
   );
 
-  const stats = useMemo(
-    () => computeHistoryArchiveStats(history),
-    [history],
-  );
+  const isFiltered = Boolean(query || countActiveHistoryFilters(filters) > 0);
 
   const filteredStats = useMemo(
     () => computeHistoryArchiveStats(visible),
@@ -117,42 +186,107 @@ export default function HistoryScreen() {
     setFilters(DEFAULT_HISTORY_FILTERS);
   }, []);
 
-  const listHeader = useMemo(
-    () => (
+  const listHeader = useMemo(() => {
+    const summaryItems = [
+      {
+        label: todayRangeLabel
+          ? `Today · ${todayRangeLabel}`
+          : 'Today (server)',
+        value:
+          serverToday != null ? String(serverToday.completedCount) : '—',
+      },
+      {
+        label: 'COD today',
+        value:
+          serverToday != null
+            ? formatMoney(serverToday.codCollected)
+            : '—',
+      },
+      {
+        label: weekRangeLabel
+          ? `7 days · ${weekRangeLabel}`
+          : '7 days (server)',
+        value: serverWeek != null ? String(serverWeek.completedCount) : '—',
+      },
+    ];
+
+    const archiveChips: Array<{ label: string; value: string }> = [
+      {
+        label: isFiltered ? 'Matching deliveries' : 'Loaded deliveries',
+        value: String(filteredStats.deliveredCount),
+      },
+      {
+        label: 'COD trips',
+        value: String(filteredStats.codDeliveries),
+      },
+      {
+        label: 'Card trips',
+        value: String(filteredStats.cardDeliveries),
+      },
+    ];
+
+    if (filteredStats.hasCodAmounts && filteredStats.totalCodCollected != null) {
+      archiveChips.push({
+        label: 'COD collected (not earnings)',
+        value: formatMoney(filteredStats.totalCodCollected),
+      });
+    }
+
+    if (filteredStats.hasEarnings && filteredStats.totalEarnings != null) {
+      archiveChips.push({
+        label: 'Rider earnings (loaded)',
+        value: formatMoney(filteredStats.totalEarnings),
+      });
+    }
+    if (filteredStats.hasEarnings && filteredStats.highestEarning != null) {
+      archiveChips.push({
+        label: 'Highest earning (loaded)',
+        value: formatMoney(filteredStats.highestEarning),
+      });
+    }
+    if (filteredStats.hasDistance && filteredStats.longestDistance != null) {
+      archiveChips.push({
+        label: 'Longest distance (loaded)',
+        value: `${filteredStats.longestDistance.toFixed(1)} mi`,
+      });
+    }
+    if (filteredStats.shortestDeliveryMin != null) {
+      archiveChips.push({
+        label: 'Shortest trip (loaded)',
+        value: `${filteredStats.shortestDeliveryMin} min`,
+      });
+    }
+    if (filteredStats.avgDeliveryTime != null) {
+      archiveChips.push({
+        label: 'Avg trip time (loaded)',
+        value: `${Math.round(filteredStats.avgDeliveryTime)} min`,
+      });
+    }
+    if (filteredStats.completionRate != null) {
+      archiveChips.push({
+        label: 'Complete rate (loaded)',
+        value: `${filteredStats.completionRate}%`,
+      });
+    }
+    if (filteredStats.avgRating != null) {
+      archiveChips.push({
+        label: 'Avg rating (loaded)',
+        value: filteredStats.avgRating.toFixed(1),
+      });
+    }
+
+    return (
       <View>
         <SummaryCard
-          items={[
-            { label: "Today's", value: String(stats.todayDeliveries) },
-            {
-              label: 'Earned today',
-              value: formatMoney(stats.todayEarnings),
-            },
-            { label: 'Weekly', value: String(stats.weeklyDeliveries) },
-          ]}
+          items={summaryItems}
           style={{ marginBottom: spacing.sm }}
         />
-        <SummaryCard
-          variant="surface"
-          items={[
-            { label: 'Monthly', value: String(stats.monthlyDeliveries) },
-            {
-              label: 'Avg rating',
-              value: stats.avgRating > 0 ? stats.avgRating.toFixed(1) : '—',
-            },
-            {
-              label: 'Avg time',
-              value:
-                stats.avgDeliveryTime > 0
-                  ? `${Math.round(stats.avgDeliveryTime)}m`
-                  : '—',
-            },
-            {
-              label: 'Complete',
-              value: `${stats.completionRate}%`,
-            },
-          ]}
-          style={{ marginBottom: spacing.md }}
-        />
+        <Text style={styles.scopeHint}>
+          Server totals use Performance API (completed count + COD cash). “7
+          days” is exactly seven calendar days ending today
+          {weekRangeLabel ? ` (${weekRangeLabel})` : ''}. Rider fee / tip /
+          distance stay hidden until History supplies them.
+        </Text>
 
         <View style={styles.toolbar}>
           <SearchBar
@@ -178,65 +312,81 @@ export default function HistoryScreen() {
           </TouchableOpacity>
         </View>
 
-        <SectionHeader title="Archive stats" />
+        <SectionHeader
+          title={
+            isFiltered
+              ? 'Stats for matching rows'
+              : 'Stats for loaded rows'
+          }
+        />
+        <Text style={styles.scopeHint}>
+          {isFiltered
+            ? `Based on ${visible.length} filtered of ${history.length} loaded — not a lifetime total.`
+            : `Based on ${history.length} loaded delivery${history.length === 1 ? '' : 'ies'}${hasMore ? ' (more available)' : ''} — not a lifetime total.`}
+        </Text>
         <View style={styles.statsGrid}>
-          <StatChip
-            label="Total deliveries"
-            value={String(filteredStats.totalDeliveries)}
-          />
-          <StatChip
-            label="Total earnings"
-            value={formatMoney(filteredStats.totalEarnings)}
-          />
-          <StatChip
-            label="COD deliveries"
-            value={String(filteredStats.codDeliveries)}
-          />
-          <StatChip
-            label="Card deliveries"
-            value={String(filteredStats.cardDeliveries)}
-          />
-          <StatChip
-            label="Highest earning"
-            value={formatMoney(filteredStats.highestEarning)}
-          />
-          <StatChip
-            label="Longest distance"
-            value={`${filteredStats.longestDistance.toFixed(1)} mi`}
-          />
-          <StatChip
-            label="Shortest delivery"
-            value={
-              filteredStats.shortestDeliveryMin > 0
-                ? `${filteredStats.shortestDeliveryMin} min`
-                : '—'
-            }
-          />
-          <StatChip
-            label="Avg delivery time"
-            value={
-              filteredStats.avgDeliveryTime > 0
-                ? `${Math.round(filteredStats.avgDeliveryTime)} min`
-                : '—'
-            }
-          />
+          {archiveChips.map(chip => (
+            <StatChip key={chip.label} label={chip.label} value={chip.value} />
+          ))}
         </View>
 
         <Text style={styles.count} accessibilityLiveRegion="polite">
-          {visible.length} delivery{visible.length === 1 ? '' : 'ies'}
-          {query || activeFilterCount > 0 ? ' · filtered' : ''}
+          Showing {visible.length}
+          {isFiltered ? ` of ${history.length} loaded` : ''}
+          {hasMore && !isFiltered ? ' · load more for older trips' : ''}
         </Text>
       </View>
-    ),
-    [
-      stats,
-      filteredStats,
-      query,
-      filters,
-      activeFilterCount,
-      visible.length,
-    ],
-  );
+    );
+  }, [
+    serverToday,
+    serverWeek,
+    todayRangeLabel,
+    weekRangeLabel,
+    filteredStats,
+    query,
+    filters,
+    activeFilterCount,
+    visible.length,
+    history.length,
+    isFiltered,
+    hasMore,
+  ]);
+
+  const listFooter = useMemo(() => {
+    if (loadMoreError) {
+      return (
+        <View style={styles.footer}>
+          <Text style={styles.loadMoreError} accessibilityLiveRegion="polite">
+            {loadMoreError}
+          </Text>
+          <AppButton
+            label="Retry"
+            variant="outline"
+            fullWidth
+            onPress={() => void loadMore()}
+            disabled={loadingMore}
+            accessibilityLabel="Retry loading older deliveries"
+          />
+        </View>
+      );
+    }
+    if (!hasMore && !loadingMore) return null;
+    return (
+      <View style={styles.footer}>
+        {loadingMore ? (
+          <ActivityIndicator color={colors.primaryDark} />
+        ) : (
+          <AppButton
+            label="Load older deliveries"
+            variant="outline"
+            fullWidth
+            onPress={() => void loadMore()}
+            accessibilityLabel="Load older deliveries"
+          />
+        )}
+      </View>
+    );
+  }, [hasMore, loadingMore, loadMore, loadMoreError]);
 
   if (error) {
     return (
@@ -277,6 +427,7 @@ export default function HistoryScreen() {
           keyExtractor={keyExtractor}
           renderItem={renderItem}
           ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           initialNumToRender={8}
@@ -408,5 +559,19 @@ const styles = StyleSheet.create({
   count: {
     ...typography.caption,
     marginBottom: spacing.sm,
+  },
+  scopeHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  footer: {
+    paddingVertical: spacing.md,
+  },
+  loadMoreError: {
+    ...typography.caption,
+    color: colors.error,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
 });

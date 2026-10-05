@@ -214,9 +214,18 @@ export async function acknowledgeCancellations(
 export async function fetchOrderHistory(
   page = 1,
   pageSize = 20,
-): Promise<ApiResult<AvailableOrder[]>> {
+): Promise<
+  ApiResult<{
+    items: AvailableOrder[];
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
+  }>
+> {
   try {
-    const qs = `?page=${encodeURIComponent(String(page))}&pageSize=${encodeURIComponent(String(pageSize))}`;
+    const safePage = Math.max(1, page);
+    const safeSize = Math.min(100, Math.max(1, pageSize));
+    const qs = `?page=${encodeURIComponent(String(safePage))}&pageSize=${encodeURIComponent(String(safeSize))}`;
     const envelope = await apiEnvelope<ApiAvailableOrder[]>(
       `${API_PATHS.orderHistory}${qs}`,
       { auth: true },
@@ -230,7 +239,14 @@ export async function fetchOrderHistory(
     }
 
     const rows = Array.isArray(envelope.Data) ? envelope.Data : [];
-    return ok(rows.map(mapApiOrderToAvailable));
+    const items = rows.map(mapApiOrderToAvailable);
+    return ok({
+      items,
+      page: safePage,
+      pageSize: safeSize,
+      // API has no totalCount; another full page means older rows may exist.
+      hasMore: items.length >= safeSize,
+    });
   } catch (err) {
     return mapNetworkError(err, 'Unable to reach order history API');
   }

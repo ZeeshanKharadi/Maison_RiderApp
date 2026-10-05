@@ -18,9 +18,10 @@ namespace Rider.Application.Interfaces
         Task<ApiResponse<LiveBoardSummaryDto>> GetLiveSummaryAsync(AdminActor actor, string storeId);
         Task<ApiResponse<List<AdminOrderListDto>>> ListOrdersAsync(AdminActor actor, AdminOrderQuery query);
         Task<ApiResponse<List<AdminOrderRejectionDto>>> ListOrderRejectionsAsync(AdminActor actor, string storeId, DateTime? from, DateTime? to);
-        Task<ApiResponse<List<AdminDeliveryIssueReportDto>>> ListDeliveryIssueReportsAsync(
+        Task<ApiResponse<AdminDeliveryIssueReportPageDto>> ListDeliveryIssueReportsAsync(
             AdminActor actor, string storeId, DateTime? from, DateTime? to,
-            string status = null, string q = null, bool includeClosed = false);
+            string status = null, string q = null, bool includeClosed = false,
+            int page = 1, int pageSize = 50);
         Task<ApiResponse<AdminDeliveryIssueReportDto>> GetDeliveryIssueReportAsync(AdminActor actor, long id);
         Task<ApiResponse<AdminDeliveryIssueReportDto>> AcknowledgeDeliveryIssueAsync(
             AdminActor actor, long id, DeliveryIssueTriageRequest request);

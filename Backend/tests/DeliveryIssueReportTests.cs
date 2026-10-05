@@ -375,8 +375,9 @@ public class DeliveryIssueReportTests : IDisposable
 
         var m1 = await _admin.ListDeliveryIssueReportsAsync(_managerS1, storeId: null, from: null, to: null);
         Assert.True(m1.status);
-        Assert.All(m1.Data!, r => Assert.Equal("S1", r.storeId));
-        Assert.Contains(m1.Data!, r => r.assignedOrderId == s1);
+        Assert.False(m1.Data!.dateFilterApplied);
+        Assert.All(m1.Data.items, r => Assert.Equal("S1", r.storeId));
+        Assert.Contains(m1.Data.items, r => r.assignedOrderId == s1);
 
         var m2Denied = await _admin.ListDeliveryIssueReportsAsync(_managerS1, storeId: "S2", from: null, to: null);
         Assert.False(m2Denied.status);
@@ -392,7 +393,8 @@ public class DeliveryIssueReportTests : IDisposable
 
         var head = await _admin.ListDeliveryIssueReportsAsync(_headOffice, storeId: null, from: null, to: null);
         Assert.True(head.status);
-        Assert.Equal(2, head.Data!.Count);
+        Assert.Equal(2, head.Data!.totalCount);
+        Assert.Equal(2, head.Data.items.Count);
     }
 
     private sealed class FakeCrypto : IPasswordCrypto

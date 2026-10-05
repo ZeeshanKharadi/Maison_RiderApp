@@ -36,6 +36,11 @@ import { getStateConfig } from '../delivery/stateMachine';
 import { jobProgress } from '../delivery/types';
 import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
+import {
+  formatDateRangeLabel,
+  performanceSevenCalendarDayWindow,
+  performanceTodayWindow,
+} from '../utils/performanceRange';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import NoConnectionBanner from '../components/NoConnectionBanner';
@@ -58,12 +63,6 @@ type QuickAction = {
 
 function goStack(screen: string) {
   navigate('MainDrawer', { screen });
-}
-
-function startOfLocalDay(d = new Date()): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
 }
 
 /**
@@ -89,6 +88,7 @@ export default function DashboardScreen() {
   const [now, setNow] = useState(() => new Date());
   const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
   const [weekPerf, setWeekPerf] = useState<RiderPerformance | null>(null);
+  const [weekRangeLabel, setWeekRangeLabel] = useState('');
 
   // Tick working-hours clock while online (stops when offline).
   useEffect(() => {
@@ -103,13 +103,19 @@ export default function DashboardScreen() {
 
   const loadPerformance = useCallback(async () => {
     const end = new Date();
-    const dayStart = startOfLocalDay(end);
-    const weekStart = new Date(dayStart);
-    weekStart.setDate(weekStart.getDate() - 6);
+    const todayWin = performanceTodayWindow(end);
+    const weekWin = performanceSevenCalendarDayWindow(end);
+    setWeekRangeLabel(formatDateRangeLabel(weekWin.from, weekWin.to));
 
     const [today, week] = await Promise.all([
-      ordersRepository.fetchPerformance({ from: dayStart, to: end }),
-      ordersRepository.fetchPerformance({ from: weekStart, to: end }),
+      ordersRepository.fetchPerformance({
+        from: todayWin.from,
+        to: todayWin.to,
+      }),
+      ordersRepository.fetchPerformance({
+        from: weekWin.from,
+        to: weekWin.to,
+      }),
     ]);
     // Clear on failure so we never show another rider's (or stale) values.
     setTodayPerf(today.ok ? today.data : null);
@@ -502,13 +508,15 @@ export default function DashboardScreen() {
               ]}
               onPress={() => goTab('Orders')}
               accessibilityRole="button"
-              accessibilityLabel={`Order ${order.id}, ${order.restaurant}, fee ${formatMoney(order.deliveryFee)}`}>
+              accessibilityLabel={`Order ${order.id}, ${order.restaurant}, order ${formatMoney(order.orderAmount)}`}>
               <View style={styles.orderPreviewTop}>
                 <Text style={styles.orderRestaurant} numberOfLines={1}>
                   {order.restaurant}
                 </Text>
                 <Text style={styles.orderFee}>
-                  {formatMoney(order.deliveryFee)}
+                  {order.deliveryFee != null && order.deliveryFee > 0
+                    ? formatMoney(order.deliveryFee)
+                    : formatMoney(order.orderAmount)}
                 </Text>
               </View>
               <Text style={styles.orderMeta} numberOfLines={1}>
@@ -536,7 +544,10 @@ export default function DashboardScreen() {
             <Text style={styles.perfValue}>
               {weekPerf ? String(weekPerf.completedCount) : '—'}
             </Text>
-            <Text style={styles.perfLabel}>7-day deliveries</Text>
+            <Text style={styles.perfLabel}>
+              7-day deliveries
+              {weekRangeLabel ? `\n${weekRangeLabel}` : ''}
+            </Text>
           </View>
           <View style={styles.perfDivider} />
           <View style={styles.perfItem}>

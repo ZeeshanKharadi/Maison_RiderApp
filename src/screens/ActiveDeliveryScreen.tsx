@@ -750,7 +750,11 @@ export default function ActiveDeliveryScreen() {
           <InfoRow
             icon="bike-fast"
             label="Delivery fee"
-            value={formatMoney(activeJob.deliveryFee)}
+            value={
+              activeJob.deliveryFee != null && activeJob.deliveryFee > 0
+                ? formatMoney(activeJob.deliveryFee)
+                : 'Not provided by order'
+            }
           />
           {activeJob.specialInstructions ? (
             <InfoRow
@@ -848,9 +852,15 @@ export default function ActiveDeliveryScreen() {
 
         <View style={styles.bottomSummary}>
           <View>
-            <Text style={styles.summaryLabel}>Delivery fee</Text>
+            <Text style={styles.summaryLabel}>
+              {activeJob.deliveryFee != null && activeJob.deliveryFee > 0
+                ? 'Delivery fee'
+                : 'Order total'}
+            </Text>
             <Text style={styles.summaryValue}>
-              {formatMoney(activeJob.deliveryFee)}
+              {activeJob.deliveryFee != null && activeJob.deliveryFee > 0
+                ? formatMoney(activeJob.deliveryFee)
+                : formatMoney(activeJob.orderAmount)}
             </Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>

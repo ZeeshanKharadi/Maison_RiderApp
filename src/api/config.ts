@@ -31,5 +31,7 @@ export const API_PATHS = {
   notifications: '/api/User/Notifications',
   notificationRead: (id: string | number) => `/api/User/Notifications/${id}/read`,
   notificationsReadAll: '/api/User/Notifications/read-all',
+  notificationDelete: (id: string | number) => `/api/User/Notifications/${id}`,
+  notificationsDeleteAll: '/api/User/Notifications',
   deviceToken: '/api/User/device-token',
 } as const;

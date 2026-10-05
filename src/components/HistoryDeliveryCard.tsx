@@ -49,7 +49,14 @@ function statusLabel(status: DeliveryHistoryItem['status']) {
 }
 
 function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
-  const earnings = item.deliveryFee + item.tip;
+  const fee = item.deliveryFee;
+  const tip = item.tip ?? 0;
+  const hasEarnings = fee != null && Number.isFinite(fee) && fee > 0;
+  const earnings = hasEarnings ? fee + (Number.isFinite(tip) ? tip : 0) : null;
+  const hasDistance =
+    item.distanceMiles != null &&
+    Number.isFinite(item.distanceMiles) &&
+    item.distanceMiles > 0;
 
   return (
     <Pressable
@@ -87,8 +94,15 @@ function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
               styles.fee,
               item.status !== 'delivered' && styles.feeMuted,
             ]}>
-            {item.status === 'delivered' ? `+${formatMoney(earnings)}` : '—'}
+            {item.status === 'delivered'
+              ? earnings != null
+                ? `+${formatMoney(earnings)}`
+                : formatMoney(item.orderAmount)
+              : '—'}
           </Text>
+          {item.status === 'delivered' && earnings == null ? (
+            <Text style={styles.orderAmtHint}>order</Text>
+          ) : null}
           <Icon
             name={expanded ? 'chevron-up' : 'chevron-down'}
             size={20}
@@ -108,10 +122,16 @@ function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
 
       <View style={styles.meta}>
         <Text style={styles.metaText}>
-          Fee {formatMoney(item.deliveryFee)} · Order{' '}
-          {formatMoney(item.orderAmount)}
+          {hasEarnings
+            ? `Fee ${formatMoney(fee!)} · Order ${formatMoney(item.orderAmount)}`
+            : `Order ${formatMoney(item.orderAmount)}`}
+          {item.isCod && item.cashCollectedAmount != null
+            ? ` · COD ${formatMoney(item.cashCollectedAmount)}`
+            : ''}
         </Text>
-        <Text style={styles.metaText}>{item.distanceMiles} mi</Text>
+        {hasDistance ? (
+          <Text style={styles.metaText}>{item.distanceMiles} mi</Text>
+        ) : null}
       </View>
 
       <View style={styles.badges}>
@@ -263,6 +283,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   feeMuted: { color: colors.textMuted },
+  orderAmtHint: { ...typography.caption, marginBottom: 2 },
   route: { marginTop: spacing.sm },
   addr: {
     ...typography.caption,

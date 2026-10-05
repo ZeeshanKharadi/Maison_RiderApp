@@ -376,15 +376,43 @@ namespace Rider.Infrastructure.Services
             return Ok(list, "Order rejections");
         }
 
-        public async Task<ApiResponse<List<AdminDeliveryIssueReportDto>>> ListDeliveryIssueReportsAsync(
+        public async Task<ApiResponse<AdminDeliveryIssueReportPageDto>> ListDeliveryIssueReportsAsync(
             AdminActor actor, string storeId, DateTime? from, DateTime? to,
-            string status = null, string q = null, bool includeClosed = false)
+            string status = null, string q = null, bool includeClosed = false,
+            int page = 1, int pageSize = 50)
         {
             var scoped = ScopeStore(actor, storeId);
             if (scoped.denied)
-                return Fail<List<AdminDeliveryIssueReportDto>>(scoped.message);
+                return Fail<AdminDeliveryIssueReportPageDto>(scoped.message);
 
-            var (fromUtc, toUtc) = NormalizeRange(from, to, defaultDays: 7);
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 100) pageSize = 100;
+
+            var statusFilter = string.IsNullOrWhiteSpace(status) ? null : status.Trim();
+            if (!string.IsNullOrWhiteSpace(statusFilter)
+                && !string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+                && !DeliveryIssueStatuses.IsValid(statusFilter))
+            {
+                return Fail<AdminDeliveryIssueReportPageDto>(
+                    "Invalid status. Use New, Acknowledged, Closed, or Open");
+            }
+
+            var isOpenQueue =
+                string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(statusFilter, DeliveryIssueStatuses.New, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(statusFilter, DeliveryIssueStatuses.Acknowledged, StringComparison.OrdinalIgnoreCase)
+                || (string.IsNullOrWhiteSpace(statusFilter) && !includeClosed);
+
+            // Open queue: all New/Acknowledged for the store, regardless of report date.
+            // Closed / historical: apply date range (default last 7 days when omitted).
+            var dateFilterApplied = !isOpenQueue;
+            DateTime? fromUtc = null;
+            DateTime? toUtc = null;
+            if (dateFilterApplied)
+            {
+                (fromUtc, toUtc) = NormalizeRange(from, to, defaultDays: 7);
+            }
 
             var qset = _unitOfWork.Context.Set<DeliveryIssueReport>()
                 .AsNoTracking()
@@ -403,20 +431,17 @@ namespace Rider.Infrastructure.Services
             if (toUtc.HasValue)
                 qset = qset.Where(r => r.CreatedAt < toUtc.Value);
 
-            var statusFilter = string.IsNullOrWhiteSpace(status) ? null : status.Trim();
-            if (!string.IsNullOrWhiteSpace(statusFilter)
-                && !string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
-                && !DeliveryIssueStatuses.IsValid(statusFilter))
-            {
-                return Fail<List<AdminDeliveryIssueReportDto>>(
-                    "Invalid status. Use New, Acknowledged, Closed, or Open");
-            }
-
-            if (string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
+            if (isOpenQueue
+                || string.Equals(statusFilter, "Open", StringComparison.OrdinalIgnoreCase)
                 || (string.IsNullOrWhiteSpace(statusFilter) && !includeClosed))
             {
-                qset = qset.Where(r => r.Status == DeliveryIssueStatuses.New
-                    || r.Status == DeliveryIssueStatuses.Acknowledged);
+                if (string.Equals(statusFilter, DeliveryIssueStatuses.New, StringComparison.OrdinalIgnoreCase))
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.New);
+                else if (string.Equals(statusFilter, DeliveryIssueStatuses.Acknowledged, StringComparison.OrdinalIgnoreCase))
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.Acknowledged);
+                else
+                    qset = qset.Where(r => r.Status == DeliveryIssueStatuses.New
+                        || r.Status == DeliveryIssueStatuses.Acknowledged);
             }
             else if (!string.IsNullOrWhiteSpace(statusFilter))
             {
@@ -437,16 +462,27 @@ namespace Rider.Infrastructure.Services
                     || (r.InternalNote != null && r.InternalNote.Contains(term)));
             }
 
-            // Open issues first (New, then Acknowledged), then closed; within each by newest.
-            var rows = await qset
+            var ordered = qset
                 .OrderBy(r => r.Status == DeliveryIssueStatuses.New ? 0
                     : r.Status == DeliveryIssueStatuses.Acknowledged ? 1 : 2)
-                .ThenByDescending(r => r.CreatedAt)
-                .Take(500)
+                .ThenByDescending(r => r.CreatedAt);
+
+            var totalCount = await ordered.CountAsync();
+            var rows = await ordered
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
 
             var list = rows.Select(MapIssueReportDto).ToList();
-            return Ok(list, "Delivery issue reports");
+            return Ok(new AdminDeliveryIssueReportPageDto
+            {
+                items = list,
+                page = page,
+                pageSize = pageSize,
+                totalCount = totalCount,
+                hasMore = page * pageSize < totalCount,
+                dateFilterApplied = dateFilterApplied
+            }, "Delivery issue reports");
         }
 
         public async Task<ApiResponse<AdminDeliveryIssueReportDto>> GetDeliveryIssueReportAsync(

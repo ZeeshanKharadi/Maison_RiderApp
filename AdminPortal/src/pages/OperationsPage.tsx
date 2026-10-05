@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { customerName, daysAgoInput, money, DeliveryIssueReportDto, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
+import { customerName, daysAgoInput, money, DeliveryIssueReportDto, DeliveryIssueReportPageDto, OrderListDto, OrderRejectionDto, RiderDto, StoreDto, todayInput } from '../api/types';
 import {
   actionNeededCountLabel,
   actionNeededCounts,
@@ -14,6 +14,9 @@ import {
   type ActionNeededSnapshot,
 } from '../operations/boardStatuses';
 import { useLiveRefresh } from '../realtime/useLiveRefresh';
+import { mergeIssuePages } from '../operations/issuePages';
+
+const ISSUE_PAGE_SIZE = 50;
 
 const EMPTY_ACTION: ActionNeededSnapshot = {
   ReturningToStore: 0,
@@ -21,6 +24,11 @@ const EMPTY_ACTION: ActionNeededSnapshot = {
   total: 0,
   isComplete: true,
 };
+
+function isOpenIssueStatus(status: string): boolean {
+  return status === 'Open' || status === 'New' || status === 'Acknowledged';
+}
+
 export default function OperationsPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<OrderListDto[]>([]);
@@ -28,6 +36,11 @@ export default function OperationsPage() {
   const [issues, setIssues] = useState<DeliveryIssueReportDto[]>([]);
   const [issuesError, setIssuesError] = useState<string | null>(null);
   const [issuesLoaded, setIssuesLoaded] = useState(false);
+  const [issuesPage, setIssuesPage] = useState(1);
+  const [issuesTotalCount, setIssuesTotalCount] = useState(0);
+  const [issuesHasMore, setIssuesHasMore] = useState(false);
+  const [issuesDateFiltered, setIssuesDateFiltered] = useState(false);
+  const [issuesLoadingMore, setIssuesLoadingMore] = useState(false);
   const [issueStatus, setIssueStatus] = useState('Open');
   const [issueQuery, setIssueQuery] = useState('');
   const [stores, setStores] = useState<StoreDto[]>([]);
@@ -43,6 +56,29 @@ export default function OperationsPage() {
 
   const filtersRef = useRef({ storeId, status, riderId, from, to, issueStatus, issueQuery });
   filtersRef.current = { storeId, status, riderId, from, to, issueStatus, issueQuery };
+
+  const issuesPageRef = useRef(1);
+  issuesPageRef.current = issuesPage;
+  const issuesLoadingMoreRef = useRef(false);
+  issuesLoadingMoreRef.current = issuesLoadingMore;
+
+  const buildIssueQuery = useCallback((page: number) => {
+    const f = filtersRef.current;
+    const issQs = new URLSearchParams();
+    if (f.storeId) issQs.set('storeId', f.storeId);
+    if (f.issueStatus) issQs.set('status', f.issueStatus);
+    if (f.issueQuery.trim()) issQs.set('q', f.issueQuery.trim());
+    // Open queue: no date filter (all New/Acknowledged for the store).
+    // Closed / historical: use board date range.
+    if (!isOpenIssueStatus(f.issueStatus)) {
+      if (f.from) issQs.set('from', f.from);
+      if (f.to) issQs.set('to', f.to);
+      if (f.issueStatus === 'Closed') issQs.set('includeClosed', 'true');
+    }
+    issQs.set('page', String(page));
+    issQs.set('pageSize', String(ISSUE_PAGE_SIZE));
+    return issQs;
+  }, []);
 
   const loadActionNeeded = useCallback(async (scopedStoreId: string) => {
     try {
@@ -69,7 +105,97 @@ export default function OperationsPage() {
     }
   }, []);
 
-  const load = useCallback(async () => {
+  const applyIssuePage = useCallback(
+    (pageData: DeliveryIssueReportPageDto, append: boolean) => {
+      const items = pageData.items || [];
+      setIssues((prev) => {
+        if (!append) return items;
+        return mergeIssuePages([prev, items]);
+      });
+      setIssuesPage(pageData.page);
+      setIssuesTotalCount(pageData.totalCount);
+      setIssuesHasMore(pageData.hasMore);
+      setIssuesDateFiltered(pageData.dateFilterApplied);
+      setIssuesError(null);
+    },
+    [],
+  );
+
+  /** Replace issues with page 1 only (filters / store Apply / explicit refresh). */
+  const reloadIssuesFromStart = useCallback(async () => {
+    const iss = await api<DeliveryIssueReportPageDto>(
+      `/api/Admin/DeliveryIssueReports?${buildIssueQuery(1).toString()}`,
+    );
+    if (!iss.status || !iss.Data) {
+      setIssues([]);
+      setIssuesTotalCount(0);
+      setIssuesHasMore(false);
+      setIssuesPage(1);
+      setIssuesError(iss.message || 'Failed to load delivery issue reports');
+      return;
+    }
+    applyIssuePage(iss.Data, false);
+  }, [buildIssueQuery, applyIssuePage]);
+
+  /**
+   * Live refresh: re-fetch pages 1..N already loaded so the manager keeps their
+   * scroll/paging window. While Load more is in flight, only refresh totalCount.
+   */
+  const refreshIssuesPreservingPages = useCallback(async () => {
+    const pagesLoaded = Math.max(1, issuesPageRef.current);
+
+    if (issuesLoadingMoreRef.current) {
+      const meta = await api<DeliveryIssueReportPageDto>(
+        `/api/Admin/DeliveryIssueReports?${buildIssueQuery(1).toString()}`,
+      );
+      if (meta.status && meta.Data) {
+        setIssuesTotalCount(meta.Data.totalCount);
+        setIssuesDateFiltered(meta.Data.dateFilterApplied);
+        setIssuesHasMore(
+          pagesLoaded * ISSUE_PAGE_SIZE < meta.Data.totalCount,
+        );
+      }
+      return;
+    }
+
+    const results = await Promise.all(
+      Array.from({ length: pagesLoaded }, (_, i) =>
+        api<DeliveryIssueReportPageDto>(
+          `/api/Admin/DeliveryIssueReports?${buildIssueQuery(i + 1).toString()}`,
+        ),
+      ),
+    );
+
+    const failed = results.find((r) => !r.status || !r.Data);
+    if (failed) {
+      // Keep existing rows rather than partially replacing the paging window.
+      const anyOk = results.find((r) => r.status && r.Data);
+      if (anyOk?.Data) {
+        setIssuesTotalCount(anyOk.Data.totalCount);
+        setIssuesDateFiltered(anyOk.Data.dateFilterApplied);
+        setIssuesHasMore(pagesLoaded * ISSUE_PAGE_SIZE < anyOk.Data.totalCount);
+      }
+      if (issuesPageRef.current <= 1) {
+        setIssuesError(
+          failed.message || 'Failed to refresh delivery issue reports',
+        );
+      }
+      return;
+    }
+
+    const pageDatas = results.map((r) => r.Data!);
+    const merged = mergeIssuePages(pageDatas.map((p) => p.items));
+    const last = pageDatas[pageDatas.length - 1]!;
+    const totalCount = last.totalCount;
+    setIssues(merged);
+    setIssuesTotalCount(totalCount);
+    setIssuesDateFiltered(last.dateFilterApplied);
+    setIssuesHasMore(pagesLoaded * ISSUE_PAGE_SIZE < totalCount);
+    setIssuesPage(pagesLoaded);
+    setIssuesError(null);
+  }, [buildIssueQuery]);
+
+  const loadBoard = useCallback(async () => {
     const f = filtersRef.current;
     const qs = new URLSearchParams();
     if (f.storeId) qs.set('storeId', f.storeId);
@@ -83,17 +209,11 @@ export default function OperationsPage() {
     if (f.from) rejQs.set('from', f.from);
     if (f.to) rejQs.set('to', f.to);
 
-    const issQs = new URLSearchParams(rejQs);
-    if (f.issueStatus) issQs.set('status', f.issueStatus);
-    if (f.issueQuery.trim()) issQs.set('q', f.issueQuery.trim());
-    if (f.issueStatus === 'Closed') issQs.set('includeClosed', 'true');
-
-    const [o, s, r, rej, iss, actionSnap] = await Promise.all([
+    const [o, s, r, rej, actionSnap] = await Promise.all([
       api<OrderListDto[]>(`/api/Admin/Orders?${qs.toString()}`),
       api<StoreDto[]>('/api/Admin/Stores'),
       api<RiderDto[]>('/api/Admin/Riders'),
       api<OrderRejectionDto[]>(`/api/Admin/OrderRejections?${rejQs.toString()}`),
-      api<DeliveryIssueReportDto[]>(`/api/Admin/DeliveryIssueReports?${issQs.toString()}`),
       loadActionNeeded(f.storeId),
     ]);
     if (!o.status) throw new Error(o.message);
@@ -102,25 +222,59 @@ export default function OperationsPage() {
     setStores(s.Data || []);
     setRiders(r.Data || []);
     setRejections(rej.status ? rej.Data || [] : []);
-    if (!iss.status) {
-      setIssues([]);
-      setIssuesError(iss.message || 'Failed to load delivery issue reports');
-    } else {
-      setIssues(iss.Data || []);
-      setIssuesError(null);
-    }
-    setIssuesLoaded(true);
     setNeedsAction(
       actionSnap ?? toActionNeededSnapshot(actionNeededCounts(boardOrders), false),
     );
     setError(null);
   }, [loadActionNeeded]);
 
-  useEffect(() => {
-    load().catch((e: Error) => setError(e.message));
-  }, [load]);
+  /** Full reload; resetIssues=true for Apply / store-filter changes. */
+  const load = useCallback(
+    async (opts?: { resetIssues?: boolean }) => {
+      const resetIssues = opts?.resetIssues !== false;
+      await loadBoard();
+      if (resetIssues) {
+        await reloadIssuesFromStart();
+      } else {
+        await refreshIssuesPreservingPages();
+      }
+      setIssuesLoaded(true);
+    },
+    [loadBoard, reloadIssuesFromStart, refreshIssuesPreservingPages],
+  );
 
-  useLiveRefresh(load);
+  const loadMoreIssues = useCallback(async () => {
+    if (issuesLoadingMore || !issuesHasMore) return;
+    setIssuesLoadingMore(true);
+    try {
+      const nextPage = issuesPage + 1;
+      const iss = await api<DeliveryIssueReportPageDto>(
+        `/api/Admin/DeliveryIssueReports?${buildIssueQuery(nextPage).toString()}`,
+      );
+      if (!iss.status || !iss.Data) {
+        setIssuesError(iss.message || 'Failed to load more issue reports');
+        return;
+      }
+      applyIssuePage(iss.Data, true);
+    } finally {
+      setIssuesLoadingMore(false);
+    }
+  }, [
+    issuesLoadingMore,
+    issuesHasMore,
+    issuesPage,
+    buildIssueQuery,
+    applyIssuePage,
+  ]);
+
+  useEffect(() => {
+    void load({ resetIssues: true }).catch((e: Error) => setError(e.message));
+    // Mount only — live refresh uses resetIssues:false; Apply handlers reset explicitly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto SignalR / poll: refresh board + preserve loaded issue pages.
+  useLiveRefresh(() => load({ resetIssues: false }));
 
   const filteredRejections = useMemo(() => {
     let list = rejections;
@@ -141,6 +295,19 @@ export default function OperationsPage() {
     [filteredIssues],
   );
 
+  const issuesCountLabel = useMemo(() => {
+    if (issuesError) return '';
+    const loaded = filteredIssues.length;
+    const total = issuesTotalCount;
+    if (riderId && loaded !== total) {
+      return ` · ${loaded} loaded (rider filter) of ${total} matching`;
+    }
+    if (issuesHasMore || loaded < total) {
+      return ` · ${loaded} of ${total} loaded`;
+    }
+    return ` · ${total}`;
+  }, [issuesError, filteredIssues.length, issuesTotalCount, issuesHasMore, riderId]);
+
   const grouped = useMemo(
     () => groupOrdersByBoardStatus(orders, status),
     [orders, status],
@@ -149,7 +316,17 @@ export default function OperationsPage() {
   const applyStatusFilter = useCallback((nextStatus: string) => {
     setStatus(nextStatus);
     filtersRef.current = { ...filtersRef.current, status: nextStatus };
-    void load().catch((e: Error) => setError(e.message));
+    // Board status filter only — keep issue paging window.
+    void load({ resetIssues: false }).catch((e: Error) => setError(e.message));
+  }, [load]);
+
+  const applyIssueFilters = useCallback(() => {
+    void load({ resetIssues: true }).catch((e: Error) => setError(e.message));
+  }, [load]);
+
+  const applyBoardFilters = useCallback(() => {
+    // Store / date / rider Apply — reset issue list to page 1 under new scope.
+    void load({ resetIssues: true }).catch((e: Error) => setError(e.message));
   }, [load]);
 
   return (
@@ -172,13 +349,17 @@ export default function OperationsPage() {
             <div>
               <h2 className="h6 mb-1">
                 Delivery issues
-                {!issuesError ? ` · ${filteredIssues.length}` : ''}
-                {!issuesError && issueStatus === 'Open' ? ` open (${openIssueCount})` : ''}
+                {issuesCountLabel}
+                {!issuesError && isOpenIssueStatus(issueStatus)
+                  ? ` · open on screen ${openIssueCount}`
+                  : ''}
               </h2>
               <p className="small text-muted mb-0">
-                New and Acknowledged issues need ops attention. Closing an issue does not change the delivery,
-                COD, or cash. Date range {from || '…'} → {to || '…'} (default 7 days); capped at 500 rows —
-                not a complete historical queue.
+                Open queue shows all New and Acknowledged issues for your store (any report date).
+                Closing an issue does not change delivery, COD, or cash.
+                {issuesDateFiltered
+                  ? ` Closed/history uses date range ${from || '…'} → ${to || '…'}.`
+                  : ' Date filters apply only to Closed / historical views.'}
               </p>
             </div>
             <div className="d-flex flex-wrap gap-2 align-items-end">
@@ -207,7 +388,7 @@ export default function OperationsPage() {
               <button
                 className="btn btn-sm btn-outline-dark"
                 type="button"
-                onClick={() => load().catch((e: Error) => setError(e.message))}
+                onClick={applyIssueFilters}
               >
                 Apply issue filters
               </button>
@@ -260,10 +441,24 @@ export default function OperationsPage() {
               </table>
             </div>
           )}
-          {!issuesError && filteredIssues.length >= 500 && (
-            <p className="small text-warning mb-0 mt-2">
-              Showing the maximum of 500 reports for this range — older or additional reports may exist.
-            </p>
+          {!issuesError && (
+            <div className="d-flex flex-wrap gap-2 align-items-center mt-2">
+              <span className="small text-muted">
+                Loaded {filteredIssues.length}
+                {issuesTotalCount > 0 ? ` of ${issuesTotalCount}` : ''} matching
+                {issuesDateFiltered ? ' (date-filtered)' : ' (open queue, all dates)'}
+              </span>
+              {issuesHasMore ? (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-dark"
+                  disabled={issuesLoadingMore}
+                  onClick={() => void loadMoreIssues()}
+                >
+                  {issuesLoadingMore ? 'Loading…' : 'Load more issues'}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
       )}
@@ -332,7 +527,7 @@ export default function OperationsPage() {
           <label className="form-label">To</label>
           <input className="form-control form-control-sm" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
-        <button className="btn btn-sm btn-maison" type="button" onClick={() => load().catch((e: Error) => setError(e.message))}>Apply</button>
+        <button className="btn btn-sm btn-maison" type="button" onClick={applyBoardFilters}>Apply</button>
       </div>
 
       {view === 'board' ? (

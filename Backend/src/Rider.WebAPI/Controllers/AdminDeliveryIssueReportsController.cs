@@ -25,14 +25,16 @@ namespace Rider.WebAPI.Controllers
             [FromQuery] DateTime? to,
             [FromQuery] string status,
             [FromQuery] string q,
-            [FromQuery] bool includeClosed = false)
+            [FromQuery] bool includeClosed = false,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
         {
             var (error, actor) = await this.ResolveAdminActorAsync(_admin);
             if (error != null)
                 return error;
 
             return Ok(await _admin.ListDeliveryIssueReportsAsync(
-                actor, storeId, from, to, status, q, includeClosed));
+                actor, storeId, from, to, status, q, includeClosed, page, pageSize));
         }
 
         [HttpGet("{id:long}")]

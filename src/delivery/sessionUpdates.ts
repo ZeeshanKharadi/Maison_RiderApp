@@ -97,8 +97,21 @@ export function jobToHistoryItem(
   job: ActiveDeliveryJob,
   timeline: DeliveryTimelineStep[],
 ): DeliveryHistoryItem {
-  const tip = job.tip || (job.isCod ? 0 : 2.5);
   const deliveredAt = new Date().toISOString();
+  // Do not invent tip/fee/distance for the archive — API does not supply them yet.
+  const deliveryFee =
+    job.deliveryFee != null &&
+    Number.isFinite(job.deliveryFee) &&
+    job.deliveryFee > 0
+      ? job.deliveryFee
+      : null;
+  const distanceMiles =
+    job.distanceMiles != null &&
+    Number.isFinite(job.distanceMiles) &&
+    job.distanceMiles > 0
+      ? job.distanceMiles
+      : null;
+
   return {
     id: job.id,
     restaurant: job.restaurant,
@@ -107,12 +120,11 @@ export function jobToHistoryItem(
     dropoffAddress: job.dropoffAddress,
     deliveredAt,
     orderAmount: job.orderAmount,
-    deliveryFee: job.deliveryFee,
-    tip,
-    distanceMiles: job.distanceMiles ?? 0,
+    deliveryFee,
+    tip: null,
+    distanceMiles,
     durationMin: estimateDurationMin(job),
     items: job.items,
-    rating: 5,
     paymentMethod: job.paymentMethod,
     status: 'delivered',
     imageColor: job.imageColor,

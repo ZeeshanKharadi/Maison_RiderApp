@@ -249,16 +249,55 @@ public class DeliveryIssueTriageTests : IDisposable
 
         var openList = await _admin.ListDeliveryIssueReportsAsync(_managerS1, null, null, null);
         Assert.True(openList.status);
-        Assert.DoesNotContain(openList.Data!, x => x.status == DeliveryIssueStatuses.Closed);
-        Assert.Contains(openList.Data!, x => x.id == stillOpen);
+        Assert.False(openList.Data!.dateFilterApplied);
+        Assert.DoesNotContain(openList.Data.items, x => x.status == DeliveryIssueStatuses.Closed);
+        Assert.Contains(openList.Data.items, x => x.id == stillOpen);
 
         var closedList = await _admin.ListDeliveryIssueReportsAsync(
             _managerS1, null, null, null, status: DeliveryIssueStatuses.Closed);
-        Assert.Contains(closedList.Data!, x => x.id == openId);
+        Assert.True(closedList.Data!.dateFilterApplied);
+        Assert.Contains(closedList.Data.items, x => x.id == openId);
 
         var search = await _admin.ListDeliveryIssueReportsAsync(
             _managerS1, null, null, null, status: DeliveryIssueStatuses.Closed, q: "No answer", includeClosed: true);
-        Assert.Contains(search.Data!, x => x.id == openId);
+        Assert.Contains(search.Data!.items, x => x.id == openId);
+    }
+
+    [Fact]
+    public async Task Open_queue_includes_issues_older_than_seven_days_and_paginates()
+    {
+        var (_, oldId, _) = await SeedOpenIssueAsync();
+        var old = await _db.DeliveryIssueReports.FirstAsync(r => r.Id == oldId);
+        old.CreatedAt = DateTime.UtcNow.AddDays(-40);
+        old.UpdatedAt = old.CreatedAt;
+        await _db.SaveChangesAsync();
+
+        var (_, recentId, _) = await SeedOpenIssueAsync();
+
+        // Even if the client sends a 7-day range, open queue ignores dates.
+        var page1 = await _admin.ListDeliveryIssueReportsAsync(
+            _managerS1, null, from: DateTime.UtcNow.AddDays(-7), to: DateTime.UtcNow,
+            status: "Open", page: 1, pageSize: 1);
+        Assert.True(page1.status, page1.message);
+        Assert.False(page1.Data!.dateFilterApplied);
+        Assert.True(page1.Data.totalCount >= 2);
+        Assert.Single(page1.Data.items);
+        Assert.True(page1.Data.hasMore);
+
+        var page2 = await _admin.ListDeliveryIssueReportsAsync(
+            _managerS1, null, null, null, status: "Open", page: 2, pageSize: 1);
+        Assert.True(page2.status);
+        Assert.Single(page2.Data!.items);
+
+        var allOpen = await _admin.ListDeliveryIssueReportsAsync(
+            _managerS1, null, null, null, status: "Open", pageSize: 100);
+        Assert.Contains(allOpen.Data!.items, x => x.id == oldId);
+        Assert.Contains(allOpen.Data.items, x => x.id == recentId);
+
+        var closedPage = await _admin.ListDeliveryIssueReportsAsync(
+            _managerS1, null, DateTime.UtcNow.AddDays(-7), DateTime.UtcNow,
+            status: DeliveryIssueStatuses.Closed);
+        Assert.True(closedPage.Data!.dateFilterApplied);
     }
 
     private sealed class FakeCrypto : IPasswordCrypto

@@ -4,7 +4,8 @@ import { PaymentMethod } from './orders';
 export type DeliveryStatus = 'delivered' | 'cancelled' | 'failed';
 
 /**
- * Archived delivery — mirrors what a future history API would return.
+ * Archived delivery — mapped from GET /api/Order/History (or session completion).
+ * deliveryFee / tip / distanceMiles are null when the API does not supply them.
  */
 export interface DeliveryHistoryItem {
   id: string;
@@ -14,9 +15,12 @@ export interface DeliveryHistoryItem {
   dropoffAddress: string;
   deliveredAt: string; // ISO
   orderAmount: number;
-  deliveryFee: number;
-  tip: number;
-  distanceMiles: number;
+  /** Rider fee when API supplies it; null if not available (do not invent). */
+  deliveryFee: number | null;
+  /** Tip when API supplies it; null if not available. */
+  tip: number | null;
+  /** Trip distance when API supplies it; null if not available. */
+  distanceMiles: number | null;
   durationMin: number;
   items: number;
   rating?: number;

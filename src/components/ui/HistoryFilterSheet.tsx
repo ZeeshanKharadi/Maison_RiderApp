@@ -37,7 +37,7 @@ export default function HistoryFilterSheet({
             { label: 'All', value: 'all' as const },
             { label: 'Today', value: 'today' as const },
             { label: 'Yesterday', value: 'yesterday' as const },
-            { label: 'Last 7 days', value: 'last7' as const },
+            { label: 'Last 7 calendar days', value: 'last7' as const },
             { label: 'This month', value: 'month' as const },
             { label: 'Custom', value: 'custom' as const },
           ] as const
@@ -121,8 +121,8 @@ export default function HistoryFilterSheet({
           [
             { label: 'Newest', value: 'newest' as const },
             { label: 'Oldest', value: 'oldest' as const },
-            { label: 'Highest amount', value: 'highest_amount' as const },
-            { label: 'Lowest amount', value: 'lowest_amount' as const },
+            { label: 'Highest order amount', value: 'highest_amount' as const },
+            { label: 'Lowest order amount', value: 'lowest_amount' as const },
             { label: 'Longest distance', value: 'longest_distance' as const },
             { label: 'Shortest distance', value: 'shortest_distance' as const },
           ] as const

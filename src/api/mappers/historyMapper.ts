@@ -2,7 +2,11 @@ import { DeliveryHistoryItem } from '../../data/deliveryHistory';
 import { AvailableOrder } from '../../data/orders';
 import { DeliveryTimelineStep } from '../../delivery/types';
 
-/** Map a completed/history API order into the archive card shape (no fabricated timeline). */
+/**
+ * Map a completed/history API order into the archive card shape.
+ * Does not invent delivery fee, tip, distance, or ratings — those are omitted
+ * when the History DTO does not supply them.
+ */
 export function mapOrderToHistoryItem(order: AvailableOrder): DeliveryHistoryItem {
   const deliveredAt =
     order.completedAt ||
@@ -48,6 +52,26 @@ export function mapOrderToHistoryItem(order: AvailableOrder): DeliveryHistoryIte
 
   const cancelled = /cancel/i.test(order.backendStatus ?? '');
 
+  // API currently hardcodes deliveryFee to 0 and distanceMiles to null — treat
+  // zero fee as unavailable so archive stats do not show fake earnings.
+  const feeRaw = order.deliveryFee;
+  const deliveryFee =
+    feeRaw != null && Number.isFinite(feeRaw) && feeRaw > 0 ? feeRaw : null;
+
+  const distanceMiles =
+    order.distanceMiles != null &&
+    Number.isFinite(order.distanceMiles) &&
+    order.distanceMiles > 0
+      ? order.distanceMiles
+      : null;
+
+  const cashAmount =
+    order.isCod &&
+    order.cashCollectedAmount != null &&
+    Number.isFinite(order.cashCollectedAmount)
+      ? Number(order.cashCollectedAmount)
+      : null;
+
   return {
     id: order.id,
     restaurant: order.restaurant,
@@ -56,9 +80,9 @@ export function mapOrderToHistoryItem(order: AvailableOrder): DeliveryHistoryIte
     dropoffAddress: order.dropoffAddress,
     deliveredAt,
     orderAmount: order.orderAmount,
-    deliveryFee: order.deliveryFee,
-    tip: 0,
-    distanceMiles: order.distanceMiles ?? 0,
+    deliveryFee,
+    tip: null,
+    distanceMiles,
     durationMin,
     items: order.items,
     paymentMethod: order.paymentMethod,
@@ -70,7 +94,9 @@ export function mapOrderToHistoryItem(order: AvailableOrder): DeliveryHistoryIte
     fragile: order.fragile,
     packageInfo: order.packageInfo,
     specialInstructions: order.specialInstructions,
-    cashCollected: order.isCod ? true : null,
+    cashCollected: order.isCod ? cashAmount != null : null,
+    cashCollectedAmount: cashAmount,
+    cashVerified: order.isCod ? cashAmount != null : null,
     timeline,
   };
 }
