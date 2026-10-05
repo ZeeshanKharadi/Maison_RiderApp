@@ -148,13 +148,11 @@ coverage/
 **/.env
 **/.env.*
 
-# Permit example / shared env templates (no secrets)
+# Permit example environment files
 !.env.example
 !**/.env.example
 !.env.template
 !**/.env.template
-!.env.development
-!.env.production
 
 AdminPortal/.env
 
