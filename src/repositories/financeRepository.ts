@@ -6,8 +6,6 @@ export type RiderFinanceSummary = {
   cashCollectedTotal: number;
   cashHandedOverTotal: number;
   cashHeld: number;
-  floatOutstanding?: number;
-  totalOwedToStore?: number;
   codShortageTotal: number;
   completedCashOrders: number;
   legacyAmbiguousCount: number;

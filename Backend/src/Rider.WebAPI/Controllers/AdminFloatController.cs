@@ -28,6 +28,17 @@ namespace Rider.WebAPI.Controllers
             return Ok(await _float.GetPendingAcknowledgmentsAsync(actor, storeId));
         }
 
+        [HttpGet("history")]
+        public async Task<IActionResult> History(
+            [FromQuery] string? storeId = null,
+            [FromQuery] Guid? riderId = null,
+            [FromQuery] int take = 50)
+        {
+            var (error, actor) = await this.ResolveAdminActorAsync(_admin);
+            if (error != null) return error;
+            return Ok(await _float.GetHistoryAsync(actor, storeId, riderId, take));
+        }
+
         [HttpGet("{riderId:guid}/summary")]
         public async Task<IActionResult> Summary(Guid riderId)
         {

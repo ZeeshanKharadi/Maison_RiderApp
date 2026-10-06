@@ -185,7 +185,7 @@ public class OrderLifecycleTests : IDisposable
     }
 
     [Fact]
-    public async Task Cod_underpayment_rejected_even_with_reason()
+    public async Task Cod_mismatch_fails_even_with_reason()
     {
         var id = await SeedAvailableOrderAsync(expectedCash: 100);
         await _orders.UpdateRiderStatusAsync(id, _riderA, new UpdateOrderStatusRequest { status = OrderStatuses.Accepted });
@@ -195,10 +195,10 @@ public class OrderLifecycleTests : IDisposable
         {
             status = OrderStatuses.Completed,
             cashCollected = 80,
-            cashCollectedReason = "short"
+            cashCollectedReason = "short change"
         });
         Assert.False(fail.status);
-        Assert.Contains("must equal expected COD", fail.message);
+        Assert.Contains("expected COD", fail.message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

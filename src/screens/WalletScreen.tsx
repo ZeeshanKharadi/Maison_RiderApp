@@ -14,8 +14,8 @@ import { AppState, AppStateStatus } from 'react-native';
 import { useSideMenu } from '../context/SideMenuContext';
 import { useAuth } from '../services/AuthContext';
 import {
-  AppHeader,
   AppButton,
+  AppHeader,
   EmptyState,
   SectionHeader,
 } from '../components/ui';
@@ -71,7 +71,7 @@ export default function WalletScreen() {
 
     const [result, floatResult] = await Promise.all([
       fetchFinancePage({ page: 1, pageSize: 50 }),
-      fetchFloatSummary(),
+      fetchFloatSummary(user?.id),
     ]);
     if (!result.ok) {
       setState('error');
@@ -89,26 +89,27 @@ export default function WalletScreen() {
     setState(
       result.data.transactions.length === 0 &&
         result.data.summary.cashCollectedTotal === 0 &&
-        !(floatResult.ok && floatResult.data.outstandingFloat > 0) &&
         !(floatResult.ok && floatResult.data.pendingAcknowledgments.length > 0)
         ? 'empty'
         : 'ready',
     );
     setRefreshing(false);
-  }, []);
+  }, [user?.id]);
 
   const onAcknowledge = useCallback(
     async (issueId: number) => {
+      if (ackBusyId != null) return;
       setAckBusyId(issueId);
-      const res = await acknowledgeFloat(issueId);
+      const res = await acknowledgeFloat(issueId, user?.id);
       setAckBusyId(null);
       if (!res.ok) {
-        Alert.alert('Acknowledge failed', res.error.message);
+        Alert.alert('Float acknowledgment', res.error.message);
+        await load(true);
         return;
       }
-      void load(true);
+      await load(true);
     },
-    [load],
+    [load, user?.id, ackBusyId],
   );
 
   useFocusEffect(
@@ -178,18 +179,13 @@ export default function WalletScreen() {
             summary ? (
               <View style={styles.headerBlock}>
                 <View style={styles.card}>
-                  <Text style={styles.cardLabel}>Total owed to store</Text>
+                  <Text style={styles.cardLabel}>Cash currently held</Text>
                   <Text style={styles.cardAmount}>
-                    {formatMoney(
-                      summary.totalOwedToStore ??
-                        summary.cashHeld +
-                          (summary.floatOutstanding ??
-                            floatSummary?.outstandingFloat ??
-                            0),
-                    )}
+                    {formatMoney(summary.cashHeld)}
                   </Text>
                   <Text style={styles.cardHint}>
-                    COD held + change float. Tips stay with you. Not earnings.
+                    Actual collections minus store handovers. Not earnings and
+                    not withdrawable.
                   </Text>
                 </View>
 
@@ -197,62 +193,38 @@ export default function WalletScreen() {
                 <View style={styles.grid}>
                   <Metric
                     label="Outstanding float"
-                    value={formatMoney(
-                      summary.floatOutstanding ??
-                        floatSummary?.outstandingFloat ??
-                        0,
-                    )}
+                    value={formatMoney(floatSummary?.outstandingFloat ?? 0)}
                   />
                   <Metric
-                    label="COD held"
-                    value={formatMoney(summary.cashHeld)}
+                    label="Pending acknowledgment"
+                    value={formatMoney(
+                      floatSummary?.pendingAcknowledgmentTotal ?? 0,
+                    )}
                   />
                 </View>
-                {floatSummary?.pendingAcknowledgments?.length ? (
-                  <View style={{ marginBottom: spacing.md }}>
-                    <Text style={styles.cardHint}>
-                      Pending acknowledgment — confirm you received this float.
-                    </Text>
-                    {floatSummary.pendingAcknowledgments.map(item => (
-                      <View key={item.id} style={styles.txRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.txTitle}>
-                            Issue · {formatMoney(item.amount)}
-                          </Text>
-                          <Text style={styles.txMeta}>
-                            {new Date(item.createdAt).toLocaleString()}
-                          </Text>
-                        </View>
-                        <AppButton
-                          label={ackBusyId === item.id ? '…' : 'Acknowledge'}
-                          variant="secondary"
-                          onPress={() => void onAcknowledge(item.id)}
-                          disabled={ackBusyId != null}
-                        />
-                      </View>
-                    ))}
+                <Text style={styles.cardHint}>
+                  Pending acknowledgments are not part of outstanding float
+                  until you confirm receipt. Separate from COD cash held.
+                </Text>
+                {(floatSummary?.pendingAcknowledgments || []).map(p => (
+                  <View key={p.id} style={styles.floatPending}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.txTitle}>
+                        Issue · {formatMoney(p.amount)}
+                      </Text>
+                      <Text style={styles.txMeta}>
+                        {new Date(p.createdAt).toLocaleString()}
+                        {p.reason ? ` · ${p.reason}` : ''}
+                      </Text>
+                    </View>
+                    <AppButton
+                      label={ackBusyId === p.id ? '…' : 'Acknowledge'}
+                      variant="secondary"
+                      onPress={() => void onAcknowledge(p.id)}
+                      disabled={ackBusyId != null}
+                    />
                   </View>
-                ) : null}
-                {floatSummary?.recent?.length ? (
-                  <View style={{ marginBottom: spacing.md }}>
-                    {floatSummary.recent.slice(0, 5).map(item => (
-                      <View key={`${item.entryType}-${item.id}`} style={styles.txRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.txTitle}>
-                            Float · {item.entryType}
-                            {item.status ? ` · ${item.status}` : ''}
-                          </Text>
-                          <Text style={styles.txMeta}>
-                            {new Date(item.createdAt).toLocaleString()}
-                          </Text>
-                        </View>
-                        <Text style={styles.txAmount}>
-                          {formatMoney(item.amount)}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
+                ))}
 
                 <SectionHeader title="COD cash" />
                 <View style={styles.grid}>
@@ -407,4 +379,15 @@ const styles = StyleSheet.create({
   txNote: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
   txMeta: { ...typography.caption, color: colors.textMuted, marginTop: 4 },
   txAmount: { ...typography.subtitle, color: colors.textPrimary },
+  floatPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
+  },
 });

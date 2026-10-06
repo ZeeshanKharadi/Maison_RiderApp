@@ -10,12 +10,10 @@ namespace Rider.Infrastructure.Services
     public class RiderFinanceService : IRiderFinanceService
     {
         private readonly IUnitOfWork _unitOfWork;
-        private readonly IRiderFloatService _floatService;
 
-        public RiderFinanceService(IUnitOfWork unitOfWork, IRiderFloatService floatService)
+        public RiderFinanceService(IUnitOfWork unitOfWork)
         {
             _unitOfWork = unitOfWork;
-            _floatService = floatService;
         }
 
         public async Task<ApiResponse<RiderFinanceSummaryDto>> GetSummaryAsync(
@@ -50,40 +48,31 @@ namespace Rider.Infrastructure.Services
             Guid riderUserId, DateTime? fromUtc, DateTime? toUtc)
         {
             var orders = await QueryRiderOrdersAsync(riderUserId, fromUtc, toUtc);
-
-            var completed = orders
+            var definitive = orders
                 .Where(o => o.Status == OrderStatuses.Completed)
                 .Where(o => !IsLegacyAmbiguous(o))
                 .ToList();
+            var cashOrders = definitive.Where(IsCashOrder).ToList();
 
-            var cashHolding = orders
-                .Where(HoldsRiderCash)
-                .Where(o => !IsLegacyAmbiguous(o))
-                .Where(IsCashOrder)
-                .ToList();
-
-            var collected = cashHolding.Where(o => o.CashCollected.HasValue).Sum(o => o.CashCollected!.Value);
-            var handed = cashHolding.Sum(o => o.CashHandedOverAmount ?? 0);
-            var held = cashHolding
+            var collected = cashOrders.Where(o => o.CashCollected.HasValue).Sum(o => o.CashCollected!.Value);
+            var handed = cashOrders.Sum(o => o.CashHandedOverAmount ?? 0);
+            var held = cashOrders
                 .Where(o => o.CashCollected.HasValue)
                 .Sum(o => Math.Max(0, o.CashCollected!.Value - (o.CashHandedOverAmount ?? 0)));
-            var shortage = completed.Where(IsCashOrder)
+            var shortage = cashOrders
                 .Where(o => o.CashCollected.HasValue && o.ExpectedCash.HasValue)
                 .Sum(o => Math.Max(0, o.ExpectedCash!.Value - o.CashCollected!.Value));
 
             var legacyCount = orders.Count(IsLegacyAmbiguous);
-            var (comp, available, note, mode) = await LoadCompensationAsync(completed);
-            var floatOut = await _floatService.GetOutstandingFloatAsync(riderUserId);
+            var (comp, available, note, mode) = await LoadCompensationAsync(definitive);
 
             return new RiderFinanceSummaryDto
             {
                 cashCollectedTotal = collected,
                 cashHandedOverTotal = handed,
                 cashHeld = held,
-                floatOutstanding = floatOut,
-                totalOwedToStore = held + floatOut,
                 codShortageTotal = shortage,
-                completedCashOrders = completed.Count(IsCashOrder),
+                completedCashOrders = cashOrders.Count,
                 legacyAmbiguousCount = legacyCount,
                 calculatedCompensation = available ? comp : null,
                 compensationAvailable = available,
@@ -102,7 +91,7 @@ namespace Rider.Infrastructure.Services
             var orders = await QueryRiderOrdersAsync(riderUserId, fromUtc, toUtc);
             var list = new List<RiderFinanceTransactionDto>();
 
-            foreach (var o in orders.Where(HoldsRiderCash).OrderByDescending(o => o.CompletedAt ?? o.UpdatedAt))
+            foreach (var o in orders.Where(o => o.Status == OrderStatuses.Completed).OrderByDescending(o => o.CompletedAt ?? o.UpdatedAt))
             {
                 if (IsLegacyAmbiguous(o))
                 {
@@ -122,13 +111,6 @@ namespace Rider.Infrastructure.Services
 
                 if (o.CashCollected.HasValue)
                 {
-                    var note = o.CashCollectedReason;
-                    if (o.Status != OrderStatuses.Completed)
-                    {
-                        var statusNote = $"Cash retained ({o.Status}) — not compensation";
-                        note = string.IsNullOrWhiteSpace(note) ? statusNote : $"{note} · {statusNote}";
-                    }
-
                     list.Add(new RiderFinanceTransactionDto
                     {
                         assignedOrderId = o.Id,
@@ -136,7 +118,7 @@ namespace Rider.Infrastructure.Services
                         orderNo = o.OrderNo ?? o.OrderId,
                         type = "cash_collected",
                         amount = o.CashCollected.Value,
-                        note = note,
+                        note = o.CashCollectedReason,
                         at = o.CompletedAt ?? o.UpdatedAt ?? o.CreatedAt,
                         status = o.Status
                     });
@@ -187,7 +169,9 @@ namespace Rider.Infrastructure.Services
                 return (0, false, "Compensation settings are unresolved.", mode ?? "");
 
             if (!decimal.TryParse(feeRaw, out var fee) || !decimal.TryParse(pctRaw, out var pct))
+            {
                 return (0, false, "Compensation settings are unresolved.", mode);
+            }
 
             if (mode.Equals("percent", StringComparison.OrdinalIgnoreCase))
             {
@@ -209,18 +193,12 @@ namespace Rider.Infrastructure.Services
             return (0, false, "Compensation mode is unresolved.", mode);
         }
 
-        private static bool HoldsRiderCash(AssignedOrder o)
-            => o.Status is OrderStatuses.Completed
-                or OrderStatuses.Failed
-                or OrderStatuses.ReturningToStore
-                or OrderStatuses.AwaitingStoreReceipt;
-
         private static bool IsCashOrder(AssignedOrder o)
         {
             if (o.ExpectedCash > 0) return true;
             if (string.IsNullOrWhiteSpace(o.PaymentMethod)) return false;
             var m = o.PaymentMethod.Trim().ToLowerInvariant();
-            return m is "cash" or "cod" or "1";
+            return m is "cash" or "cod" or "c";
         }
 
         private static bool IsLegacyAmbiguous(AssignedOrder o)

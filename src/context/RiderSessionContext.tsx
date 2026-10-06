@@ -622,14 +622,20 @@ export function RiderSessionProvider({
         if (expected == null || !Number.isFinite(Number(expected))) {
           return {
             ok: false,
-            message:
-              'Expected COD is unknown. Contact the store before completing.',
+            message: 'COD amount unavailable. Contact the store.',
           };
         }
-        if (Number(amount) !== Number(expected)) {
+        const expectedN = Number(expected);
+        if (Number(amount) < expectedN) {
           return {
             ok: false,
-            message: `Collected amount must equal expected COD (${expected}).`,
+            message: `Collect the full COD amount: Rs. ${expectedN.toFixed(2)}.`,
+          };
+        }
+        if (Number(amount) > expectedN) {
+          return {
+            ok: false,
+            message: `Enter only the COD amount: Rs. ${expectedN.toFixed(2)}.`,
           };
         }
       }
@@ -651,9 +657,7 @@ export function RiderSessionProvider({
         cashCollected: activeJob.isCod
           ? opts?.cashCollectedAmount
           : undefined,
-        cashCollectedReason: activeJob.isCod
-          ? opts?.cashCollectedReason
-          : undefined,
+        // Tips/tender are not reported — exact COD only.
       });
 
       const finishLocalCompletion = (cash?: {

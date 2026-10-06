@@ -11,6 +11,8 @@ namespace Rider.Application.Interfaces
 
         Task<ApiResponse<FloatSummaryDto>> GetSummaryAsync(AdminActor actor, Guid riderUserId);
         Task<ApiResponse<List<FloatLedgerEntryDto>>> GetPendingAcknowledgmentsAsync(AdminActor actor, string? storeId);
+        Task<ApiResponse<List<FloatLedgerEntryDto>>> GetHistoryAsync(
+            AdminActor actor, string? storeId, Guid? riderUserId, int take = 50);
         Task<ApiResponse<FloatLedgerEntryDto>> IssueAsync(AdminActor actor, FloatMutationRequest request);
         Task<ApiResponse<FloatLedgerEntryDto>> RecordReturnAsync(AdminActor actor, FloatMutationRequest request);
 

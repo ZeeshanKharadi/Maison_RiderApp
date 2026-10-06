@@ -778,7 +778,7 @@ namespace Rider.Infrastructure.Services
 
                         order.Status = next;
                         if (OrderStatuses.ProgressionIndex(next) >= OrderStatuses.ProgressionIndex(OrderStatuses.InProgress))
-                            order.PickedUpAt ??= now;
+                        order.PickedUpAt ??= now;
                         order.UpdatedAt = now;
                         break;
                     }
@@ -801,7 +801,7 @@ namespace Rider.Infrastructure.Services
                         string? cashSemantics = null;
                         if (RequiresCashOnComplete(order, expected))
                         {
-                            if (!expected.HasValue || expected.Value <= 0)
+                            if (!expected.HasValue)
                             {
                                 await tx.RollbackAsync();
                                 return new ApiResponse<AvailableOrderDto>(
@@ -814,24 +814,24 @@ namespace Rider.Infrastructure.Services
                                 await tx.RollbackAsync();
                                 return new ApiResponse<AvailableOrderDto>(false, "cashCollected is required for COD/cash orders", null);
                             }
+                            // Exact COD only — tips/tender are not stored or reported.
                             if (request.cashCollected.Value != expected.Value)
                             {
                                 await tx.RollbackAsync();
                                 return new ApiResponse<AvailableOrderDto>(
                                     false,
-                                    $"Collected amount must equal expected COD ({expected.Value:0.00}). Underpayment is not allowed; tips are not recorded here.",
+                                    $"cashCollected must equal expected COD ({expected.Value:0.00})",
                                     null);
                             }
-                            cashCollected = expected.Value;
-                            cashReason = request.cashCollectedReason;
+                            cashCollected = request.cashCollected;
+                            cashReason = null;
                             cashSemantics = CashSemantics.RiderCollected;
                         }
                         else if (request.cashCollected.HasValue)
                         {
-                            // Prepaid / non-COD: ignore cash payload — do not invent COD.
-                            cashCollected = null;
-                            cashReason = null;
-                            cashSemantics = null;
+                            cashCollected = request.cashCollected;
+                            cashReason = request.cashCollectedReason;
+                            cashSemantics = CashSemantics.RiderCollected;
                         }
 
                         // Detach then conditional UPDATE so concurrent completions yield one financial effect.
@@ -861,7 +861,7 @@ namespace Rider.Infrastructure.Services
                             order.FailureRequestStatus = null;
                             order.FailureDecisionNote = "ClearedOnComplete";
                             order.FailureDecidedAt = now;
-                            order.UpdatedAt = now;
+                        order.UpdatedAt = now;
                             await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
                         }
                         break;

@@ -360,18 +360,12 @@ export function filterAndSortOrders(
 }
 
 export function formatPostedAgo(iso: string, now = Date.now()): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '—';
-  const mins = Math.max(0, Math.floor((now - then) / 60000));
+  const mins = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
   if (mins < 1) return 'Just now';
   if (mins === 1) return '1 min ago';
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
-  const weeks = Math.floor(days / 7);
-  return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+  return hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
 }
 
 export function paymentLabel(method: PaymentMethod): string {

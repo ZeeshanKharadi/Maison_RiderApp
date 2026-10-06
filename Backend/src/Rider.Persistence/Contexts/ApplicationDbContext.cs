@@ -378,16 +378,25 @@ namespace Rider.Persistence.Contexts
             {
                 entity.ToTable("RiderFloatLedger");
                 entity.HasKey(e => e.Id);
+                entity.Property(e => e.StoreId).HasMaxLength(50).IsRequired();
                 entity.Property(e => e.Amount).HasColumnType("decimal(18,2)");
-                entity.Property(e => e.StoreId).HasMaxLength(50);
-                entity.Property(e => e.EntryType).HasMaxLength(20);
+                entity.Property(e => e.EntryType).HasMaxLength(20).IsRequired();
                 entity.Property(e => e.Status).HasMaxLength(20);
-                entity.Property(e => e.Reason).HasMaxLength(500);
-                entity.Property(e => e.RequestId).HasMaxLength(100);
                 entity.Property(e => e.AckRequestId).HasMaxLength(100);
+                entity.Property(e => e.Reason).HasMaxLength(500);
+                entity.Property(e => e.RequestId).HasMaxLength(100).IsRequired();
                 entity.HasIndex(e => e.RequestId).IsUnique();
-                entity.HasIndex(e => e.AckRequestId).IsUnique().HasFilter("[AckRequestId] IS NOT NULL");
+                entity.HasIndex(e => e.AckRequestId).IsUnique()
+                    .HasFilter("[AckRequestId] IS NOT NULL");
                 entity.HasIndex(e => new { e.RiderUserId, e.CreatedAt });
+                entity.HasOne(e => e.RiderUser)
+                    .WithMany()
+                    .HasForeignKey(e => e.RiderUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.ActorUser)
+                    .WithMany()
+                    .HasForeignKey(e => e.ActorUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

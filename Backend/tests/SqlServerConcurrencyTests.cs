@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Rider.Application.Authentication;
 using Rider.Application.DTOs.Admin;
 using Rider.Application.DTOs.Auth;
+using Rider.Application.DTOs.Float;
 using Rider.Application.DTOs.Orders;
 using Rider.Application.Helpers;
 using Rider.Application.Interfaces;
@@ -793,6 +794,64 @@ public class SqlServerConcurrencyTests
                 a.AssignedOrderId == idemId && a.NewStatus == DeliveryIssueReasons.AuditEventStatus));
             Assert.Equal(1, await verify.Set<AdminNotification>().CountAsync(n =>
                 n.AssignedOrderId == idemId && n.Title == "Delivery issue reported"));
+        }
+    }
+
+    [Fact]
+    public async Task Float_identical_ack_retries_succeed_conflicting_ack_does_not_overwrite()
+    {
+        RequireSql();
+        await ResetDatabaseAsync();
+
+        Guid riderA;
+        Guid adminId;
+        long issueId;
+        await using (var seed = new ApplicationDbContext(Options()))
+        {
+            (riderA, _, adminId) = await SeedUsersAsync(seed);
+            var actor = new AdminActor
+            {
+                UserId = adminId,
+                WorkerId = "ADM",
+                Name = "Admin",
+                StoreId = "S1",
+                Roles = new List<string> { RoleNames.Administrator }
+            };
+            var issued = await new RiderFloatService(new UnitOfWork(seed)).IssueAsync(actor, new FloatMutationRequest
+            {
+                riderUserId = riderA,
+                storeId = "S1",
+                amount = 500m,
+                requestId = "sql-float-iss-1"
+            });
+            Assert.True(issued.status, issued.message);
+            issueId = issued.Data!.id;
+        }
+
+        async Task<(bool ok, string msg, string? ackReq)> Ack(string requestId)
+        {
+            await using var db = new ApplicationDbContext(Options());
+            var r = await new RiderFloatService(new UnitOfWork(db)).AcknowledgeAsync(
+                riderA,
+                new FloatAcknowledgeRequest { issueId = issueId, requestId = requestId });
+            return (r.status, r.message ?? "", r.Data?.requestId);
+        }
+
+        var twins = await Task.WhenAll(Ack("sql-float-ack-1"), Ack("sql-float-ack-1"));
+        Assert.True(twins[0].ok, twins[0].msg);
+        Assert.True(twins[1].ok, twins[1].msg);
+
+        var conflict = await Ack("sql-float-ack-other");
+        Assert.False(conflict.ok);
+
+        await using (var verify = new ApplicationDbContext(Options()))
+        {
+            var row = await verify.Set<RiderFloatLedger>().AsNoTracking()
+                .FirstAsync(e => e.Id == issueId);
+            Assert.Equal(FloatIssueStatuses.Acknowledged, row.Status);
+            Assert.Equal("sql-float-ack-1", row.AckRequestId);
+            Assert.Equal(1, await verify.Set<RiderFloatLedger>()
+                .CountAsync(e => e.Id == issueId && e.Status == FloatIssueStatuses.Acknowledged));
         }
     }
 

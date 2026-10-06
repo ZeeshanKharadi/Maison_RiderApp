@@ -95,7 +95,7 @@ export default function ActiveDeliveryScreen() {
 
   const [codSheetOpen, setCodSheetOpen] = useState(false);
   const [codAmount, setCodAmount] = useState('');
-  const [codReason, setCodReason] = useState('');
+  const [codInlineError, setCodInlineError] = useState<string | null>(null);
   const [issueSheetOpen, setIssueSheetOpen] = useState(false);
   const [issueReason, setIssueReason] = useState<DeliveryIssueReasonCode | null>(
     null,
@@ -510,7 +510,7 @@ export default function ActiveDeliveryScreen() {
       if (activeJob.isCod) {
         const expected = activeJob.expectedCash;
         setCodAmount(expected != null ? String(expected) : '');
-        setCodReason('');
+        setCodInlineError(null);
         setCodSheetOpen(true);
         return;
       }
@@ -532,32 +532,35 @@ export default function ActiveDeliveryScreen() {
     if (!activeJob) return;
     const amount = Number(codAmount);
     if (!Number.isFinite(amount)) {
-      Alert.alert('Cash amount', 'Enter a valid cash amount.');
+      setCodInlineError('Enter a valid cash amount.');
       return;
     }
     const expected = activeJob.expectedCash;
     if (expected == null || !Number.isFinite(Number(expected))) {
-      Alert.alert(
-        'Expected COD unknown',
-        'POS did not provide expected COD. Contact the store before completing.',
+      setCodInlineError('COD amount unavailable. Contact the store.');
+      return;
+    }
+    const expectedN = Number(expected);
+    if (amount < expectedN) {
+      setCodInlineError(
+        `Collect the full COD amount: Rs. ${expectedN.toFixed(2)}.`,
       );
       return;
     }
-    if (Number(amount) !== Number(expected)) {
-      Alert.alert(
-        'Amount must match expected COD',
-        `Collect exactly ${formatMoney(expected)}. Tips stay with you and are not entered here.`,
+    if (amount > expectedN) {
+      setCodInlineError(
+        `Enter only the COD amount: Rs. ${expectedN.toFixed(2)}.`,
       );
       return;
     }
+    setCodInlineError(null);
     setCashCollected(true);
     setCodSheetOpen(false);
     void finishTrip({
       cashCollected: true,
-      cashCollectedAmount: amount,
-      cashCollectedReason: codReason.trim() || undefined,
+      cashCollectedAmount: expectedN,
     });
-  }, [activeJob, codAmount, codReason, setCashCollected, finishTrip]);
+  }, [activeJob, codAmount, setCashCollected, finishTrip]);
 
   const handleCodNo = useCallback(() => {
     setCashCollected(false);
@@ -908,32 +911,27 @@ export default function ActiveDeliveryScreen() {
           </View>
         }>
         <Text style={styles.codHint}>
-          Collect exactly the expected COD from {activeJob.customerName}. Tips
-          stay with you and are not entered here.
-        </Text>
-        <Text style={styles.codLabel}>Expected COD</Text>
-        <Text style={styles.codExpected}>
+          Expected COD for {activeJob.customerName}:{' '}
           {activeJob.expectedCash != null
             ? formatMoney(activeJob.expectedCash)
-            : 'Unknown — contact store'}
+            : 'unavailable'}.
         </Text>
-        <Text style={styles.codLabel}>Amount collected</Text>
+        <Text style={styles.codLabel}>COD amount</Text>
         <TextInput
           style={styles.codInput}
           value={codAmount}
-          onChangeText={setCodAmount}
+          onChangeText={text => {
+            setCodAmount(text);
+            setCodInlineError(null);
+          }}
           keyboardType="decimal-pad"
           placeholder="0.00"
           placeholderTextColor={colors.textMuted}
         />
-        <Text style={styles.codLabel}>Note (optional)</Text>
-        <TextInput
-          style={[styles.codInput, styles.codReason]}
-          value={codReason}
-          onChangeText={setCodReason}
-          placeholder="Optional note"
-          placeholderTextColor={colors.textMuted}
-        />
+        <Text style={styles.codHint}>Tips are yours to keep. Enter COD only.</Text>
+        {codInlineError ? (
+          <Text style={styles.errorText}>{codInlineError}</Text>
+        ) : null}
       </BottomSheet>
 
       <BottomSheet
@@ -1287,11 +1285,6 @@ const styles = StyleSheet.create({
   codLabel: {
     ...typography.caption,
     marginBottom: spacing.xxs,
-  },
-  codExpected: {
-    ...typography.bodyStrong,
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
   },
   codInput: {
     ...typography.body,

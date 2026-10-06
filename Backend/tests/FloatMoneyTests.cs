@@ -111,7 +111,58 @@ public class FloatMoneyTests : IDisposable
             riderUserId = _rider, storeId = "S1", amount = 2000m, requestId = "iss-1"
         });
         Assert.True(replay.status);
-        Assert.Equal(1, await _db.RiderFloatLedgers.CountAsync(e => e.EntryType == FloatEntryTypes.Issue));
+        Assert.Equal(1, await _db.Set<RiderFloatLedger>().CountAsync(e => e.EntryType == FloatEntryTypes.Issue));
+    }
+
+    [Fact]
+    public async Task Return_is_scoped_to_originating_store_wallet_remains_rider_wide()
+    {
+        var s1 = await _float.IssueAsync(_admin, new FloatMutationRequest
+        {
+            riderUserId = _rider, storeId = "S1", amount = 1000m, requestId = "iss-s1"
+        });
+        Assert.True(s1.status, s1.message);
+        Assert.True((await _float.AcknowledgeAsync(_rider, new FloatAcknowledgeRequest
+        {
+            issueId = s1.Data!.id, requestId = "ack-s1"
+        })).status);
+
+        // Administrator (head office) may issue float from another store for the same rider.
+        var hoAdmin = new AdminActor
+        {
+            UserId = _adminId, WorkerId = "ADM", Name = "Admin", StoreId = null,
+            Roles = new List<string> { RoleNames.Administrator }
+        };
+        var s2 = await _float.IssueAsync(hoAdmin, new FloatMutationRequest
+        {
+            riderUserId = _rider, storeId = "S2", amount = 400m, requestId = "iss-s2"
+        });
+        Assert.True(s2.status, s2.message);
+        Assert.True((await _float.AcknowledgeAsync(_rider, new FloatAcknowledgeRequest
+        {
+            issueId = s2.Data!.id, requestId = "ack-s2"
+        })).status);
+
+        Assert.Equal(1400m, await _float.GetOutstandingFloatAsync(_rider));
+
+        var overFromS1 = await _float.RecordReturnAsync(_admin, new FloatMutationRequest
+        {
+            riderUserId = _rider, storeId = "S1", amount = 1200m, requestId = "ret-s1-over"
+        });
+        Assert.False(overFromS1.status);
+
+        var retS1 = await _float.RecordReturnAsync(_admin, new FloatMutationRequest
+        {
+            riderUserId = _rider, storeId = "S1", amount = 1000m, requestId = "ret-s1"
+        });
+        Assert.True(retS1.status, retS1.message);
+        Assert.Equal(400m, await _float.GetOutstandingFloatAsync(_rider));
+
+        var conflictReplay = await _float.RecordReturnAsync(_admin, new FloatMutationRequest
+        {
+            riderUserId = _rider, storeId = "S1", amount = 900m, requestId = "ret-s1"
+        });
+        Assert.False(conflictReplay.status);
     }
 
     private async Task<ApiResponse<AvailableOrderDto>> Complete(long id, decimal amount)

@@ -8,10 +8,6 @@ namespace Rider.Application.DTOs.Finance
         public decimal cashHandedOverTotal { get; set; }
         /// <summary>Actual collections minus confirmed handovers. Excludes expected-but-uncollected and legacy-ambiguous rows.</summary>
         public decimal cashHeld { get; set; }
-        /// <summary>Acknowledged change float outstanding (owed to store). Separate from COD.</summary>
-        public decimal floatOutstanding { get; set; }
-        /// <summary>cashHeld + floatOutstanding.</summary>
-        public decimal totalOwedToStore { get; set; }
         public decimal codShortageTotal { get; set; }
         public int completedCashOrders { get; set; }
         public int legacyAmbiguousCount { get; set; }

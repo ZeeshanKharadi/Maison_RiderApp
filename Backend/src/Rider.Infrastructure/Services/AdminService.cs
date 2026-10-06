@@ -1261,41 +1261,64 @@ namespace Rider.Infrastructure.Services
 
         public async Task<ApiResponse<AdminOrderDetailDto>> SetCashCollectedAsync(AdminActor actor, long id, decimal? cashCollected)
         {
-            var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
-            if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
-                return Fail<AdminOrderDetailDto>("Order not found");
-
-            if (cashCollected.HasValue && cashCollected.Value < 0)
-                return Fail<AdminOrderDetailDto>("Cash collected cannot be negative");
-
-            var alreadyHanded = order.CashHandedOverAmount ?? 0m;
-            if (cashCollected.HasValue && cashCollected.Value < alreadyHanded)
+            await using var tx = await _unitOfWork.Context.Database.BeginTransactionAsync();
+            try
             {
-                return Fail<AdminOrderDetailDto>(
-                    $"Cash collected ({cashCollected.Value:0.00}) cannot be below cash already handed over ({alreadyHanded:0.00})");
+                var order = await _unitOfWork.AssignedOrderRepository.GetByIdForUpdateAsync(id);
+                if (order == null || !CanSeeStore(actor, order.Batch?.StoreId))
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Order not found");
+                }
+
+                if (cashCollected.HasValue && cashCollected.Value < 0)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>("Cash collected cannot be negative");
+                }
+
+                var handed = order.CashHandedOverAmount ?? 0m;
+                if (!cashCollected.HasValue && handed > 0)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        "Cannot clear cash collected after cash has been handed over");
+                }
+                if (cashCollected.HasValue && cashCollected.Value < handed)
+                {
+                    await tx.RollbackAsync();
+                    return Fail<AdminOrderDetailDto>(
+                        $"Cash collected cannot be below amount already handed over ({handed:0.00})");
+                }
+
+                order.CashCollected = cashCollected;
+                order.CashSemanticsNote = CashSemantics.AdminCorrected;
+                order.UpdatedAt = DateTime.UtcNow;
+
+                await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+                {
+                    AssignedOrderId = id,
+                    ActorUserId = actor.UserId,
+                    ActorType = "Admin",
+                    PreviousStatus = order.Status,
+                    NewStatus = order.Status,
+                    Reason = "AdminCashCorrection",
+                    CashCollected = cashCollected,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
+                return Ok(MapOrderDetail(fresh), "Cash collected updated");
             }
-
-            order.CashCollected = cashCollected;
-            order.CashSemanticsNote = CashSemantics.AdminCorrected;
-            order.UpdatedAt = DateTime.UtcNow;
-
-            await _unitOfWork.Context.Set<OrderLifecycleAudit>().AddAsync(new OrderLifecycleAudit
+            catch (Exception)
             {
-                AssignedOrderId = id,
-                ActorUserId = actor.UserId,
-                ActorType = "Admin",
-                PreviousStatus = order.Status,
-                NewStatus = order.Status,
-                Reason = "AdminCashCorrection",
-                CashCollected = cashCollected,
-                CreatedAt = DateTime.UtcNow
-            });
-
-            await _unitOfWork.AssignedOrderRepository.UpdateAsync(order);
-            await _unitOfWork.SaveChangesAsync();
-
-            var fresh = await _unitOfWork.AssignedOrderRepository.GetByIdWithItemsAsync(id);
-            return Ok(MapOrderDetail(fresh), "Cash collected updated");
+                try { await tx.RollbackAsync(); } catch { /* ignore */ }
+                return Fail<AdminOrderDetailDto>("Unable to update cash collected");
+            }
         }
 
         public async Task<ApiResponse<AdminOrderDetailDto>> ConfirmCashHandoverAsync(
