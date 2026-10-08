@@ -6,6 +6,7 @@ import {
   isValidCoord,
   LatLng,
 } from '../utils/geo';
+import { cleanDestinationName } from '../routing/formatRouteSummary';
 
 function resolveStoreCoordinate(job: {
   storeId?: string;
@@ -62,7 +63,10 @@ export function resolveMapTarget(
       riderLocation && coordinate ? distanceKm(riderLocation, coordinate) : null;
     return {
       kind: 'store',
-      label: job.restaurant || store.label || 'Store',
+      label: cleanDestinationName(
+        'store',
+        job.restaurant || store.label || 'Store',
+      ),
       coordinate,
       distanceKm: dist,
       etaMinutes: null,
@@ -79,7 +83,7 @@ export function resolveMapTarget(
 
   return {
     kind: 'customer',
-    label: job.customerName || 'Customer',
+    label: cleanDestinationName('customer', job.customerName || 'Customer'),
     coordinate,
     distanceKm: dist,
     etaMinutes: null,

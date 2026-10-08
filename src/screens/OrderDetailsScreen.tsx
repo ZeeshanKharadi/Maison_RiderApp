@@ -161,7 +161,7 @@ export default function OrderDetailsScreen() {
   );
 
   /** Prefer store when it has coords/address; otherwise customer dropoff. */
-  const openNavigate = useCallback(async () => {
+  const openGoogleMaps = useCallback(async () => {
     if (!order) return;
 
     const storePlan = resolveNavigationPlan(
@@ -179,6 +179,32 @@ export default function OrderDetailsScreen() {
       platformOS: Platform.OS,
     });
   }, [order]);
+
+  const openDeliveryMap = useCallback(() => {
+    if (!order) return;
+    const assigned = activeJobs.find(j => j.id === order.id);
+    (navigation as { navigate: (a: string, b?: object) => void }).navigate(
+      'DeliveryMap',
+      {
+        orderId: order.id,
+        preview: assigned
+          ? undefined
+          : {
+              backendId: order.backendId,
+              restaurant: order.restaurant,
+              customerName: order.customerName,
+              customerPhone: order.customerPhone,
+              pickupAddress: order.pickupAddress,
+              dropoffAddress: order.dropoffAddress,
+              storeLat: order.storeLat,
+              storeLng: order.storeLng,
+              customerLat: order.customerLat,
+              customerLng: order.customerLng,
+              stateHint: 'store',
+            },
+      },
+    );
+  }, [order, activeJobs, navigation]);
 
   const priorityTone = useMemo(() => {
     if (!order) return 'neutral' as const;
@@ -370,11 +396,18 @@ export default function OrderDetailsScreen() {
             onPress={() => contactAction('Call customer')}
           />
           <AppButton
-            label="Navigate"
-            icon="navigation-variant"
+            label="View map"
+            icon="map"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => void openNavigate()}
+            onPress={openDeliveryMap}
+          />
+          <AppButton
+            label="Open Maps"
+            icon="google-maps"
+            variant="ghost"
+            style={styles.dummyBtn}
+            onPress={() => void openGoogleMaps()}
           />
         </View>
         <Text style={styles.messageHint}>

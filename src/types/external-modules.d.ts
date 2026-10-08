@@ -1,6 +1,8 @@
 declare module 'react-native-config' {
   export interface NativeConfig {
     GOOGLE_MAPS_API_KEY?: string;
+    /** OSRM-compatible HTTPS base URL (e.g. demo https://router.project-osrm.org) */
+    ROUTING_BASE_URL?: string;
   }
 
   export const Config: NativeConfig;

@@ -17,6 +17,22 @@ import SettingsScreen from '../screens/SettingsScreen';
 import HelpScreen from '../screens/HelpScreen';
 import OrderDetailsScreen from '../screens/OrderDetailsScreen';
 import ActiveDeliveryScreen from '../screens/ActiveDeliveryScreen';
+import DeliveryMapScreen from '../screens/DeliveryMapScreen';
+
+export type DeliveryMapPreviewParams = {
+  backendId?: number;
+  restaurant?: string;
+  customerName?: string;
+  customerPhone?: string;
+  pickupAddress?: string;
+  dropoffAddress?: string;
+  storeLat?: number | null;
+  storeLng?: number | null;
+  customerLat?: number | null;
+  customerLng?: number | null;
+  /** Prefer store until pickup; customer after — offer preview only */
+  stateHint?: 'store' | 'customer';
+};
 
 export type MainStackParamList = {
   Tabs: undefined;
@@ -27,6 +43,11 @@ export type MainStackParamList = {
   Help: { section?: 'faq' | 'support' | 'report' | 'feedback' | 'privacy' | 'terms' } | undefined;
   OrderDetails: { orderId: string; backendId?: number };
   ActiveDelivery: { openReportIssue?: boolean } | undefined;
+  DeliveryMap: {
+    orderId: string;
+    /** Used only when order is not (yet) in RiderSession — never after assignment ends */
+    preview?: DeliveryMapPreviewParams;
+  };
 };
 
 const Stack = createStackNavigator<MainStackParamList>();
@@ -60,6 +81,10 @@ export default function MainNavigator() {
                   <Stack.Screen
                     name="ActiveDelivery"
                     component={ActiveDeliveryScreen}
+                  />
+                  <Stack.Screen
+                    name="DeliveryMap"
+                    component={DeliveryMapScreen}
                   />
                 </Stack.Navigator>
                 <SideMenu />

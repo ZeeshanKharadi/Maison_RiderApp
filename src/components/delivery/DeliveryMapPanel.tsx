@@ -1,21 +1,15 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
-  Platform,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { ActiveDeliveryJob } from '../../delivery/types';
 import { mapDestinationKind, resolveMapTarget } from '../../delivery/mapTargets';
-import { hasGoogleMapsApiKey } from '../../config/env';
-import {
-  LatLng,
-  regionForPoints,
-  straightPolyline,
-} from '../../utils/geo';
+import { LatLng } from '../../utils/geo';
 import { colors, radius, spacing, typography } from '../../theme';
+import OsmMapView from './OsmMapView';
 
 type Props = {
   job: ActiveDeliveryJob;
@@ -30,30 +24,10 @@ export default function DeliveryMapPanel({
   locationLoading,
   locationError,
 }: Props) {
-  const mapRef = useRef<MapView>(null);
   const target = useMemo(
     () => resolveMapTarget(job, riderLocation),
     [job, riderLocation],
   );
-
-  const mapPoints = useMemo(() => {
-    const pts: LatLng[] = [];
-    if (riderLocation) pts.push(riderLocation);
-    if (target.coordinate) pts.push(target.coordinate);
-    return pts;
-  }, [riderLocation, target.coordinate]);
-
-  const region = useMemo(() => regionForPoints(mapPoints), [mapPoints]);
-
-  const routeLine = useMemo(() => {
-    if (!riderLocation || !target.coordinate) return [];
-    return straightPolyline(riderLocation, target.coordinate);
-  }, [riderLocation, target.coordinate]);
-
-  useEffect(() => {
-    if (!hasGoogleMapsApiKey || mapPoints.length === 0) return;
-    mapRef.current?.animateToRegion(region, 450);
-  }, [job.id, job.state, region, mapPoints.length]);
 
   const destKind = mapDestinationKind(job.state);
   const heading =
@@ -61,61 +35,34 @@ export default function DeliveryMapPanel({
       ? `En route to store · ${target.label}`
       : `En route to customer · ${target.label}`;
 
-  const mapAvailable = hasGoogleMapsApiKey;
-
   return (
     <View style={styles.wrap}>
-      {mapAvailable ? (
-        <MapView
-          ref={mapRef}
-          style={styles.map}
-          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-          initialRegion={region}
-          showsUserLocation={false}
-          showsMyLocationButton={false}>
-          {riderLocation ? (
-            <Marker
-              coordinate={riderLocation}
-              title="You"
-              pinColor={colors.info}
-            />
-          ) : null}
-          {target.coordinate ? (
-            <Marker
-              coordinate={target.coordinate}
-              title={target.label}
-              description={destKind === 'store' ? 'Pickup' : 'Drop-off'}
-              pinColor={destKind === 'store' ? colors.warning : colors.success}
-            />
-          ) : null}
-          {routeLine.length > 1 ? (
-            <Polyline
-              coordinates={routeLine}
-              strokeColor={colors.primaryDark}
-              strokeWidth={3}
-            />
-          ) : null}
-        </MapView>
-      ) : (
-        <View style={styles.mapFallback}>
-          <Text style={styles.mapFallbackTitle}>Map unavailable</Text>
-          <Text style={styles.mapFallbackBody}>
-            Set GOOGLE_MAPS_API_KEY in .env and rebuild the app to show the
-            delivery map.
-          </Text>
-        </View>
-      )}
+      <OsmMapView
+        variant="panel"
+        style={styles.map}
+        riderLocation={riderLocation}
+        destination={target.coordinate}
+        destinationLabel={target.label}
+        destinationKind={destKind}
+        showStraightLineFallback
+      />
 
-      <View style={styles.overlay}>
+      <View style={styles.overlay} pointerEvents="none">
         <Text style={styles.overlayTitle} numberOfLines={1}>
           {heading}
         </Text>
         {target.distanceLabel ? (
           <Text style={styles.overlayMeta}>
-            {target.distanceLabel} straight-line (not a routed ETA)
+            {target.distanceLabel} straight-line (not a routed path)
           </Text>
         ) : (
-          <Text style={styles.overlayMeta}>Distance unavailable</Text>
+          <Text style={styles.overlayMeta}>
+            {!riderLocation
+              ? 'Waiting for your GPS to show distance'
+              : !target.coordinate
+                ? 'Destination location unavailable'
+                : 'Distance unavailable'}
+          </Text>
         )}
       </View>
 
@@ -135,9 +82,7 @@ export default function DeliveryMapPanel({
       {!target.coordinate ? (
         <View style={[styles.banner, styles.bannerWarn]}>
           <Text style={styles.bannerText}>
-            {destKind === 'store'
-              ? 'Store coordinates missing — set Stores.Latitude/Longitude in the backend.'
-              : 'Customer coordinates missing on this order.'}
+            Destination location unavailable
           </Text>
         </View>
       ) : null}
@@ -153,28 +98,11 @@ const styles = StyleSheet.create({
   map: {
     ...StyleSheet.absoluteFill,
   },
-  mapFallback: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    backgroundColor: colors.surface,
-  },
-  mapFallbackTitle: {
-    ...typography.bodyStrong,
-    color: colors.textPrimary,
-    marginBottom: spacing.xxs,
-  },
-  mapFallbackBody: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
   overlay: {
     position: 'absolute',
     left: spacing.sm,
     right: spacing.sm,
-    bottom: spacing.sm,
+    bottom: spacing.sm + 14,
     backgroundColor: 'rgba(255,255,255,0.94)',
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
@@ -201,15 +129,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    ...Platform.select({
-      android: { elevation: 2 },
-      ios: {
-        shadowColor: '#000',
-        shadowOpacity: 0.12,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 2 },
-      },
-    }),
   },
   bannerWarn: {
     backgroundColor: colors.warningSoft,

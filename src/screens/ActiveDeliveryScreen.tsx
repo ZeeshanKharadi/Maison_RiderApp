@@ -86,12 +86,15 @@ export default function ActiveDeliveryScreen() {
   } = useRiderSession();
   const { isConnected } = useNetworkConnectivity();
 
+  const screenFocusedRef = useRef(false);
+  const [screenFocused, setScreenFocused] = useState(false);
+
   const {
     location: riderLocation,
     loading: locationLoading,
     error: locationError,
     refresh: refreshLocation,
-  } = useRiderLocation(activeJobs.length > 0);
+  } = useRiderLocation(screenFocused && activeJobs.length > 0);
 
   const [codSheetOpen, setCodSheetOpen] = useState(false);
   const [codAmount, setCodAmount] = useState('');
@@ -173,6 +176,24 @@ export default function ActiveDeliveryScreen() {
       platformOS: Platform.OS,
     });
   }, [activeJob, mapTarget, riderLocation]);
+
+  const openDeliveryMap = useCallback(() => {
+    if (!activeJob) return;
+    if (
+      activeJob.state === 'COMPLETED' ||
+      activeJob.state === 'AWAITING_STORE_RECEIPT'
+    ) {
+      Alert.alert(
+        'Map preview unavailable',
+        'This job is finished or waiting for store receipt.',
+      );
+      return;
+    }
+    (navigation as { navigate: (a: string, b?: object) => void }).navigate(
+      'DeliveryMap',
+      { orderId: activeJob.id },
+    );
+  }, [activeJob, navigation]);
 
   useEffect(() => {
     setIssueSheetOpen(false);
@@ -395,18 +416,20 @@ export default function ActiveDeliveryScreen() {
     await restoreActiveDeliveries();
   }, [activeJob, lifecyclePending, isConnected, restoreActiveDeliveries]);
 
-  const screenFocusedRef = useRef(false);
   const [appState, setAppState] = useState<AppStateStatus>(
     AppState.currentState,
   );
 
   // Refresh when opening this screen so admin return/cancel/requeue appear.
+  // GPS watch is focus-aware so DeliveryMap on top does not duplicate watchers.
   useFocusEffect(
     useCallback(() => {
       screenFocusedRef.current = true;
+      setScreenFocused(true);
       void restoreActiveDeliveries();
       return () => {
         screenFocusedRef.current = false;
+        setScreenFocused(false);
       };
     }, [restoreActiveDeliveries]),
   );
@@ -628,11 +651,19 @@ export default function ActiveDeliveryScreen() {
 
       <View style={styles.mapsAction}>
         <AppButton
-          label="Open in Google Maps"
+          label="View map"
+          icon="map"
+          variant="outline"
+          fullWidth
+          onPress={openDeliveryMap}
+        />
+        <AppButton
+          label="Open Google Maps"
           icon="google-maps"
           variant="outline"
           fullWidth
           onPress={() => void openGoogleMaps()}
+          style={{ marginTop: spacing.sm }}
         />
       </View>
 
@@ -826,11 +857,11 @@ export default function ActiveDeliveryScreen() {
             disabled={inReturnFlow}
           />
           <AppButton
-            label="Open Maps"
-            icon="google-maps"
+            label="View map"
+            icon="map"
             variant="ghost"
             style={styles.dummyBtn}
-            onPress={() => void openGoogleMaps()}
+            onPress={openDeliveryMap}
           />
         </View>
 

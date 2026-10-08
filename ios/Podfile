@@ -34,5 +34,7 @@ target 'RapidDeliveryRider' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+    # Required by @maplibre/maplibre-react-native
+    $MLRN.post_install(installer) if defined?($MLRN)
   end
 end
