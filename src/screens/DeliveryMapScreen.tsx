@@ -27,7 +27,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppHeader, AppButton } from '../components/ui';
 import OsmMapView from '../components/delivery/OsmMapView';
 import TurnInstructionBanner from '../components/delivery/TurnInstructionBanner';
+import VoiceGuidanceToggle from '../components/delivery/VoiceGuidanceToggle';
+import { useAccount } from '../context/AccountContext';
 import { useRiderSession } from '../context/RiderSessionContext';
+import { useDeliveryVoiceGuidance } from '../hooks/useDeliveryVoiceGuidance';
 import { mapDestinationKind, resolveMapTarget } from '../delivery/mapTargets';
 import {
   isUsableStreetAddress,
@@ -104,8 +107,8 @@ type CachedRoute = {
 };
 
 /**
- * Full-screen OSM map + Stage-3 visual turn instructions
- * (not voice / background navigation).
+ * Full-screen OSM map + Stage-3 visual turn instructions and optional
+ * foreground voice guidance (device TTS, not background navigation).
  */
 export default function DeliveryMapScreen() {
   const navigation = useNavigation();
@@ -162,9 +165,11 @@ export default function DeliveryMapScreen() {
   const gpsAgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoRerouting, setAutoRerouting] = useState(false);
   const [progressUnavailable, setProgressUnavailable] = useState(false);
+  const { settings, updateSettings } = useAccount();
   const [liveProgress, setLiveProgress] = useState<LiveRouteProgress>(() =>
     pausedProgress('waiting_gps'),
   );
+  const [voiceRouteRevision, setVoiceRouteRevision] = useState(0);
   const maneuverIndexRef = useRef(0);
   const [maneuverGuidance, setManeuverGuidance] =
     useState<ManeuverGuidance | null>(null);
@@ -1163,6 +1168,43 @@ export default function DeliveryMapScreen() {
     liveProgress,
   ]);
 
+  useEffect(() => {
+    if (roadRoute) {
+      setVoiceRouteRevision(v => v + 1);
+    }
+  }, [roadRoute]);
+
+  const voiceSessionActive =
+    actionsOk &&
+    !confirmedUnassigned &&
+    (assignmentPhase === 'assigned' || assignmentPhase === 'stale_network') &&
+    screenFocused &&
+    appState === 'active' &&
+    !!roadRoute;
+
+  const voiceGuidanceLive =
+    voiceSessionActive &&
+    !autoRerouting &&
+    !routeLoading &&
+    !progressUnavailable &&
+    liveProgress.status === 'ok' &&
+    !!maneuverGuidance &&
+    (maneuverGuidance.status === 'active' ||
+      maneuverGuidance.status === 'arrived');
+
+  useDeliveryVoiceGuidance({
+    voiceEnabled: settings.voiceGuidance,
+    sessionActive: voiceSessionActive,
+    guidanceLive: voiceGuidanceLive,
+    guidance: maneuverGuidance,
+    maneuvers: roadRoute?.maneuvers ?? null,
+    routeRevision: voiceRouteRevision,
+  });
+
+  const onVoiceGuidanceToggle = useCallback(() => {
+    void updateSettings({ voiceGuidance: !settings.voiceGuidance });
+  }, [settings.voiceGuidance, updateSettings]);
+
   const refreshRoute = useCallback(async () => {
     if (!areRouteActionsAllowed(job, confirmedUnassigned)) return;
     if (assignmentPhase === 'preview' && offerStillAvailable !== true) {
@@ -1408,6 +1450,12 @@ export default function DeliveryMapScreen() {
           </View>
         ) : null}
 
+        <VoiceGuidanceToggle
+          enabled={settings.voiceGuidance}
+          onToggle={onVoiceGuidanceToggle}
+          style={styles.voiceToggle}
+        />
+
         <View style={styles.routeCard} pointerEvents="box-none">
           <Text style={styles.cardTitle} numberOfLines={1}>
             {cardTitle}
@@ -1586,6 +1634,12 @@ const styles = StyleSheet.create({
     left: spacing.sm,
     right: 60,
     zIndex: 2,
+  },
+  voiceToggle: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    zIndex: 3,
   },
   routeCard: {
     position: 'absolute',

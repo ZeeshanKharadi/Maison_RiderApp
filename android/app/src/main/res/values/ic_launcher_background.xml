@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches splash logo tile (white square behind red moped). -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

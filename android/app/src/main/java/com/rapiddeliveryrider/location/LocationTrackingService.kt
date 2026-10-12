@@ -120,7 +120,7 @@ class LocationTrackingService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle("Delivery tracking active")
       .setContentText("Sharing your location with Maison operations")
-      .setSmallIcon(R.mipmap.ic_launcher)
+      .setSmallIcon(R.drawable.ic_notification)
       .setOngoing(true)
       .setContentIntent(launch)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)

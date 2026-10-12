@@ -45,6 +45,8 @@ export type AppNotification = {
 
 export type AppSettings = {
   pushNotifications: boolean;
+  /** Foreground turn-by-turn voice on DeliveryMap. */
+  voiceGuidance: boolean;
   appearance: AppearanceMode;
   language: AppLanguage;
 };
@@ -74,6 +76,7 @@ export const DEFAULT_PROFILE: RiderProfile = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   pushNotifications: true,
+  voiceGuidance: true,
   appearance: 'light',
   language: 'en',
 };

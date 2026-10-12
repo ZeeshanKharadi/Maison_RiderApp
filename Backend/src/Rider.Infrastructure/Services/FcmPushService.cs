@@ -63,7 +63,9 @@ namespace Rider.Infrastructure.Services
                             Notification = new AndroidNotification
                             {
                                 ChannelId = "maison_orders",
-                                Sound = "default"
+                                Sound = "default",
+                                // White scooter silhouette drawable (status bar).
+                                Icon = "ic_notification"
                             }
                         }
                     };

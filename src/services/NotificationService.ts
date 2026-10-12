@@ -210,7 +210,8 @@ class NotificationService {
       data: (remoteMessage.data as Record<string, string>) || {},
       android: {
         channelId: CHANNEL_ID,
-        smallIcon: 'ic_launcher',
+        // White silhouette status-bar icon (not the full-colour launcher).
+        smallIcon: 'ic_notification',
         color: '#C8102E',
         importance: AndroidImportance.HIGH,
         pressAction: { id: 'default' },
@@ -242,7 +243,7 @@ class NotificationService {
       data: data || {},
       android: {
         channelId: CHANNEL_ID,
-        smallIcon: 'ic_launcher',
+        smallIcon: 'ic_notification',
         color: '#C8102E',
         importance: AndroidImportance.HIGH,
         pressAction: { id: 'default' },
