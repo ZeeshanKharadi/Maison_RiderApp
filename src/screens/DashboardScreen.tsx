@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   AppState,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -18,6 +17,7 @@ import { useSideMenu } from '../context/SideMenuContext';
 import { useRiderSession } from '../context/RiderSessionContext';
 import { useAccount } from '../context/AccountContext';
 import { navigate } from '../navigation/RootNavigation';
+import OrderCard from '../components/OrderCard';
 import {
   AppButton,
   EmptyState,
@@ -25,6 +25,7 @@ import {
   StatCard,
   StatusPill,
   confirmDialog,
+  RejectReasonSheet,
 } from '../components/ui';
 import {
   formatDashboardDate,
@@ -34,18 +35,14 @@ import {
 } from '../data/dashboard';
 import { getStateConfig } from '../delivery/stateMachine';
 import { jobProgress } from '../delivery/types';
-import { formatNotificationTime } from '../data/account';
 import { formatMoney } from '../utils/format';
-import {
-  formatDateRangeLabel,
-  performanceSevenCalendarDayWindow,
-  performanceTodayWindow,
-} from '../utils/performanceRange';
+import { performanceTodayWindow } from '../utils/performanceRange';
 import { useAvailableOrders } from '../context/AvailableOrdersContext';
 import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import NoConnectionBanner from '../components/NoConnectionBanner';
 import * as ordersRepository from '../repositories/ordersRepository';
 import type { RiderPerformance } from '../repositories/ordersRepository';
+import type { AvailableOrder, RejectReason } from '../data/orders';
 import {
   colors,
   elevation,
@@ -54,12 +51,6 @@ import {
   TOUCH_TARGET,
   typography,
 } from '../theme';
-
-type QuickAction = {
-  icon: string;
-  label: string;
-  onPress: () => void;
-};
 
 function goStack(screen: string) {
   navigate('MainDrawer', { screen });
@@ -79,16 +70,23 @@ export default function DashboardScreen() {
     setOnline,
     shiftStartedAt,
     activeJob,
+    activeJobs,
     restoreActiveDeliveries,
   } = useRiderSession();
-  const { notifications, profile, unreadCount } = useAccount();
-  const { orders, refreshOrders } = useAvailableOrders();
+  const { profile, unreadCount } = useAccount();
+  const {
+    orders,
+    accepting,
+    acceptingOrderKey,
+    acceptOrder,
+    rejectOrder,
+    refreshOrders,
+  } = useAvailableOrders();
   const { isConnected } = useNetworkConnectivity();
 
   const [now, setNow] = useState(() => new Date());
   const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
-  const [weekPerf, setWeekPerf] = useState<RiderPerformance | null>(null);
-  const [weekRangeLabel, setWeekRangeLabel] = useState('');
+  const [rejectTarget, setRejectTarget] = useState<AvailableOrder | null>(null);
 
   // Tick working-hours clock while online (stops when offline).
   useEffect(() => {
@@ -104,27 +102,16 @@ export default function DashboardScreen() {
   const loadPerformance = useCallback(async () => {
     const end = new Date();
     const todayWin = performanceTodayWindow(end);
-    const weekWin = performanceSevenCalendarDayWindow(end);
-    setWeekRangeLabel(formatDateRangeLabel(weekWin.from, weekWin.to));
-
-    const [today, week] = await Promise.all([
-      ordersRepository.fetchPerformance({
-        from: todayWin.from,
-        to: todayWin.to,
-      }),
-      ordersRepository.fetchPerformance({
-        from: weekWin.from,
-        to: weekWin.to,
-      }),
-    ]);
+    const today = await ordersRepository.fetchPerformance({
+      from: todayWin.from,
+      to: todayWin.to,
+    });
     // Clear on failure so we never show another rider's (or stale) values.
     setTodayPerf(today.ok ? today.data : null);
-    setWeekPerf(week.ok ? week.data : null);
   }, []);
 
   useEffect(() => {
     setTodayPerf(null);
-    setWeekPerf(null);
     void loadPerformance();
   }, [user?.id, loadPerformance]);
 
@@ -164,17 +151,6 @@ export default function DashboardScreen() {
     [shiftStartedAt, now],
   );
 
-  const orderPreviews = useMemo(() => orders.slice(0, 3), [orders]);
-  const recentNotifications = useMemo(
-    () =>
-      [...notifications]
-        .sort(
-          (a, b) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-        )
-        .slice(0, 3),
-    [notifications],
-  );
   const activeConfig = activeJob ? getStateConfig(activeJob.state) : null;
   const activeProgress = activeJob ? jobProgress(activeJob) : 0;
 
@@ -183,6 +159,72 @@ export default function DashboardScreen() {
       navigation.navigate(tab as never);
     },
     [navigation],
+  );
+
+  const goOrderDetails = useCallback((order: AvailableOrder) => {
+    navigate('MainDrawer', {
+      screen: 'OrderDetails',
+      params: {
+        orderId: order.id,
+        backendId: order.backendId,
+      },
+    });
+  }, []);
+
+  const handleAccept = useCallback(
+    async (order: AvailableOrder) => {
+      if (accepting) return;
+      if (!isConnected) {
+        confirmDialog({
+          title: 'No connection',
+          message:
+            'Connect to the internet to accept orders. Accepts are not queued offline.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
+      if (!isOnline) {
+        confirmDialog({
+          title: 'Offline',
+          message: 'Go online before accepting orders.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
+      const alreadyActive = activeJobs.some(
+        j => j.backendId === order.backendId || j.id === order.id,
+      );
+      if (!alreadyActive && activeJobs.length >= 5) {
+        confirmDialog({
+          title: 'Order limit',
+          message: 'You can carry up to 5 active orders at once.',
+          confirmLabel: 'OK',
+          onConfirm: () => {},
+        });
+        return;
+      }
+      const result = await acceptOrder(order);
+      if (result.ok) {
+        goStack('ActiveDelivery');
+      }
+    },
+    [accepting, activeJobs, acceptOrder, isOnline, isConnected],
+  );
+
+  const handleRejectPress = useCallback((order: AvailableOrder) => {
+    setRejectTarget(order);
+  }, []);
+
+  const handleRejectConfirm = useCallback(
+    async (reason: RejectReason) => {
+      if (!rejectTarget) return;
+      const target = rejectTarget;
+      setRejectTarget(null);
+      await rejectOrder(target, reason);
+    },
+    [rejectTarget, rejectOrder],
   );
 
   const handleOnlineChange = useCallback(
@@ -215,26 +257,6 @@ export default function DashboardScreen() {
   const handleContinueDelivery = useCallback(() => {
     goStack('ActiveDelivery');
   }, []);
-
-  const quickActions: QuickAction[] = useMemo(
-    () => [
-      { icon: 'truck-delivery', label: 'Orders', onPress: () => goTab('Orders') },
-      { icon: 'history', label: 'History', onPress: () => goStack('RouteHistory') },
-      { icon: 'wallet-outline', label: 'Wallet', onPress: () => goTab('Wallet') },
-      {
-        icon: 'chart-line',
-        label: 'Performance',
-        onPress: () => goStack('Performance'),
-      },
-      { icon: 'cog-outline', label: 'Settings', onPress: () => goStack('Settings') },
-      {
-        icon: 'bell-outline',
-        label: 'Alerts',
-        onPress: () => goStack('Notifications'),
-      },
-    ],
-    [goTab],
-  );
 
   return (
     <View style={styles.container}>
@@ -335,11 +357,8 @@ export default function DashboardScreen() {
           ) : null}
         </View>
 
-        {/* 3. Today's Summary — server Performance API (not session estimates) */}
+        {/* 3. Today's Summary — keep Your pay + cash still to hand in */}
         <SectionHeader title="Today" />
-        <Text style={styles.summaryHint}>
-          From server records. COD collected is cash in hand, not earnings.
-        </Text>
         <View style={styles.statsRow}>
           <StatCard
             icon="package-variant"
@@ -348,7 +367,7 @@ export default function DashboardScreen() {
           />
           <StatCard
             icon="cash"
-            label="COD collected"
+            label="Cash collected"
             value={
               todayPerf ? formatMoney(todayPerf.codCollected) : '—'
             }
@@ -364,14 +383,37 @@ export default function DashboardScreen() {
             iconColor={colors.info}
           />
           <StatCard
+            icon="cash-multiple"
+            label="Your pay"
+            value={
+              todayPerf?.deliveryPayAvailable &&
+              todayPerf.estimatedDeliveryPay != null
+                ? formatMoney(todayPerf.estimatedDeliveryPay)
+                : '—'
+            }
+            iconColor={colors.success}
+          />
+        </View>
+        <View style={styles.statsRow}>
+          <StatCard
             icon="wallet-outline"
-            label="COD outstanding"
+            label="Cash to hand in"
             value={
               todayPerf ? formatMoney(todayPerf.codOutstanding) : '—'
             }
             iconColor={colors.warning}
           />
+          <View style={{ flex: 1 }} />
         </View>
+        {todayPerf && !todayPerf.deliveryPayAvailable ? (
+          <Text style={styles.summaryHint}>
+            {todayPerf.deliveryPayNote || 'Your pay shows when the rate is set'}
+          </Text>
+        ) : (
+          <Text style={styles.summaryHint}>
+            Your pay is what you earn · Cash to hand in is customer money
+          </Text>
+        )}
 
         {/* 4. Active Delivery */}
         <SectionHeader title="Active delivery" />
@@ -451,23 +493,21 @@ export default function DashboardScreen() {
             title="No active delivery"
             message={
               isOnline
-                ? 'Accept an order to start your next run.'
+                ? 'Accept an order below to start your next run.'
                 : 'Go online, then accept an order.'
             }
-            actionLabel={isOnline ? 'Browse orders' : 'Go online'}
-            onAction={() => {
-              if (isOnline) goTab('Orders');
-              else handleOnlineChange(true);
-            }}
+            actionLabel={isOnline ? undefined : 'Go online'}
+            onAction={
+              isOnline ? undefined : () => handleOnlineChange(true)
+            }
           />
         )}
 
-        {/* 5. Available Orders Preview */}
-        <SectionHeader
-          title="Available orders"
-          actionLabel={isOnline ? 'View all' : undefined}
-          onActionPress={isOnline ? () => goTab('Orders') : undefined}
-        />
+        {/* 5. Full available orders (same cards as Orders tab) */}
+        <SectionHeader title="Available orders" />
+        <Text style={styles.availableCount} accessibilityLiveRegion="polite">
+          {isOnline && isConnected ? `${orders.length} available` : ''}
+        </Text>
         {!isOnline ? (
           <View style={styles.offlineBanner}>
             <Icon name="bike-off" size={22} color={colors.textMuted} />
@@ -490,134 +530,37 @@ export default function DashboardScreen() {
               </Text>
             </View>
           </View>
-        ) : orderPreviews.length === 0 ? (
+        ) : orders.length === 0 ? (
           <EmptyState
             icon="truck-delivery-outline"
             title="No nearby orders"
             message="New offers in your zone will show up here."
             actionLabel="Refresh orders"
-            onAction={() => goTab('Orders')}
+            onAction={() => void refreshOrders()}
           />
         ) : (
-          orderPreviews.map(order => (
-            <Pressable
-              key={ordersRepository.orderListKey(order)}
-              style={({ pressed }) => [
-                styles.orderPreview,
-                pressed && styles.pressed,
-              ]}
-              onPress={() => goTab('Orders')}
-              accessibilityRole="button"
-              accessibilityLabel={`Order ${order.id}, ${order.restaurant}, order ${formatMoney(order.orderAmount)}`}>
-              <View style={styles.orderPreviewTop}>
-                <Text style={styles.orderRestaurant} numberOfLines={1}>
-                  {order.restaurant}
-                </Text>
-                <Text style={styles.orderFee}>
-                  {order.deliveryFee != null && order.deliveryFee > 0
-                    ? formatMoney(order.deliveryFee)
-                    : formatMoney(order.orderAmount)}
-                </Text>
-              </View>
-              <Text style={styles.orderMeta} numberOfLines={1}>
-                {order.distanceMiles != null
-                  ? `${order.distanceMiles.toFixed(1)} mi`
-                  : 'Distance —'}{' '}
-                ·{' '}
-                {order.etaMinutes != null
-                  ? `${order.etaMinutes} min`
-                  : 'ETA —'}{' '}
-                · Order {formatMoney(order.orderAmount)}
-              </Text>
-            </Pressable>
-          ))
-        )}
-
-        {/* 6. Performance Snapshot */}
-        <SectionHeader
-          title="Performance"
-          actionLabel="View"
-          onActionPress={() => goStack('Performance')}
-        />
-        <View style={styles.perfCard}>
-          <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>
-              {weekPerf ? String(weekPerf.completedCount) : '—'}
-            </Text>
-            <Text style={styles.perfLabel}>
-              7-day deliveries
-              {weekRangeLabel ? `\n${weekRangeLabel}` : ''}
-            </Text>
-          </View>
-          <View style={styles.perfDivider} />
-          <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>
-              {weekPerf ? `${weekPerf.onlineHours.toFixed(1)}h` : '—'}
-            </Text>
-            <Text style={styles.perfLabel}>7-day online</Text>
-          </View>
-          <View style={styles.perfDivider} />
-          <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>
-              {weekPerf ? formatMoney(weekPerf.codCollected) : '—'}
-            </Text>
-            <Text style={styles.perfLabel}>7-day COD</Text>
-          </View>
-        </View>
-
-        {/* 7. Recent Notifications */}
-        <SectionHeader
-          title="Notifications"
-          actionLabel="View all"
-          onActionPress={() => goStack('Notifications')}
-        />
-        {recentNotifications.map(n => (
-          <TouchableOpacity
-            key={n.id}
-            style={styles.notifCard}
-            onPress={() => goStack('Notifications')}
-            accessibilityRole="button"
-            accessibilityLabel={`${n.title}. ${n.description}`}>
-            <View style={styles.notifIcon}>
-              <Icon
-                name={n.icon}
-                size={18}
-                color={colors.primaryDark}
+          orders.map(order => {
+            const key = ordersRepository.orderListKey(order);
+            return (
+              <OrderCard
+                key={key}
+                order={order}
+                onPress={goOrderDetails}
+                onAccept={handleAccept}
+                onReject={handleRejectPress}
+                actionsDisabled={accepting || !isConnected}
+                isAccepting={acceptingOrderKey === key}
               />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.notifTitle}>{n.title}</Text>
-              <Text style={styles.notifBody} numberOfLines={1}>
-                {n.description}
-              </Text>
-            </View>
-            <Text style={styles.notifTime}>
-              {formatNotificationTime(n.timestamp)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-
-        {/* 8. Quick Actions */}
-        <SectionHeader title="Quick actions" />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.quickRow}>
-          {quickActions.map(action => (
-            <TouchableOpacity
-              key={action.label}
-              style={styles.quickCard}
-              onPress={action.onPress}
-              accessibilityRole="button"
-              accessibilityLabel={action.label}>
-              <View style={styles.quickIcon}>
-                <Icon name={action.icon} size={22} color={colors.primaryDark} />
-              </View>
-              <Text style={styles.quickLabel}>{action.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+            );
+          })
+        )}
       </ScrollView>
+
+      <RejectReasonSheet
+        visible={!!rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        onConfirm={reason => void handleRejectConfirm(reason)}
+      />
     </View>
   );
 }
@@ -841,116 +784,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     marginTop: 2,
   },
-  orderPreview: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
+  availableCount: {
+    ...typography.caption,
+    marginTop: -spacing.sm,
     marginBottom: spacing.sm,
-    ...elevation.small,
-  },
-  pressed: {
-    backgroundColor: colors.pressed,
-  },
-  orderPreviewTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  orderRestaurant: {
-    ...typography.bodyStrong,
-    flex: 1,
-  },
-  orderFee: {
-    ...typography.bodyStrong,
-    color: colors.success,
-  },
-  orderMeta: {
-    ...typography.caption,
-    marginTop: spacing.xxs,
-  },
-  perfCard: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.lg,
-    ...elevation.small,
-  },
-  perfItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  perfDivider: {
-    width: 1,
-    backgroundColor: colors.border,
-  },
-  perfValue: {
-    ...typography.title,
-    fontSize: 18,
-  },
-  perfLabel: {
-    ...typography.caption,
-    marginTop: 2,
-    textAlign: 'center',
-    paddingHorizontal: spacing.xxs,
-  },
-  notifCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    minHeight: TOUCH_TARGET + 8,
-    ...elevation.small,
-  },
-  notifIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifTitle: {
-    ...typography.bodyStrong,
-  },
-  notifBody: {
-    ...typography.caption,
-    marginTop: 1,
-  },
-  notifTime: {
-    ...typography.caption,
-    fontSize: 10,
-  },
-  quickRow: {
-    gap: spacing.sm,
-    paddingBottom: spacing.sm,
-  },
-  quickCard: {
-    width: 88,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xs,
-    alignItems: 'center',
-    ...elevation.small,
-  },
-  quickIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xs,
-  },
-  quickLabel: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    textAlign: 'center',
   },
 });

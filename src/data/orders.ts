@@ -2,6 +2,8 @@
  * Available order offers — shapes ready for a future REST API.
  */
 
+import { parseApiDate } from '../utils/apiDate';
+
 export type PaymentMethod = 'card' | 'cash' | 'wallet';
 export type OrderPriority = 'normal' | 'high' | 'urgent';
 
@@ -360,7 +362,10 @@ export function filterAndSortOrders(
 }
 
 export function formatPostedAgo(iso: string, now = Date.now()): string {
-  const mins = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
+  const parsed = parseApiDate(iso);
+  const t = parsed?.getTime() ?? new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 'Just now';
+  const mins = Math.max(0, Math.floor((now - t) / 60000));
   if (mins < 1) return 'Just now';
   if (mins === 1) return '1 min ago';
   if (mins < 60) return `${mins} min ago`;

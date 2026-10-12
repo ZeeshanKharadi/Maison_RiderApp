@@ -354,7 +354,7 @@ export default function OrderDetailPage() {
           <div className="mt-1">
             Cash collected: <strong>{money(order.cashCollected)}</strong>
             {' · '}handed over: <strong>{money(order.cashHandedOverAmount)}</strong>
-            {' · '}outstanding: <strong>{money(cashOutstanding)}</strong>
+            {' · '}still to hand in: <strong>{money(cashOutstanding)}</strong>
           </div>
           <div className="small mt-1 mb-0">
             {order.requeueBlockReason

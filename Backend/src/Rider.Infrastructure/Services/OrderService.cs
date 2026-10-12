@@ -1859,6 +1859,45 @@ namespace Rider.Infrastructure.Services
                 return Math.Max(0, collected - handed);
             });
 
+            var mode = await _unitOfWork.AppSettingRepository.GetValueAsync("PayoutMode", "");
+            var feeRaw = await _unitOfWork.AppSettingRepository.GetValueAsync("PayoutFixedFee", "");
+            var pctRaw = await _unitOfWork.AppSettingRepository.GetValueAsync("PayoutPercent", "");
+
+            string? payoutMode = null;
+            decimal? payoutFixedFee = null;
+            decimal? estimatedDeliveryPay = null;
+            var deliveryPayAvailable = false;
+            string? deliveryPayNote = null;
+
+            if (string.IsNullOrWhiteSpace(mode)
+                || !decimal.TryParse(feeRaw, out var fee)
+                || !decimal.TryParse(pctRaw, out var pct))
+            {
+                deliveryPayNote = "Your pay shows when the rate is set.";
+            }
+            else if (mode.Equals("percent", StringComparison.OrdinalIgnoreCase))
+            {
+                payoutMode = "percent";
+                estimatedDeliveryPay = Math.Round(
+                    completed.Sum(o => o.OrderTotal) * pct / 100m,
+                    2,
+                    MidpointRounding.AwayFromZero);
+                deliveryPayAvailable = true;
+                deliveryPayNote = "Estimate from % of completed sales. Not paid out here.";
+            }
+            else if (mode.Equals("fixed", StringComparison.OrdinalIgnoreCase))
+            {
+                payoutMode = "fixed";
+                payoutFixedFee = fee;
+                estimatedDeliveryPay = completed.Count * fee;
+                deliveryPayAvailable = true;
+                deliveryPayNote = "Estimate from fixed fee × deliveries. Not paid out here.";
+            }
+            else
+            {
+                deliveryPayNote = "Your pay shows when the rate is set.";
+            }
+
             return new ApiResponse<RiderPerformanceDto>(true, "Performance", new RiderPerformanceDto
             {
                 completedCount = completed.Count,
@@ -1867,7 +1906,12 @@ namespace Rider.Infrastructure.Services
                 codCollected = codCollected,
                 codOutstanding = codOutstanding,
                 from = fromUtc,
-                to = toUtc
+                to = toUtc,
+                payoutMode = payoutMode,
+                payoutFixedFee = payoutFixedFee,
+                estimatedDeliveryPay = deliveryPayAvailable ? estimatedDeliveryPay : null,
+                deliveryPayAvailable = deliveryPayAvailable,
+                deliveryPayNote = deliveryPayNote
             });
         }
 

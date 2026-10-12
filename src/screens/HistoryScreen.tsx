@@ -196,7 +196,7 @@ export default function HistoryScreen() {
           serverToday != null ? String(serverToday.completedCount) : '—',
       },
       {
-        label: 'COD today',
+        label: 'Cash today',
         value:
           serverToday != null
             ? formatMoney(serverToday.codCollected)
@@ -216,7 +216,7 @@ export default function HistoryScreen() {
         value: String(filteredStats.deliveredCount),
       },
       {
-        label: 'COD trips',
+        label: 'Cash trips',
         value: String(filteredStats.codDeliveries),
       },
       {
@@ -227,7 +227,7 @@ export default function HistoryScreen() {
 
     if (filteredStats.hasCodAmounts && filteredStats.totalCodCollected != null) {
       archiveChips.push({
-        label: 'COD collected (not earnings)',
+        label: 'Cash collected (not pay)',
         value: formatMoney(filteredStats.totalCodCollected),
       });
     }
@@ -282,7 +282,7 @@ export default function HistoryScreen() {
           style={{ marginBottom: spacing.sm }}
         />
         <Text style={styles.scopeHint}>
-          Server totals use Performance API (completed count + COD cash). “7
+          Server totals use Performance API (completed count + cash). “7
           days” is exactly seven calendar days ending today
           {weekRangeLabel ? ` (${weekRangeLabel})` : ''}. Rider fee / tip /
           distance stay hidden until History supplies them.

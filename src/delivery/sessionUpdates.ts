@@ -136,12 +136,12 @@ export function jobToHistoryItem(
     specialInstructions: job.specialInstructions,
     deliveryNotes: job.isCod
       ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)
-        ? `COD collected: ${job.cashCollectedAmount}${
+        ? `Cash collected: ${job.cashCollectedAmount}${
             job.cashCollectedReason ? ` — ${job.cashCollectedReason}` : ''
           }.`
         : job.cashCollected === false
-          ? 'Delivery completed; COD cash not verified on server.'
-          : 'COD collected on delivery.'
+          ? 'Delivery completed; cash not verified on server.'
+          : 'Cash collected on delivery.'
       : undefined,
     cashCollected: job.isCod
       ? job.cashCollectedAmount != null && Number.isFinite(job.cashCollectedAmount)

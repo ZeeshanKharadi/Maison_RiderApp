@@ -192,7 +192,7 @@ export default function WalletScreen() {
                 <SectionHeader title="Change float" />
                 <View style={styles.grid}>
                   <Metric
-                    label="Outstanding float"
+                    label="Float still owed"
                     value={formatMoney(floatSummary?.outstandingFloat ?? 0)}
                   />
                   <Metric
@@ -203,8 +203,8 @@ export default function WalletScreen() {
                   />
                 </View>
                 <Text style={styles.cardHint}>
-                  Pending acknowledgments are not part of outstanding float
-                  until you confirm receipt. Separate from COD cash held.
+                  Confirm float when you receive it. Separate from customer
+                  cash you still hold.
                 </Text>
                 {(floatSummary?.pendingAcknowledgments || []).map(p => (
                   <View key={p.id} style={styles.floatPending}>
@@ -226,7 +226,7 @@ export default function WalletScreen() {
                   </View>
                 ))}
 
-                <SectionHeader title="COD cash" />
+                <SectionHeader title="Customer cash" />
                 <View style={styles.grid}>
                   <Metric
                     label="Collected from customers"
@@ -237,7 +237,7 @@ export default function WalletScreen() {
                     value={formatMoney(summary.cashHandedOverTotal)}
                   />
                   <Metric
-                    label="COD shortage"
+                    label="Short (missing cash)"
                     value={formatMoney(summary.codShortageTotal)}
                   />
                   <Metric

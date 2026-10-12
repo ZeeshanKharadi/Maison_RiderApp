@@ -104,7 +104,7 @@ export default function PerformanceScreen() {
               />
               <StatCard
                 icon="cash"
-                label="COD collected"
+                label="Cash collected"
                 value={formatMoney(data.codCollected)}
                 iconColor={colors.success}
               />
@@ -112,7 +112,7 @@ export default function PerformanceScreen() {
             <View style={styles.statsRow}>
               <StatCard
                 icon="cash-clock"
-                label="COD outstanding"
+                label="Cash to hand in"
                 value={formatMoney(data.codOutstanding)}
                 iconColor={colors.warning}
               />
@@ -122,8 +122,8 @@ export default function PerformanceScreen() {
             <View style={styles.noteCard}>
               <Text style={styles.noteTitle}>About this data</Text>
               <Text style={styles.noteBody}>
-                Rankings, ratings, and acceptance rates are not available from
-                the server yet. Settlements and payouts are managed by admin.
+                Cash to hand in is customer money still with you. Your pay is
+                separate. Rankings are not on the server yet.
               </Text>
             </View>
           </>

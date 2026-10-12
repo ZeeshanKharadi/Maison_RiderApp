@@ -252,5 +252,10 @@ namespace Rider.Application.DTOs.Orders
         public decimal codOutstanding { get; set; }
         public DateTime? from { get; set; }
         public DateTime? to { get; set; }
+        public string? payoutMode { get; set; }
+        public decimal? payoutFixedFee { get; set; }
+        public decimal? estimatedDeliveryPay { get; set; }
+        public bool deliveryPayAvailable { get; set; }
+        public string? deliveryPayNote { get; set; }
     }
 }

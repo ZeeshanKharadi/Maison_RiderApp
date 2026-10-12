@@ -67,6 +67,11 @@ export type RiderPerformance = {
   codOutstanding: number;
   from?: string | null;
   to?: string | null;
+  payoutMode?: string | null;
+  payoutFixedFee?: number | null;
+  estimatedDeliveryPay?: number | null;
+  deliveryPayAvailable?: boolean;
+  deliveryPayNote?: string | null;
 };
 
 /** Simple RFC4122-ish uuid v4 for idempotency keys. */
@@ -282,6 +287,7 @@ export async function fetchPerformance(opts?: {
     }
 
     const d = envelope.Data;
+    const payAvailable = Boolean(d.deliveryPayAvailable);
     return ok({
       completedCount: Number(d.completedCount) || 0,
       avgDurationMinutes:
@@ -291,6 +297,15 @@ export async function fetchPerformance(opts?: {
       codOutstanding: Number(d.codOutstanding) || 0,
       from: d.from ?? null,
       to: d.to ?? null,
+      payoutMode: d.payoutMode ?? null,
+      payoutFixedFee:
+        d.payoutFixedFee != null ? Number(d.payoutFixedFee) : null,
+      estimatedDeliveryPay:
+        payAvailable && d.estimatedDeliveryPay != null
+          ? Number(d.estimatedDeliveryPay)
+          : null,
+      deliveryPayAvailable: payAvailable,
+      deliveryPayNote: d.deliveryPayNote ?? null,
     });
   } catch (err) {
     return mapNetworkError(err, 'Unable to reach performance API');

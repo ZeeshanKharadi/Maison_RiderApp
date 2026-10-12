@@ -1,5 +1,6 @@
 import { AvailableOrder, PaymentMethod, TimelineEvent } from '../../data/orders';
 import { DeliveryState } from '../../delivery/stateMachine';
+import { toApiIso } from '../../utils/apiDate';
 
 /** Matches backend AvailableOrderDto / AssignOrderItemDto */
 export type ApiOrderItem = {
@@ -93,6 +94,11 @@ export type ApiRiderPerformance = {
   codOutstanding: number;
   from?: string | null;
   to?: string | null;
+  payoutMode?: string | null;
+  payoutFixedFee?: number | null;
+  estimatedDeliveryPay?: number | null;
+  deliveryPayAvailable?: boolean;
+  deliveryPayNote?: string | null;
 };
 
 const IMAGE_COLORS = [
@@ -266,10 +272,11 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     specialInstructions: comment || undefined,
     items: Math.max(itemCount, lineItems.length, 1),
     packageInfo,
-    postedAt: dto.createdAt || new Date().toISOString(),
+    // createdAt is UTC from the API; normalize so "ago" is not skewed by missing Z.
+    postedAt: toApiIso(dto.createdAt),
     imageColor: colorForId(displayId),
     timeline: buildTimeline(
-      dto.createdAt || new Date().toISOString(),
+      toApiIso(dto.createdAt),
       dto.acceptedAt,
       dto.pickedUpAt,
     ),

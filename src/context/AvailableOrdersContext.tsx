@@ -29,6 +29,8 @@ type AvailableOrdersContextValue = {
   loading: boolean;
   error: string | null;
   accepting: boolean;
+  /** List key of the order currently being accepted (for per-card loading UI). */
+  acceptingOrderKey: string | null;
   getOrderById: (id: string) => AvailableOrder | undefined;
   resolveOrder: (
     id: string,
@@ -56,6 +58,9 @@ export function AvailableOrdersProvider({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [acceptingOrderKey, setAcceptingOrderKey] = useState<string | null>(
+    null,
+  );
   const acceptingRef = useRef(false);
   const activeJobsRef = useRef(activeJobs);
   activeJobsRef.current = activeJobs;
@@ -195,6 +200,7 @@ export function AvailableOrdersProvider({
 
       acceptingRef.current = true;
       setAccepting(true);
+      setAcceptingOrderKey(ordersRepository.orderListKey(order));
       try {
         const result = await ordersRepository.updateOrderStatus(order.backendId, {
           status: 'Accepted',
@@ -295,6 +301,7 @@ export function AvailableOrdersProvider({
       } finally {
         acceptingRef.current = false;
         setAccepting(false);
+        setAcceptingOrderKey(null);
       }
     },
     [
@@ -355,6 +362,7 @@ export function AvailableOrdersProvider({
       loading,
       error,
       accepting,
+      acceptingOrderKey,
       getOrderById,
       resolveOrder,
       acceptOrder,
@@ -366,6 +374,7 @@ export function AvailableOrdersProvider({
       loading,
       error,
       accepting,
+      acceptingOrderKey,
       getOrderById,
       resolveOrder,
       acceptOrder,

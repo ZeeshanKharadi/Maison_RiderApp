@@ -27,6 +27,8 @@ type Props = {
   onAccept: (order: AvailableOrder) => void | Promise<void>;
   onReject: (order: AvailableOrder) => void;
   actionsDisabled?: boolean;
+  /** True only for the card whose Accept is in flight. */
+  isAccepting?: boolean;
 };
 
 function OrderCardComponent({
@@ -35,11 +37,12 @@ function OrderCardComponent({
   onAccept,
   onReject,
   actionsDisabled,
+  isAccepting,
 }: Props) {
   const handleAccept = useCallback(() => {
-    if (actionsDisabled) return;
+    if (actionsDisabled || isAccepting) return;
     onAccept(order);
-  }, [actionsDisabled, onAccept, order]);
+  }, [actionsDisabled, isAccepting, onAccept, order]);
 
   const handleReject = useCallback(() => {
     if (actionsDisabled) return;
@@ -136,11 +139,12 @@ function OrderCardComponent({
 
         <View style={styles.actions}>
           <AppButton
-            label="Accept"
+            label={isAccepting ? 'Accepting…' : 'Accept'}
             icon="check"
             variant="secondary"
             onPress={handleAccept}
             disabled={actionsDisabled}
+            loading={!!isAccepting}
             style={styles.acceptBtn}
             accessibilityLabel={`Accept order ${order.id}`}
           />

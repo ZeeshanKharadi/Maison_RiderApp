@@ -42,8 +42,16 @@ import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 export default function OrdersScreen() {
   const navigation = useNavigation();
   const { openMenu } = useSideMenu();
-  const { orders, loading, error, accepting, acceptOrder, rejectOrder, refreshOrders } =
-    useAvailableOrders();
+  const {
+    orders,
+    loading,
+    error,
+    accepting,
+    acceptingOrderKey,
+    acceptOrder,
+    rejectOrder,
+    refreshOrders,
+  } = useAvailableOrders();
   const { activeJobs, isOnline } = useRiderSession();
   const { isConnected } = useNetworkConnectivity();
 
@@ -147,16 +155,27 @@ export default function OrdersScreen() {
   }, []);
 
   const renderItem: ListRenderItem<AvailableOrder> = useCallback(
-    ({ item }) => (
-      <OrderCard
-        order={item}
-        onPress={goDetails}
-        onAccept={handleAccept}
-        onReject={handleRejectPress}
-        actionsDisabled={accepting || !isConnected}
-      />
-    ),
-    [accepting, isConnected, goDetails, handleAccept, handleRejectPress],
+    ({ item }) => {
+      const key = ordersRepository.orderListKey(item);
+      return (
+        <OrderCard
+          order={item}
+          onPress={goDetails}
+          onAccept={handleAccept}
+          onReject={handleRejectPress}
+          actionsDisabled={accepting || !isConnected}
+          isAccepting={acceptingOrderKey === key}
+        />
+      );
+    },
+    [
+      accepting,
+      acceptingOrderKey,
+      isConnected,
+      goDetails,
+      handleAccept,
+      handleRejectPress,
+    ],
   );
 
   const keyExtractor = useCallback(
