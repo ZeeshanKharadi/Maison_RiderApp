@@ -51,6 +51,11 @@ export type OsmMapViewProps = {
   fitPadding?: CameraFitPadding;
   variant?: 'panel' | 'fullscreen';
   style?: StyleProp<ViewStyle>;
+  /**
+   * When false, map gestures are off so a parent ScrollView can scroll over the
+   * preview. Attribution stays visible. Default true.
+   */
+  interactive?: boolean;
 };
 
 const DEFAULT_FIT_PADDING: CameraFitPadding = {
@@ -96,6 +101,7 @@ export default function OsmMapView({
   fitPadding = DEFAULT_FIT_PADDING,
   variant = 'panel',
   style,
+  interactive = true,
 }: OsmMapViewProps) {
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
@@ -246,7 +252,9 @@ export default function OsmMapView({
     destinationKind === 'store' ? colors.warning : colors.success;
 
   return (
-    <View style={[styles.root, style]}>
+    <View
+      style={[styles.root, style]}
+      pointerEvents={interactive ? 'auto' : 'box-none'}>
       <Map
         key={`osm-map-${styleNonce}`}
         ref={mapRef}
@@ -256,6 +264,7 @@ export default function OsmMapView({
         logo={false}
         compass={false}
         scaleBar={false}
+        pointerEvents={interactive ? 'auto' : 'none'}
         onDidFinishLoadingMap={() => {
           setMapReady(true);
           setLoadError(null);
@@ -265,6 +274,7 @@ export default function OsmMapView({
           setMapReady(false);
         }}
         onRegionDidChange={e => {
+          if (!interactive) return;
           if (e.nativeEvent.userInteraction) {
             userPannedRef.current = true;
             if (followRider) setFollowRider(false);
@@ -323,11 +333,13 @@ export default function OsmMapView({
       ) : null}
 
       {loadError ? (
-        <View style={styles.errorBox}>
+        <View style={styles.errorBox} pointerEvents={interactive ? 'auto' : 'none'}>
           <Text style={styles.errorText}>{loadError}</Text>
-          <Pressable onPress={onRetry} hitSlop={8}>
-            <Text style={styles.retry}>Retry</Text>
-          </Pressable>
+          {interactive ? (
+            <Pressable onPress={onRetry} hitSlop={8}>
+              <Text style={styles.retry}>Retry</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -335,7 +347,7 @@ export default function OsmMapView({
         {OSM_ATTRIBUTION}
       </Text>
 
-      {variant === 'fullscreen' ? (
+      {variant === 'fullscreen' && interactive ? (
         <View style={styles.controls}>
           <Pressable style={styles.ctrlBtn} onPress={() => zoomBy(1)}>
             <Text style={styles.ctrlLabel}>+</Text>

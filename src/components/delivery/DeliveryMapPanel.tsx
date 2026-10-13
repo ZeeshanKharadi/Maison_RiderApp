@@ -16,6 +16,13 @@ type Props = {
   riderLocation: LatLng | null;
   locationLoading?: boolean;
   locationError?: string | null;
+  /** Panel height in dp. Default 240; use ~160–180 inside a scrolling Active Delivery. */
+  height?: number;
+  /**
+   * When false, map does not capture gestures so a parent ScrollView can scroll
+   * over the preview. Attribution remains visible.
+   */
+  interactive?: boolean;
 };
 
 export default function DeliveryMapPanel({
@@ -23,6 +30,8 @@ export default function DeliveryMapPanel({
   riderLocation,
   locationLoading,
   locationError,
+  height = 240,
+  interactive = true,
 }: Props) {
   const target = useMemo(
     () => resolveMapTarget(job, riderLocation),
@@ -36,7 +45,9 @@ export default function DeliveryMapPanel({
       : `En route to customer · ${target.label}`;
 
   return (
-    <View style={styles.wrap}>
+    <View
+      style={[styles.wrap, { height }]}
+      pointerEvents={interactive ? 'auto' : 'box-none'}>
       <OsmMapView
         variant="panel"
         style={styles.map}
@@ -45,6 +56,7 @@ export default function DeliveryMapPanel({
         destinationLabel={target.label}
         destinationKind={destKind}
         showStraightLineFallback
+        interactive={interactive}
       />
 
       <View style={styles.overlay} pointerEvents="none">
@@ -67,20 +79,20 @@ export default function DeliveryMapPanel({
       </View>
 
       {locationLoading && !riderLocation ? (
-        <View style={styles.banner}>
+        <View style={styles.banner} pointerEvents="none">
           <ActivityIndicator size="small" color={colors.primaryDark} />
           <Text style={styles.bannerText}>Getting GPS location…</Text>
         </View>
       ) : null}
 
       {locationError && !riderLocation ? (
-        <View style={[styles.banner, styles.bannerWarn]}>
+        <View style={[styles.banner, styles.bannerWarn]} pointerEvents="none">
           <Text style={styles.bannerText}>{locationError}</Text>
         </View>
       ) : null}
 
       {!target.coordinate ? (
-        <View style={[styles.banner, styles.bannerWarn]}>
+        <View style={[styles.banner, styles.bannerWarn]} pointerEvents="none">
           <Text style={styles.bannerText}>
             Destination location unavailable
           </Text>
@@ -92,8 +104,9 @@ export default function DeliveryMapPanel({
 
 const styles = StyleSheet.create({
   wrap: {
-    height: 240,
     backgroundColor: colors.border,
+    borderRadius: radius.md,
+    overflow: 'hidden',
   },
   map: {
     ...StyleSheet.absoluteFill,
