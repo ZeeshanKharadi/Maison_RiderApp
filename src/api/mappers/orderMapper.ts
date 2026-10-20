@@ -1,6 +1,6 @@
 import { AvailableOrder, PaymentMethod, TimelineEvent } from '../../data/orders';
 import { DeliveryState } from '../../delivery/stateMachine';
-import { toApiIso } from '../../utils/apiDate';
+import { parseApiDate, toApiIso, toApiIsoPrefer } from '../../utils/apiDate';
 
 /** Matches backend AvailableOrderDto / AssignOrderItemDto */
 export type ApiOrderItem = {
@@ -44,6 +44,8 @@ export type ApiAvailableOrder = {
   orderTime?: string | null;
   batchTime?: string | null;
   createdAt: string;
+  /** Last Available re-push; prefer over createdAt for "posted ago". */
+  updatedAt?: string | null;
   acceptedAt?: string | null;
   pickedUpAt?: string | null;
   completedAt?: string | null;
@@ -151,40 +153,41 @@ function buildTimeline(
   acceptedAt?: string | null,
   pickedUpAt?: string | null,
 ): TimelineEvent[] {
-  const created = new Date(createdAt);
-  const safe = Number.isNaN(created.getTime()) ? new Date() : created;
-  const acceptedDone = !!(acceptedAt && !Number.isNaN(new Date(acceptedAt).getTime()));
-  const pickupDone = !!(pickedUpAt && !Number.isNaN(new Date(pickedUpAt).getTime()));
+  const created = parseApiDate(createdAt) ?? new Date();
+  const acceptedIso = toApiIso(acceptedAt, false);
+  const pickedUpIso = toApiIso(pickedUpAt, false);
+  const acceptedDone = !!acceptedIso;
+  const pickupDone = !!pickedUpIso;
 
   return [
     {
       id: 'created',
       label: 'Order created',
-      at: safe.toISOString(),
+      at: created.toISOString(),
       done: true,
     },
     {
       id: 'assigned',
       label: 'Assigned via AssignOrder',
-      at: safe.toISOString(),
+      at: created.toISOString(),
       done: true,
     },
     {
       id: 'offered',
       label: 'Offered to you',
-      at: safe.toISOString(),
+      at: created.toISOString(),
       done: true,
     },
     {
       id: 'accepted',
       label: 'Accepted',
-      at: acceptedDone ? acceptedAt! : '',
+      at: acceptedDone ? acceptedIso : '',
       done: acceptedDone,
     },
     {
       id: 'pickup',
       label: pickupDone ? 'Picked up' : 'Pickup pending',
-      at: pickupDone ? pickedUpAt! : '',
+      at: pickupDone ? pickedUpIso : '',
       done: pickupDone,
     },
   ];
@@ -272,11 +275,11 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     specialInstructions: comment || undefined,
     items: Math.max(itemCount, lineItems.length, 1),
     packageInfo,
-    // createdAt is UTC from the API; normalize so "ago" is not skewed by missing Z.
-    postedAt: toApiIso(dto.createdAt),
+    // Prefer updatedAt (Available re-push) so upserted POS orders are not stuck on first insert age.
+    postedAt: toApiIsoPrefer(dto.updatedAt, dto.createdAt),
     imageColor: colorForId(displayId),
     timeline: buildTimeline(
-      toApiIso(dto.createdAt),
+      toApiIsoPrefer(dto.updatedAt, dto.createdAt),
       dto.acceptedAt,
       dto.pickedUpAt,
     ),
@@ -290,20 +293,20 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
         : null,
     cashCollectedReason: (dto.cashCollectedReason ?? '').trim() || null,
     backendStatus: dto.status ?? undefined,
-    acceptedAt: dto.acceptedAt ?? undefined,
-    pickedUpAt: dto.pickedUpAt ?? undefined,
-    completedAt: dto.completedAt ?? undefined,
+    acceptedAt: toApiIso(dto.acceptedAt, false) || undefined,
+    pickedUpAt: toApiIso(dto.pickedUpAt, false) || undefined,
+    completedAt: toApiIso(dto.completedAt, false) || undefined,
     isDirectAssignment: dto.isDirectAssignment ?? false,
     issueReports: (dto.issueReports ?? []).map(r => ({
       id: r.id,
       reasonCode: r.reasonCode,
       reasonLabel: r.reasonLabel,
       note: r.note,
-      createdAt: r.createdAt,
+      createdAt: toApiIso(r.createdAt),
       status: r.status,
       statusLabel: r.statusLabel,
-      acknowledgedAt: r.acknowledgedAt,
-      closedAt: r.closedAt,
+      acknowledgedAt: toApiIso(r.acknowledgedAt, false) || undefined,
+      closedAt: toApiIso(r.closedAt, false) || undefined,
     })),
     failure: dto.failure
       ? {
@@ -313,12 +316,12 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
           note: dto.failure.note ?? undefined,
           requestId: dto.failure.requestId ?? undefined,
           issueReportId: dto.failure.issueReportId ?? undefined,
-          requestedAt: dto.failure.requestedAt ?? undefined,
-          decidedAt: dto.failure.decidedAt ?? undefined,
+          requestedAt: toApiIso(dto.failure.requestedAt, false) || undefined,
+          decidedAt: toApiIso(dto.failure.decidedAt, false) || undefined,
           decisionNote: dto.failure.decisionNote ?? undefined,
           statusBeforeReturn: dto.failure.statusBeforeReturn ?? undefined,
-          riderReturnedAt: dto.failure.riderReturnedAt ?? undefined,
-          storeReceivedAt: dto.failure.storeReceivedAt ?? undefined,
+          riderReturnedAt: toApiIso(dto.failure.riderReturnedAt, false) || undefined,
+          storeReceivedAt: toApiIso(dto.failure.storeReceivedAt, false) || undefined,
           cashCollectedWarning: !!dto.failure.cashCollectedWarning,
           cashCollected: dto.failure.cashCollected ?? undefined,
           expectedCash: dto.failure.expectedCash ?? undefined,

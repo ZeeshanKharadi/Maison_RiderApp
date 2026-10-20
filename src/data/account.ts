@@ -1,3 +1,5 @@
+import { parseApiDate } from '../utils/apiDate';
+
 export type AppLanguage = 'en' | 'ur' | 'ar';
 export type AppearanceMode = 'light' | 'dark' | 'system';
 
@@ -167,8 +169,11 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   support: 'Support',
 };
 
-export function formatNotificationTime(iso: string): string {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+export function formatNotificationTime(iso: string, now = Date.now()): string {
+  const parsed = parseApiDate(iso);
+  const t = parsed?.getTime() ?? new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 'Just now';
+  const mins = Math.max(0, Math.floor((now - t) / 60000));
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.floor(mins / 60);

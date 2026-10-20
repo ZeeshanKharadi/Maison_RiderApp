@@ -130,6 +130,7 @@ namespace Rider.Infrastructure.Services
                     existing.Cash = dto.cash;
                     existing.ExpectedCash = ResolveExpectedCash(dto.paymentMethod, dto.cash, existing.ExpectedCash);
                     existing.OrderTime = dto.orderTime;
+                    // Refresh posted time so rider "X ago" reflects this re-push, not the first insert.
                     existing.UpdatedAt = DateTime.UtcNow;
                     if (assignToUserId.HasValue)
                     {
@@ -212,6 +213,7 @@ namespace Rider.Infrastructure.Services
                     AcceptedByUserId = assignToUserId,
                     IsDirectAssignment = isDirect,
                     CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
                     Items = new List<AssignedOrderItem>()
                 };
 
@@ -2055,12 +2057,12 @@ namespace Rider.Infrastructure.Services
                     note = r.Note,
                     riderUserId = r.RiderUserId,
                     requestId = r.RequestId,
-                    createdAt = r.CreatedAt,
+                    createdAt = AsUtc(r.CreatedAt),
                     orderStatus = dto.status,
                     status = r.Status ?? DeliveryIssueStatuses.New,
                     statusLabel = DeliveryIssueStatuses.DisplayLabel(r.Status ?? DeliveryIssueStatuses.New),
-                    acknowledgedAt = r.AcknowledgedAt,
-                    closedAt = r.ClosedAt
+                    acknowledgedAt = AsUtc(r.AcknowledgedAt),
+                    closedAt = AsUtc(r.ClosedAt)
                 }).ToList();
             }
         }
@@ -2093,14 +2095,15 @@ namespace Rider.Infrastructure.Services
             cash = o.Cash,
             orderTime = o.OrderTime,
             batchTime = o.Batch?.Time,
-            createdAt = o.CreatedAt,
-            acceptedAt = o.AcceptedAt,
-            pickedUpAt = o.PickedUpAt,
-            completedAt = o.CompletedAt,
+            createdAt = AsUtc(o.CreatedAt),
+            updatedAt = AsUtc(o.UpdatedAt),
+            acceptedAt = AsUtc(o.AcceptedAt),
+            pickedUpAt = AsUtc(o.PickedUpAt),
+            completedAt = AsUtc(o.CompletedAt),
             cashCollected = o.CashCollected,
             expectedCash = o.ExpectedCash,
             cashCollectedReason = o.CashCollectedReason,
-            cashHandedOverAt = o.CashHandedOverAt,
+            cashHandedOverAt = AsUtc(o.CashHandedOverAt),
             cashHandedOverAmount = o.CashHandedOverAmount,
             cashSemanticsNote = o.CashSemanticsNote,
             isDirectAssignment = o.IsDirectAssignment,
@@ -2137,12 +2140,12 @@ namespace Rider.Infrastructure.Services
                 note = o.FailureNote,
                 requestId = o.FailureRequestId,
                 issueReportId = o.FailureIssueReportId,
-                requestedAt = o.FailureRequestedAt,
-                decidedAt = o.FailureDecidedAt,
+                requestedAt = AsUtc(o.FailureRequestedAt),
+                decidedAt = AsUtc(o.FailureDecidedAt),
                 decisionNote = o.FailureDecisionNote,
                 statusBeforeReturn = o.StatusBeforeReturn,
-                riderReturnedAt = o.RiderReturnedAt,
-                storeReceivedAt = o.StoreReceivedAt,
+                riderReturnedAt = AsUtc(o.RiderReturnedAt),
+                storeReceivedAt = AsUtc(o.StoreReceivedAt),
                 cashCollected = o.CashCollected,
                 expectedCash = o.ExpectedCash,
                 cashCollectedWarning = o.CashCollected.HasValue && o.CashCollected.Value > 0

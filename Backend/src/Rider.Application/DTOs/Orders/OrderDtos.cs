@@ -100,6 +100,11 @@ namespace Rider.Application.DTOs.Orders
         public string orderTime { get; set; }
         public string batchTime { get; set; }
         public DateTime createdAt { get; set; }
+        /// <summary>
+        /// Last Available re-push / field refresh. Rider "posted ago" prefers this over createdAt
+        /// so upserted POS orders do not keep the original insert age.
+        /// </summary>
+        public DateTime? updatedAt { get; set; }
         public DateTime? acceptedAt { get; set; }
         public DateTime? pickedUpAt { get; set; }
         public DateTime? completedAt { get; set; }

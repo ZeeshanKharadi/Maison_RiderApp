@@ -10,6 +10,7 @@ using Rider.Persistence.Extensions;
 using Rider.WebAPI.Hubs;
 using Rider.WebAPI.Middleware;
 using Rider.WebAPI.Realtime;
+using Rider.Application.Serialization;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -27,6 +28,17 @@ builder.Host.UseSerilog();
 builder.Services.AddControllers(options =>
 {
     options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
+}).AddJsonOptions(options =>
+{
+    // Permanent UTC contract: Unspecified DateTimes from EF/SQL must emit "Z"
+    // so clients never treat UTC wall-clock as local time.
+    options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+    options.JsonSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+});
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+    options.PayloadSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
 });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -73,7 +85,6 @@ builder.Services.AddApplicationLayer();
 builder.Services.AddInfrastructureLayer();
 builder.Services.AddPersistenceLayer(builder.Configuration);
 builder.Services.AddAuthorization();
-builder.Services.AddSignalR();
 builder.Services.AddScoped<IOpsEventPublisher, OpsEventPublisher>();
 
 builder.Services.AddRateLimiter(options =>

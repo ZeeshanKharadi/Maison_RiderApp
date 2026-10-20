@@ -10,7 +10,8 @@ namespace Rider.Application.DTOs.Notifications
         public long? assignedOrderId { get; set; }
         public string priority { get; set; }
         public bool read { get; set; }
-        public string createdAt { get; set; }
+        /// <summary>UTC instant (JSON emits Z via global UtcDateTimeJsonConverter).</summary>
+        public DateTime createdAt { get; set; }
     }
 
     /// <summary>Swagger / admin test: push to one rider.</summary>

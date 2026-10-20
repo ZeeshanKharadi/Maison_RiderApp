@@ -1,4 +1,5 @@
 import { AppNotification, NotificationCategory } from '../../data/account';
+import { toApiIso } from '../../utils/apiDate';
 
 export type ApiRiderNotification = {
   id: number;
@@ -43,7 +44,8 @@ export function mapApiNotification(dto: ApiRiderNotification): AppNotification {
     category,
     title: dto.title,
     description: dto.description,
-    timestamp: dto.createdAt,
+    // Normalize UTC (incl. legacy bare ISO without Z) so "ago" is not +timezone skewed.
+    timestamp: toApiIso(dto.createdAt),
     read: dto.read,
     priority,
     icon: category === 'orders' ? 'package-variant' : 'bell-outline',

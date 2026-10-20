@@ -1,4 +1,5 @@
 import { SessionStats, WalletState, WalletTransaction } from '../delivery/sessionUpdates';
+import { parseApiDate } from '../utils/apiDate';
 import { formatMoney } from '../utils/format';
 
 export type WalletMonthlySummary = {
@@ -75,7 +76,7 @@ export function walletTxTypeLabel(type: WalletTransaction['type']): string {
 }
 
 export function formatLastUpdated(iso: string): string {
-  const d = new Date(iso);
+  const d = parseApiDate(iso) ?? new Date(iso);
   return `Updated ${d.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',

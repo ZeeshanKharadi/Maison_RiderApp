@@ -1,6 +1,7 @@
 /** Shared formatters — keep UI free of ad-hoc money/date logic. */
 
 import { CURRENCY_CODE, CURRENCY_LOCALE } from '../constants/app';
+import { parseApiDate } from './apiDate';
 
 let moneyFormatter: Intl.NumberFormat | null | undefined;
 let moneyFormatterWhole: Intl.NumberFormat | null | undefined;
@@ -80,7 +81,7 @@ export function startOfDay(d: Date): Date {
 }
 
 export function formatDateLabel(iso: string): string {
-  const d = new Date(iso);
+  const d = parseApiDate(iso) ?? new Date(iso);
   const today = startOfDay(new Date());
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -105,13 +106,14 @@ export function formatDateLabel(iso: string): string {
 }
 
 export function formatTime(iso: string): string {
+  const d = parseApiDate(iso) ?? new Date(iso);
   try {
-    return new Date(iso).toLocaleTimeString(CURRENCY_LOCALE, {
+    return d.toLocaleTimeString(CURRENCY_LOCALE, {
       hour: 'numeric',
       minute: '2-digit',
     });
   } catch {
-    return new Date(iso).toLocaleTimeString(undefined, {
+    return d.toLocaleTimeString(undefined, {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -119,13 +121,14 @@ export function formatTime(iso: string): string {
 }
 
 export function formatDateShort(iso: string): string {
+  const d = parseApiDate(iso) ?? new Date(iso);
   try {
-    return new Date(iso).toLocaleDateString(CURRENCY_LOCALE, {
+    return d.toLocaleDateString(CURRENCY_LOCALE, {
       month: 'short',
       day: 'numeric',
     });
   } catch {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return d.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
     });

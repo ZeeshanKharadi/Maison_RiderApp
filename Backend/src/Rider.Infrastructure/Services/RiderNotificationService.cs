@@ -266,7 +266,10 @@ namespace Rider.Infrastructure.Services
             assignedOrderId = n.AssignedOrderId,
             priority = n.Priority,
             read = n.IsRead,
-            createdAt = n.CreatedAt.ToString("o")
+            // EF returns Unspecified; mark Utc so JSON emits Z (global converter also covers this).
+            createdAt = n.CreatedAt.Kind == DateTimeKind.Utc
+                ? n.CreatedAt
+                : DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc)
         };
 
         private static ApiResponse<T> Ok<T>(T data, string message) => new(true, message, data);

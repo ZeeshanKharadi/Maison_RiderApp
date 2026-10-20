@@ -250,10 +250,28 @@ export function money(n?: number | null) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'PKR', maximumFractionDigits: 0 }).format(n ?? 0);
 }
 
+/** Parse API UTC instants; bare ISO (no Z) is treated as UTC to avoid local skew. */
+export function parseApiDate(value?: string | null): Date | null {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/[zZ]$/.test(raw) || /[+-]\d{2}:\d{2}$/.test(raw)) {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) {
+    const normalized = raw.includes('T') ? `${raw}Z` : `${raw.replace(' ', 'T')}Z`;
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function dt(value?: string | null) {
   if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
+  const d = parseApiDate(value);
+  if (!d) return value;
   return d.toLocaleString();
 }
 

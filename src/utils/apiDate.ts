@@ -1,8 +1,12 @@
 /**
- * Normalize API date strings so "ago" math is correct.
+ * Normalize API date strings so "ago" / clock math is correct.
  *
- * ASP.NET often serializes UTC DateTime without a trailing "Z". JS then treats
- * the value as local time, which inflates "X hrs ago" (e.g. +5h in PKT).
+ * Contract: API timestamps are UTC. Prefer values ending in "Z" (backend
+ * UtcDateTimeJsonConverter). Older payloads may omit the zone — treat bare
+ * ISO as UTC so JS does not parse them as local (e.g. +5h skew in PKT).
+ *
+ * Use these helpers for every API instant shown as relative or absolute time.
+ * Do not call `new Date(apiString)` directly on API timestamps.
  */
 export function parseApiDate(value?: string | null): Date | null {
   if (value == null) return null;
@@ -31,4 +35,15 @@ export function toApiIso(value?: string | null, fallbackNow = true): string {
   const d = parseApiDate(value);
   if (d) return d.toISOString();
   return fallbackNow ? new Date().toISOString() : '';
+}
+
+/** Prefer the freshest API instant (e.g. updatedAt over createdAt for "posted"). */
+export function toApiIsoPrefer(
+  primary?: string | null,
+  fallback?: string | null,
+  fallbackNow = true,
+): string {
+  const fromPrimary = parseApiDate(primary);
+  if (fromPrimary) return fromPrimary.toISOString();
+  return toApiIso(fallback, fallbackNow);
 }
