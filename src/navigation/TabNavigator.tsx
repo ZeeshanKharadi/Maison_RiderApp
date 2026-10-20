@@ -20,18 +20,22 @@ function TabIcon({
   focused: boolean;
   label: string;
 }) {
-  if (focused) {
-    return (
-      <View style={styles.activePill}>
-        <Icon name={name} size={20} color={colors.textOnPrimary} />
-        <Text style={styles.activeLabel}>{label}</Text>
-      </View>
-    );
-  }
   return (
-    <View style={styles.inactiveTab}>
-      <Icon name={name} size={22} color={TEXT_MUTED} />
-      <Text style={styles.inactiveLabel}>{label}</Text>
+    <View style={styles.tabItem}>
+      <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+        <Icon
+          name={name}
+          size={22}
+          color={focused ? colors.textOnPrimary : TEXT_MUTED}
+        />
+      </View>
+      <Text
+        style={[styles.label, focused && styles.labelActive]}
+        numberOfLines={1}
+        ellipsizeMode="clip"
+        allowFontScaling={false}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -44,13 +48,14 @@ export default function TabNavigator() {
         headerShown: false,
         tabBarStyle: styles.tabBar,
         tabBarShowLabel: false,
+        tabBarItemStyle: styles.tabBarItem,
       }}>
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
         options={{
           tabBarIcon: ({ focused }) => (
-            <TabIcon name="view-grid" focused={focused} label="Dashboard" />
+            <TabIcon name="view-dashboard-outline" focused={focused} label="Dashboard" />
           ),
         }}
       />
@@ -59,7 +64,7 @@ export default function TabNavigator() {
         component={OrdersScreen}
         options={{
           tabBarIcon: ({ focused }) => (
-            <TabIcon name="truck-delivery" focused={focused} label="Orders" />
+            <TabIcon name="truck-delivery-outline" focused={focused} label="Orders" />
           ),
         }}
       />
@@ -90,32 +95,39 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    height: 64,
-    paddingBottom: 8,
-    paddingTop: 8,
+    height: 68,
+    paddingBottom: 6,
+    paddingTop: 6,
   },
-  activePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: BRAND_RED_DARK,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 6,
-  },
-  activeLabel: {
-    color: colors.textOnPrimary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  inactiveTab: {
+  tabBarItem: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  tabItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 64,
     gap: 2,
   },
-  inactiveLabel: {
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapActive: {
+    backgroundColor: BRAND_RED_DARK,
+  },
+  label: {
     color: TEXT_MUTED,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '500',
+    textAlign: 'center',
+  },
+  labelActive: {
+    color: BRAND_RED_DARK,
+    fontWeight: '700',
   },
 });

@@ -100,7 +100,7 @@ export default function ResetPasswordScreen() {
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
               <Icon
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                name={showPassword ? 'eye-outline' : 'eye-off-outline'}
                 size={20}
                 color={TEXT_MUTED}
               />

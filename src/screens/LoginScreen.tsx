@@ -136,7 +136,8 @@ export default function LoginScreen() {
                 showPassword ? 'Hide password' : 'Show password'
               }>
               <Icon
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                // State icon: eye when readable, eye-off when hidden.
+                name={showPassword ? 'eye-outline' : 'eye-off-outline'}
                 size={20}
                 color={TEXT_MUTED}
               />

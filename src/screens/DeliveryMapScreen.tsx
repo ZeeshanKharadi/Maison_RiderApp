@@ -87,7 +87,7 @@ import {
   type ManeuverGuidance,
 } from '../routing/routeManeuvers';
 import { shouldPollActiveDelivery } from '../utils/activeDeliverySync';
-import { colors, radius, spacing, typography } from '../theme';
+import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 
 type Route = RouteProp<MainStackParamList, 'DeliveryMap'>;
 
@@ -1382,9 +1382,12 @@ export default function DeliveryMapScreen() {
 
   const cardTitle = formatDestinationCardTitle(destKind, target?.label);
   const turnBannerVisible = !!maneuverGuidance;
+  // Voice sits in the top-right; keep zoom stack + turn banner clear of it.
+  const mapTopControlInset = TOUCH_TARGET + spacing.xs;
+
   const fitPadding = {
     // Extra top padding when the turn banner is shown so endpoints stay visible.
-    top: turnBannerVisible ? 88 : 16,
+    top: turnBannerVisible ? 88 : 16 + mapTopControlInset,
     right: 56,
     bottom: 120 + insets.bottom,
     left: 16,
@@ -1442,19 +1445,21 @@ export default function DeliveryMapScreen() {
           roadRouteCoordinates={roadRoute?.coordinates ?? null}
           showStraightLineFallback={false}
           fitPadding={fitPadding}
+          controlsTopInset={mapTopControlInset}
         />
 
-        {maneuverGuidance ? (
-          <View style={styles.turnBannerWrap} pointerEvents="box-none">
-            <TurnInstructionBanner guidance={maneuverGuidance} />
+        <View style={styles.topOverlay} pointerEvents="box-none">
+          <View style={styles.turnBannerSlot} pointerEvents="box-none">
+            {maneuverGuidance ? (
+              <TurnInstructionBanner guidance={maneuverGuidance} />
+            ) : null}
           </View>
-        ) : null}
-
-        <VoiceGuidanceToggle
-          enabled={settings.voiceGuidance}
-          onToggle={onVoiceGuidanceToggle}
-          style={styles.voiceToggle}
-        />
+          <VoiceGuidanceToggle
+            enabled={settings.voiceGuidance}
+            onToggle={onVoiceGuidanceToggle}
+            style={styles.voiceToggle}
+          />
+        </View>
 
         <View style={styles.routeCard} pointerEvents="box-none">
           <Text style={styles.cardTitle} numberOfLines={1}>
@@ -1628,18 +1633,23 @@ const styles = StyleSheet.create({
   mapArea: {
     flex: 1,
   },
-  turnBannerWrap: {
+  topOverlay: {
     position: 'absolute',
     top: spacing.sm,
     left: spacing.sm,
-    right: 60,
-    zIndex: 2,
+    right: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    zIndex: 3,
+  },
+  turnBannerSlot: {
+    flex: 1,
+    minWidth: 0,
   },
   voiceToggle: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    zIndex: 3,
+    margin: 0,
+    flexShrink: 0,
   },
   routeCard: {
     position: 'absolute',

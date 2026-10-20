@@ -14,6 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
   Camera,
   GeoJSONSource,
@@ -49,6 +50,11 @@ export type OsmMapViewProps = {
   showStraightLineFallback?: boolean;
   /** Extra padding so Fit accounts for header / route card / controls. */
   fitPadding?: CameraFitPadding;
+  /**
+   * Push the zoom/fit/follow stack down so parent overlays (e.g. voice toggle)
+   * are not covered.
+   */
+  controlsTopInset?: number;
   variant?: 'panel' | 'fullscreen';
   style?: StyleProp<ViewStyle>;
   /**
@@ -99,6 +105,7 @@ export default function OsmMapView({
   roadRouteCoordinates = null,
   showStraightLineFallback = true,
   fitPadding = DEFAULT_FIT_PADDING,
+  controlsTopInset = 0,
   variant = 'panel',
   style,
   interactive = true,
@@ -348,15 +355,31 @@ export default function OsmMapView({
       </Text>
 
       {variant === 'fullscreen' && interactive ? (
-        <View style={styles.controls}>
-          <Pressable style={styles.ctrlBtn} onPress={() => zoomBy(1)}>
-            <Text style={styles.ctrlLabel}>+</Text>
+        <View
+          style={[
+            styles.controls,
+            controlsTopInset > 0 ? { top: spacing.sm + controlsTopInset } : null,
+          ]}>
+          <Pressable
+            style={styles.ctrlBtn}
+            onPress={() => zoomBy(1)}
+            accessibilityRole="button"
+            accessibilityLabel="Zoom in">
+            <Icon name="plus" size={22} color={colors.primary} />
           </Pressable>
-          <Pressable style={styles.ctrlBtn} onPress={() => zoomBy(-1)}>
-            <Text style={styles.ctrlLabel}>−</Text>
+          <Pressable
+            style={styles.ctrlBtn}
+            onPress={() => zoomBy(-1)}
+            accessibilityRole="button"
+            accessibilityLabel="Zoom out">
+            <Icon name="minus" size={22} color={colors.primary} />
           </Pressable>
-          <Pressable style={styles.ctrlBtn} onPress={onRecenter}>
-            <Text style={styles.ctrlCaption}>Fit</Text>
+          <Pressable
+            style={styles.ctrlBtn}
+            onPress={onRecenter}
+            accessibilityRole="button"
+            accessibilityLabel="Fit route on map">
+            <Icon name="fit-to-page-outline" size={20} color={colors.primary} />
           </Pressable>
           <Pressable
             style={[styles.ctrlBtn, followRider && styles.ctrlBtnActive]}
@@ -364,10 +387,17 @@ export default function OsmMapView({
               if (!riderLocation) return;
               userPannedRef.current = false;
               setFollowRider(v => !v);
-            }}>
-            <Text style={styles.ctrlCaption}>
-              {followRider ? 'Following' : 'Follow'}
-            </Text>
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={
+              followRider ? 'Stop following rider' : 'Follow rider'
+            }
+            accessibilityState={{ selected: followRider }}>
+            <Icon
+              name={followRider ? 'navigation-variant' : 'navigation-variant-outline'}
+              size={20}
+              color={followRider ? colors.textOnPrimary : colors.primary}
+            />
           </Pressable>
         </View>
       ) : null}
@@ -430,31 +460,20 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   ctrlBtn: {
-    minWidth: 44,
-    minHeight: 44,
     width: 44,
-    borderRadius: radius.sm,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     elevation: 2,
+    overflow: 'hidden',
   },
   ctrlBtnActive: {
-    borderWidth: 1.5,
+    backgroundColor: colors.primary,
     borderColor: colors.primary,
-  },
-  ctrlLabel: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: colors.primary,
-    lineHeight: 26,
-  },
-  ctrlCaption: {
-    fontSize: 10,
-    color: colors.primary,
-    fontWeight: '700',
   },
   pin: {
     width: 16,
