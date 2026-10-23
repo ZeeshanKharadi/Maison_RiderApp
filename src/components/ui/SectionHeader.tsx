@@ -1,6 +1,11 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, ViewStyle } from 'react-native';
-import { colors, spacing, typography } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  spacing,
+  typography,
+} from '../../theme';
 
 type Props = {
   title: string;
@@ -17,7 +22,10 @@ export default function SectionHeader({
 }: Props) {
   return (
     <View style={[styles.row, style]}>
-      <Text style={styles.title} accessibilityRole="header">
+      <Text
+        style={styles.title}
+        accessibilityRole="header"
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
         {title}
       </Text>
       {actionLabel && onActionPress ? (
@@ -26,7 +34,11 @@ export default function SectionHeader({
           accessibilityRole="button"
           accessibilityLabel={actionLabel}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.action}>{actionLabel}</Text>
+          <Text
+            style={styles.action}
+            maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+            {actionLabel}
+          </Text>
         </TouchableOpacity>
       ) : null}
     </View>
@@ -41,8 +53,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   title: {
-    ...typography.title,
-    fontSize: 16,
+    ...typography.section,
   },
   action: {
     ...typography.bodyStrong,

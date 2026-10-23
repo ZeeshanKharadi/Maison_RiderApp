@@ -43,6 +43,10 @@ export type AppNotification = {
   read: boolean;
   priority: NotificationPriority;
   icon: string;
+  /** External POS / AssignOrder order id when the notification is order-scoped. */
+  orderId?: string | null;
+  /** AssignedOrders PK when known — preferred for GET /api/Order/{id}. */
+  assignedOrderId?: number | null;
 };
 
 export type AppSettings = {
@@ -169,10 +173,15 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   support: 'Support',
 };
 
-export function formatNotificationTime(iso: string, now = Date.now()): string {
+/** Relative age for inbox rows. Never invents "now" for missing/invalid API stamps. */
+export function formatNotificationTime(
+  iso: string | null | undefined,
+  now = Date.now(),
+): string {
+  if (iso == null || !String(iso).trim()) return 'Unknown time';
   const parsed = parseApiDate(iso);
-  const t = parsed?.getTime() ?? new Date(iso).getTime();
-  if (!Number.isFinite(t)) return 'Just now';
+  const t = parsed?.getTime();
+  if (t == null || !Number.isFinite(t)) return 'Unknown time';
   const mins = Math.max(0, Math.floor((now - t) / 60000));
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins} min ago`;

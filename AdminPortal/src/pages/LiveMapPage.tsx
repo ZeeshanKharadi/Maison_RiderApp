@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { Link } from 'react-router-dom';
 import { api, isHeadOffice } from '../api/client';
 import { StoreDto } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -62,6 +63,10 @@ export default function LiveMapPage() {
   const [storeId, setStoreId] = useState(user?.storeId || '');
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusOutdated] = useState(
+    () =>
+      new URLSearchParams(window.location.search).get('location') === 'outdated',
+  );
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams();
@@ -176,7 +181,7 @@ export default function LiveMapPage() {
       const latlng: L.LatLngExpression = [r.latitude!, r.longitude!];
       let marker = markersRef.current.get(r.riderUserId);
       const color = markerColor(r);
-      const popup = `<strong>${r.workerId}</strong> · ${r.name}<br/>${statusLabel(r.deliveryStatus)} · ${r.activeOrderCount} active<br/>${r.isStale ? '<em>Stale location</em><br/>' : ''}Updated ${r.locationUpdatedAt ? new Date(r.locationUpdatedAt).toLocaleString() : '—'}`;
+      const popup = `<strong>${r.workerId}</strong> · ${r.name}<br/>${statusLabel(r.deliveryStatus)} · ${r.activeOrderCount} active<br/>${r.isStale ? '<em>Older location update</em><br/>' : ''}Updated ${r.locationUpdatedAt ? new Date(r.locationUpdatedAt).toLocaleString() : '—'}`;
       if (!marker) {
         marker = L.circleMarker(latlng, {
           radius: 10,
@@ -216,14 +221,20 @@ export default function LiveMapPage() {
     return { live, stale, missing, total: riders.length };
   }, [riders]);
 
+  const listRiders = useMemo(() => {
+    if (!focusOutdated) return riders;
+    return riders.filter((r) => r.hasLocation && r.isStale);
+  }, [riders, focusOutdated]);
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
           <h1 className="page-title">Live map</h1>
           <p className="page-sub">
-            Riders with active deliveries. Green = fresh GPS, amber = stale, grey = no location yet.
-            Hub {hubOk ? 'connected' : 'polling'}.
+            Riders on active deliveries. Green = recent location, amber = older update, grey = no
+            location yet.
+            {hubOk ? '' : ' Live updates may be delayed.'}
           </p>
         </div>
         <div className="d-flex gap-2 align-items-end">
@@ -250,11 +261,18 @@ export default function LiveMapPage() {
       {error && <div className="alert alert-danger">{error}</div>}
 
       <div className="d-flex flex-wrap gap-3 mb-3 small">
-        <span><span className="dot" style={{ background: '#059669' }} /> Fresh {summary.live}</span>
-        <span><span className="dot" style={{ background: '#d97706' }} /> Stale {summary.stale}</span>
-        <span><span className="dot" style={{ background: '#9ca3af' }} /> No GPS {summary.missing}</span>
+        <span><span className="dot" style={{ background: '#059669' }} /> Recent {summary.live}</span>
+        <span><span className="dot" style={{ background: '#d97706' }} /> Older update {summary.stale}</span>
+        <span><span className="dot" style={{ background: '#9ca3af' }} /> No location {summary.missing}</span>
         <span>Active riders {summary.total}</span>
       </div>
+      {focusOutdated ? (
+        <div className="alert alert-warning py-2 mb-3">
+          Showing riders with an older location update only. This is not a confirmed delivery delay.
+          {' '}
+          <Link className="alert-link" to="/live-map">Show all</Link>
+        </div>
+      ) : null}
 
       <div className="row g-3">
         <div className="col-lg-8">
@@ -264,9 +282,17 @@ export default function LiveMapPage() {
         </div>
         <div className="col-lg-4">
           <div className="panel" style={{ maxHeight: 480, overflow: 'auto' }}>
-            <h2 className="h6">Active riders</h2>
-            {riders.length === 0 && <p className="small text-muted mb-0">No riders with active deliveries.</p>}
-            {riders.map((r) => (
+            <h2 className="h6">
+              {focusOutdated ? 'Older location updates' : 'Active riders'}
+            </h2>
+            {listRiders.length === 0 && (
+              <p className="small text-muted mb-0">
+                {focusOutdated
+                  ? 'No riders with an older location update right now.'
+                  : 'No riders with active deliveries.'}
+              </p>
+            )}
+            {listRiders.map((r) => (
               <button
                 key={r.riderUserId}
                 type="button"
@@ -285,8 +311,22 @@ export default function LiveMapPage() {
                 </div>
                 <div className="small">
                   {!r.hasLocation && <span className="text-muted">Location unavailable</span>}
-                  {r.hasLocation && r.isStale && <span className="text-warning">Stale · {r.locationUpdatedAt ? new Date(r.locationUpdatedAt).toLocaleTimeString() : '—'}</span>}
-                  {r.hasLocation && !r.isStale && <span className="text-success">Live · {r.locationUpdatedAt ? new Date(r.locationUpdatedAt).toLocaleTimeString() : '—'}</span>}
+                  {r.hasLocation && r.isStale && (
+                    <span className="text-warning">
+                      Older update ·{' '}
+                      {r.locationUpdatedAt
+                        ? new Date(r.locationUpdatedAt).toLocaleTimeString()
+                        : '—'}
+                    </span>
+                  )}
+                  {r.hasLocation && !r.isStale && (
+                    <span className="text-success">
+                      Recent ·{' '}
+                      {r.locationUpdatedAt
+                        ? new Date(r.locationUpdatedAt).toLocaleTimeString()
+                        : '—'}
+                    </span>
+                  )}
                 </div>
               </button>
             ))}

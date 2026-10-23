@@ -17,7 +17,13 @@ import {
 } from '../components/ui';
 import { APP_NAME, APP_NAME_SHORT, APP_VERSION } from '../constants/app';
 import { navigate } from '../navigation/RootNavigation';
-import { colors, radius, spacing, typography } from '../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  typography,
+} from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
 type RowProps = {
@@ -42,7 +48,11 @@ function SettingsRow({
   const content = (
     <View style={[styles.row, disabled && styles.rowDisabled]}>
       <Icon name={icon} size={22} color={colors.primaryDark} />
-      <Text style={styles.rowLabel}>{label}</Text>
+      <Text
+        style={styles.rowLabel}
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {label}
+      </Text>
       {onSwitch != null ? (
         <Switch
           value={!!switchValue}
@@ -54,7 +64,13 @@ function SettingsRow({
         />
       ) : (
         <>
-          {value ? <Text style={styles.rowValue}>{value}</Text> : null}
+          {value ? (
+            <Text
+              style={styles.rowValue}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+              {value}
+            </Text>
+          ) : null}
           {onPress ? (
             <Icon name="chevron-right" size={20} color={colors.textMuted} />
           ) : null}
@@ -108,18 +124,6 @@ export default function SettingsScreen() {
             onSwitch={v => void onPushSwitch(v)}
             disabled={pushBusy}
           />
-          <SettingsRow
-            icon="translate"
-            label="Language"
-            value="Not available in this build"
-            disabled
-          />
-          <SettingsRow
-            icon="palette-outline"
-            label="Appearance"
-            value="Light only · this build"
-            disabled
-          />
         </View>
 
         <SectionHeader title="Account & privacy" style={styles.sectionGap} />
@@ -131,12 +135,6 @@ export default function SettingsScreen() {
             onPress={() =>
               navigate('MainDrawer', { screen: 'Help', params: { section: 'privacy' } })
             }
-          />
-          <SettingsRow
-            icon="lock-outline"
-            label="Security (PIN / biometrics)"
-            value="Not available in this build"
-            disabled
           />
         </View>
 

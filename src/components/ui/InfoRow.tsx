@@ -1,7 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { colors, spacing, typography } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  spacing,
+  typography,
+} from '../../theme';
 
 type Props = {
   icon?: string;
@@ -17,8 +22,16 @@ export default function InfoRow({ icon, label, value, style }: Props) {
         <Icon name={icon} size={18} color={colors.primaryDark} style={styles.icon} />
       ) : null}
       <View style={styles.textCol}>
-        <Text style={styles.label}>{label}</Text>
-        <Text style={styles.value}>{value}</Text>
+        <Text
+          style={styles.label}
+          maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          {label}
+        </Text>
+        <Text
+          style={styles.value}
+          maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          {value}
+        </Text>
       </View>
     </View>
   );

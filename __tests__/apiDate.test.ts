@@ -39,8 +39,14 @@ describe('parseApiDate / toApiIso', () => {
 describe('relative time helpers', () => {
   const now = Date.parse('2026-10-14T12:00:00.000Z');
 
-  test('formatPostedAgo with fresh updatedAt is minutes ago', () => {
+  test('formatPostedAgo with fresh available-since is minutes ago', () => {
     expect(formatPostedAgo('2026-10-14T11:55:00.000Z', now)).toBe('5 min ago');
+  });
+
+  test('formatPostedAgo does not invent now for invalid / empty', () => {
+    expect(formatPostedAgo('', now)).toBe('Unknown time');
+    expect(formatPostedAgo(null, now)).toBe('Unknown time');
+    expect(formatPostedAgo('not-a-date', now)).toBe('Unknown time');
   });
 
   test('formatNotificationTime does not inflate bare UTC ISO by timezone', () => {
@@ -48,5 +54,15 @@ describe('relative time helpers', () => {
     expect(formatNotificationTime('2026-10-14T11:58:00', now)).toBe(
       '2 min ago',
     );
+  });
+
+  test('formatNotificationTime does not invent now for invalid', () => {
+    expect(formatNotificationTime('', now)).toBe('Unknown time');
+    expect(formatNotificationTime(undefined, now)).toBe('Unknown time');
+  });
+
+  test('toApiIso display mode never falls back to now', () => {
+    expect(toApiIso(null, false)).toBe('');
+    expect(toApiIso('garbage', false)).toBe('');
   });
 });

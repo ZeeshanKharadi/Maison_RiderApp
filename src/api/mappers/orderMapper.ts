@@ -120,10 +120,13 @@ function joinParts(...parts: Array<string | null | undefined>): string {
     .join(', ');
 }
 
+/**
+ * Align with backend IsCash / IsCard (AdminService) and OrderService.IsCashMethod.
+ * Do not default unknown methods to card — that would falsely imply prepaid/paid.
+ */
 function mapPaymentMethod(
   paymentMethod?: string | null,
   cash?: number | null,
-  expectedCash?: number | null,
 ): PaymentMethod {
   const raw = (paymentMethod ?? '').trim().toLowerCase();
   if (
@@ -131,29 +134,41 @@ function mapPaymentMethod(
     raw === 'c' ||
     raw === 'cash' ||
     raw === 'cod' ||
-    (cash != null && cash > 0) ||
-    (expectedCash != null && expectedCash > 0)
+    (cash != null && Number(cash) > 0)
   ) {
     return 'cash';
   }
+  if (
+    raw === '2' ||
+    raw === 'card' ||
+    raw === 'credit' ||
+    raw === 'debit' ||
+    raw === 'visa' ||
+    raw === 'mastercard'
+  ) {
+    return 'card';
+  }
   if (raw === 'wallet' || raw === '3') return 'wallet';
-  return 'card';
+  return 'unknown';
 }
 
+/** Matches OrderService.RequiresCashOnComplete: cash method or expected cash due. */
 function isCodOrder(
   paymentMethod?: string | null,
   cash?: number | null,
   expectedCash?: number | null,
 ): boolean {
-  return mapPaymentMethod(paymentMethod, cash, expectedCash) === 'cash';
+  if (mapPaymentMethod(paymentMethod, cash) === 'cash') return true;
+  return expectedCash != null && Number.isFinite(Number(expectedCash)) && Number(expectedCash) > 0;
 }
 
 function buildTimeline(
-  createdAt: string,
+  /** Sticky CreatedAt only — never UpdatedAt / never invent now. */
+  createdAtIso: string | null,
   acceptedAt?: string | null,
   pickedUpAt?: string | null,
 ): TimelineEvent[] {
-  const created = parseApiDate(createdAt) ?? new Date();
+  const createdIso = createdAtIso && createdAtIso.trim() ? createdAtIso : '';
   const acceptedIso = toApiIso(acceptedAt, false);
   const pickedUpIso = toApiIso(pickedUpAt, false);
   const acceptedDone = !!acceptedIso;
@@ -163,20 +178,20 @@ function buildTimeline(
     {
       id: 'created',
       label: 'Order created',
-      at: created.toISOString(),
-      done: true,
+      at: createdIso,
+      done: !!createdIso,
     },
     {
       id: 'assigned',
       label: 'Assigned via AssignOrder',
-      at: created.toISOString(),
-      done: true,
+      at: createdIso,
+      done: !!createdIso,
     },
     {
       id: 'offered',
       label: 'Offered to you',
-      at: created.toISOString(),
-      done: true,
+      at: createdIso,
+      done: !!createdIso,
     },
     {
       id: 'accepted',
@@ -205,12 +220,10 @@ function colorForId(key: string): string {
  * Maps AssignOrder-backed API rows into the UI AvailableOrder shape.
  */
 export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
-  const displayId = (
-    dto.orderId ||
-    dto.displayOrderNo ||
-    dto.orderNo ||
-    String(dto.id)
-  ).trim();
+  const externalId = (dto.orderId ?? '').trim();
+  const shortOrderNo = (dto.orderNo ?? dto.displayOrderNo ?? '').trim();
+  // Stable list/nav id: prefer real external id, else short no, else backend pk.
+  const displayId = externalId || shortOrderNo || String(dto.id);
   const customerName = joinParts(dto.firstName, dto.lastName) || 'Customer';
   const dropoffAddress =
     joinParts(
@@ -238,18 +251,21 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
       .join(' | ') || `${Math.max(itemCount, 1)} item(s)`;
 
   const comment = (dto.comment ?? '').trim();
-  const paymentMethod = mapPaymentMethod(
-    dto.paymentMethod,
-    dto.cash,
-    dto.expectedCash,
-  );
+  const paymentMethod = mapPaymentMethod(dto.paymentMethod, dto.cash);
   const storeLabel = dto.storeId ? `Store ${dto.storeId}` : 'Store';
+  // Authoritative COD due — ExpectedCash, else Cash for cash method. Never OrderTotal.
   const expectedCash =
-    dto.expectedCash != null
+    dto.expectedCash != null && Number.isFinite(Number(dto.expectedCash))
       ? Number(dto.expectedCash)
-      : dto.cash != null
+      : paymentMethod === 'cash' &&
+          dto.cash != null &&
+          Number.isFinite(Number(dto.cash))
         ? Number(dto.cash)
         : null;
+  const orderTotalNum =
+    dto.orderTotal != null && Number.isFinite(Number(dto.orderTotal))
+      ? Number(dto.orderTotal)
+      : null;
 
   return {
     id: displayId,
@@ -265,27 +281,32 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
     customerLng: dto.lng ?? null,
     distanceMiles: null,
     etaMinutes: null,
-    orderAmount: Number(dto.orderTotal) || 0,
+    orderAmount: orderTotalNum,
     deliveryFee: 0,
     paymentMethod,
-    isCod: isCodOrder(dto.paymentMethod, dto.cash, dto.expectedCash),
+    isCod: isCodOrder(dto.paymentMethod, dto.cash, expectedCash),
     priority: /fast|urgent|asap/i.test(comment) ? 'urgent' : 'normal',
     fragile: false,
     express: /fast|express|asap/i.test(comment),
     specialInstructions: comment || undefined,
     items: Math.max(itemCount, lineItems.length, 1),
     packageInfo,
-    // Prefer updatedAt (Available re-push) so upserted POS orders are not stuck on first insert age.
-    postedAt: toApiIsoPrefer(dto.updatedAt, dto.createdAt),
+    // CreatedAt = sticky insert (never UpdatedAt). Available since = UpdatedAt on re-push, else CreatedAt.
+    createdAt: toApiIso(dto.createdAt, false) || null,
+    availableSince:
+      toApiIsoPrefer(dto.updatedAt, dto.createdAt, false) || null,
+    // postedAt remains the offer-age stamp for sort/compat — not creation time.
+    postedAt: toApiIsoPrefer(dto.updatedAt, dto.createdAt, false),
     imageColor: colorForId(displayId),
     timeline: buildTimeline(
-      toApiIsoPrefer(dto.updatedAt, dto.createdAt),
+      toApiIso(dto.createdAt, false) || null,
       dto.acceptedAt,
       dto.pickedUpAt,
     ),
     /** Internal PK for GET /api/Order/{id} */
     backendId: dto.id,
-    externalOrderId: dto.orderId,
+    externalOrderId: externalId || undefined,
+    orderNo: shortOrderNo || undefined,
     expectedCash,
     cashCollectedAmount:
       dto.cashCollected != null && Number.isFinite(Number(dto.cashCollected))
@@ -302,7 +323,7 @@ export function mapApiOrderToAvailable(dto: ApiAvailableOrder): AvailableOrder {
       reasonCode: r.reasonCode,
       reasonLabel: r.reasonLabel,
       note: r.note,
-      createdAt: toApiIso(r.createdAt),
+      createdAt: toApiIso(r.createdAt, false),
       status: r.status,
       statusLabel: r.statusLabel,
       acknowledgedAt: toApiIso(r.acknowledgedAt, false) || undefined,

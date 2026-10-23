@@ -15,6 +15,7 @@ import { useRiderSession } from '../context/RiderSessionContext';
 import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityContext';
 import { navigate } from '../navigation/RootNavigation';
 import OrderCard from '../components/OrderCard';
+import AcceptSelectedBar from '../components/AcceptSelectedBar';
 import NoConnectionBanner from '../components/NoConnectionBanner';
 import {
   AppHeader,
@@ -22,6 +23,7 @@ import {
   SearchBar,
   confirmDialog,
 } from '../components/ui';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   OrderFilterSheet,
   RejectReasonSheet,
@@ -42,6 +44,7 @@ import { colors, radius, spacing, TOUCH_TARGET, typography } from '../theme';
 export default function OrdersScreen() {
   const navigation = useNavigation();
   const { openMenu } = useSideMenu();
+  const insets = useSafeAreaInsets();
   const {
     orders,
     loading,
@@ -49,8 +52,13 @@ export default function OrdersScreen() {
     accepting,
     acceptingOrderKey,
     acceptOrder,
+    acceptSelectedOrders,
     rejectOrder,
     refreshOrders,
+    selectedKeys,
+    remainingSlots,
+    isOrderSelected,
+    toggleOrderSelected,
   } = useAvailableOrders();
   const { activeJobs, isOnline } = useRiderSession();
   const { isConnected } = useNetworkConnectivity();
@@ -126,6 +134,14 @@ export default function OrdersScreen() {
     [accepting, activeJobs, acceptOrder, goDashboard, isOnline, isConnected],
   );
 
+  const handleAcceptSelected = useCallback(async () => {
+    if (accepting || selectedKeys.length === 0) return;
+    const result = await acceptSelectedOrders();
+    if (result.ok) {
+      goDashboard();
+    }
+  }, [accepting, selectedKeys.length, acceptSelectedOrders, goDashboard]);
+
   const handleRejectPress = useCallback((order: AvailableOrder) => {
     setRejectTarget(order);
   }, []);
@@ -154,9 +170,13 @@ export default function OrdersScreen() {
     setDraftFilters(DEFAULT_ORDER_FILTERS);
   }, []);
 
+  const selectionAtCap =
+    remainingSlots <= 0 || selectedKeys.length >= remainingSlots;
+
   const renderItem: ListRenderItem<AvailableOrder> = useCallback(
     ({ item }) => {
       const key = ordersRepository.orderListKey(item);
+      const selected = isOrderSelected(item);
       return (
         <OrderCard
           order={item}
@@ -165,6 +185,9 @@ export default function OrdersScreen() {
           onReject={handleRejectPress}
           actionsDisabled={accepting || !isConnected}
           isAccepting={acceptingOrderKey === key}
+          selected={selected}
+          onToggleSelect={toggleOrderSelected}
+          selectionDisabled={selectionAtCap && !selected}
         />
       );
     },
@@ -175,6 +198,9 @@ export default function OrdersScreen() {
       goDetails,
       handleAccept,
       handleRejectPress,
+      isOrderSelected,
+      toggleOrderSelected,
+      selectionAtCap,
     ],
   );
 
@@ -236,13 +262,26 @@ export default function OrdersScreen() {
       <Text style={styles.count} accessibilityLiveRegion="polite">
         {visibleOrders.length} available
         {query || activeFilterCount > 0 ? ' · filtered' : ''}
+        {activeJobs.length > 0
+          ? ` · ${activeJobs.length}/5 active`
+          : ''}
       </Text>
+      {remainingSlots <= 0 ? (
+        <Text style={styles.limitHint}>
+          Active order limit reached. Finish a delivery before accepting more.
+        </Text>
+      ) : null}
 
       <FlatList
         data={visibleOrders}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          selectedKeys.length > 0 && {
+            paddingBottom: spacing.xxl + 72 + Math.max(insets.bottom, spacing.sm),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={8}
@@ -322,6 +361,14 @@ export default function OrdersScreen() {
         onClose={() => setRejectTarget(null)}
         onConfirm={handleRejectConfirm}
       />
+
+      <AcceptSelectedBar
+        selectedCount={selectedKeys.length}
+        remainingSlots={remainingSlots}
+        onAcceptSelected={() => void handleAcceptSelected()}
+        disabled={!isConnected || !isOnline}
+        loading={accepting}
+      />
     </View>
   );
 }
@@ -376,6 +423,13 @@ const styles = StyleSheet.create({
     ...typography.caption,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
+  },
+  limitHint: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '600',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
   },
   listContent: {
     paddingHorizontal: spacing.md,

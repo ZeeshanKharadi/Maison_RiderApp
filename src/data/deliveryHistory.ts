@@ -14,7 +14,7 @@ export interface DeliveryHistoryItem {
   pickupAddress: string;
   dropoffAddress: string;
   deliveredAt: string; // ISO
-  orderAmount: number;
+  orderAmount: number | null;
   /** Rider fee when API supplies it; null if not available (do not invent). */
   deliveryFee: number | null;
   /** Tip when API supplies it; null if not available. */

@@ -14,20 +14,23 @@ type Props = {
   jobs: ActiveDeliveryJob[];
   selectedJobId: string | null;
   onSelect: (jobId: string) => void;
+  /** Hide the bar chrome when nested under a section header. */
+  embedded?: boolean;
 };
 
 export default function ActiveOrderSelector({
   jobs,
   selectedJobId,
   onSelect,
+  embedded = false,
 }: Props) {
   if (jobs.length <= 1) {
     return null;
   }
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.label}>Active orders</Text>
+    <View style={[styles.wrap, embedded && styles.wrapEmbedded]}>
+      {embedded ? null : <Text style={styles.label}>Active orders</Text>}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -65,6 +68,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+  },
+  wrapEmbedded: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: spacing.sm,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 0,
   },
   label: {
     ...typography.caption,

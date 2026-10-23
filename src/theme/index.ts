@@ -1,7 +1,7 @@
 export { colors, BRAND_RED, BRAND_RED_DARK, ACCEPT_GREEN, BACKGROUND, CARD_WHITE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BORDER_LIGHT, BORDER_INPUT } from './colors';
 export type { ColorToken } from './colors';
 
-export { typography } from './typography';
+export { typography, MAX_FONT_SIZE_MULTIPLIER } from './typography';
 export type { TypographyToken } from './typography';
 
 export { spacing, TOUCH_TARGET } from './spacing';

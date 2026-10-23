@@ -8,7 +8,14 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, radius, spacing, TOUCH_TARGET, typography } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  TOUCH_TARGET,
+  typography,
+} from '../../theme';
 
 type AppHeaderProps = {
   title: string;
@@ -81,7 +88,11 @@ export default function AppHeader({
         )}
       </View>
 
-      <Text style={styles.title} numberOfLines={1} accessibilityRole="header">
+      <Text
+        style={styles.title}
+        numberOfLines={1}
+        accessibilityRole="header"
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
         {title}
       </Text>
 

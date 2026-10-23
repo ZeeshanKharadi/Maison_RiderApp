@@ -7,7 +7,14 @@ import {
   ViewStyle,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { colors, radius, spacing, TOUCH_TARGET, typography } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  TOUCH_TARGET,
+  typography,
+} from '../../theme';
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
 type ButtonSize = 'md' | 'sm';
@@ -65,9 +72,15 @@ export default function AppButton({
       ) : (
         <>
           {icon ? (
-            <Icon name={icon} size={size === 'sm' ? 16 : 18} color={palette.text} />
+            <Icon
+              name={icon}
+              size={size === 'sm' ? 16 : 18}
+              color={palette.text}
+            />
           ) : null}
           <Text
+            maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}
+            numberOfLines={1}
             style={[
               size === 'sm' ? typography.buttonSmall : typography.button,
               { color: palette.text },
@@ -127,17 +140,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
-    borderRadius: radius.sm,
-    minHeight: TOUCH_TARGET,
+    borderRadius: radius.md,
   },
   md: {
+    minHeight: TOUCH_TARGET,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   sm: {
+    minHeight: 40,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    minHeight: TOUCH_TARGET,
   },
   fullWidth: {
     width: '100%',

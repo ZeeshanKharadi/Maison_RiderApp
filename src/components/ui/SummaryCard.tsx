@@ -1,6 +1,13 @@
 import React from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
-import { colors, elevation, radius, spacing, typography } from '../../theme';
+import {
+  colors,
+  elevation,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  typography,
+} from '../../theme';
 
 type SummaryItem = {
   label: string;
@@ -35,10 +42,14 @@ export default function SummaryCard({
             />
           ) : null}
           <View style={styles.item}>
-            <Text style={[styles.label, brand && styles.labelBrand]}>
+            <Text
+              style={[styles.label, brand && styles.labelBrand]}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
               {item.label}
             </Text>
-            <Text style={[styles.value, brand && styles.valueBrand]}>
+            <Text
+              style={[styles.value, brand && styles.valueBrand]}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
               {item.value}
             </Text>
           </View>
@@ -51,7 +62,7 @@ export default function SummaryCard({
 const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.xs,
   },
@@ -60,6 +71,8 @@ const styles = StyleSheet.create({
   },
   surface: {
     backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     ...elevation.small,
   },
   item: {
@@ -72,14 +85,13 @@ const styles = StyleSheet.create({
   label: {
     ...typography.label,
     marginBottom: spacing.xxs,
-    color: colors.textMuted,
+    color: colors.textSecondary,
   },
   labelBrand: {
-    color: 'rgba(255,255,255,0.75)',
+    color: 'rgba(255,255,255,0.85)',
   },
   value: {
     ...typography.title,
-    fontSize: 18,
   },
   valueBrand: {
     color: colors.textOnPrimary,

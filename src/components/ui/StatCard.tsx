@@ -1,7 +1,14 @@
 import React from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { colors, elevation, radius, spacing, typography } from '../../theme';
+import {
+  colors,
+  elevation,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  typography,
+} from '../../theme';
 
 type Props = {
   label: string;
@@ -26,9 +33,17 @@ export default function StatCard({
       accessibilityRole="summary"
       accessibilityLabel={`${label}: ${value}`}>
       {icon ? <Icon name={icon} size={22} color={iconColor} /> : null}
-      <Text style={styles.value}>{value}</Text>
-      <Text style={styles.label}>{label}</Text>
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      <Text style={styles.value} maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {value}
+      </Text>
+      <Text style={styles.label} maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {label}
+      </Text>
+      {hint ? (
+        <Text style={styles.hint} maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          {hint}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -39,11 +54,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     ...elevation.small,
   },
   value: {
     ...typography.title,
-    fontSize: 20,
     marginTop: spacing.xs,
     color: colors.textPrimary,
   },

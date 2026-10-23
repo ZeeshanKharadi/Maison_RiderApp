@@ -1,4 +1,4 @@
-import { AvailableOrder } from '../data/orders';
+import { AvailableOrder, offerAgeMs } from '../data/orders';
 import { API_PATHS } from '../api/config';
 import { apiEnvelope, HttpError, TimeoutError } from '../api/httpClient';
 import {
@@ -96,8 +96,8 @@ function dedupeAvailableOrders(orders: AvailableOrder[]): AvailableOrder[] {
       continue;
     }
 
-    const existingTime = new Date(existing.postedAt).getTime();
-    const nextTime = new Date(order.postedAt).getTime();
+    const existingTime = offerAgeMs(existing);
+    const nextTime = offerAgeMs(order);
     const existingPk = existing.backendId ?? 0;
     const nextPk = order.backendId ?? 0;
 
@@ -107,7 +107,7 @@ function dedupeAvailableOrders(orders: AvailableOrder[]): AvailableOrder[] {
   }
 
   return [...byRef.values()].sort(
-    (a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime(),
+    (a, b) => offerAgeMs(b) - offerAgeMs(a),
   );
 }
 

@@ -4,14 +4,17 @@ import {
   Animated,
   AppState,
   AppStateStatus,
+  Dimensions,
   Linking,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +35,7 @@ import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityConte
 import {
   getStateConfig,
   isCompletionStep,
+  type DeliveryState,
 } from '../delivery/stateMachine';
 import {
   isPostPickupState,
@@ -45,7 +49,6 @@ import {
 import {
   ActiveDeliveryJob,
   buildDeliveryTimeline,
-  jobProgress,
 } from '../delivery/types';
 import {
   DELIVERY_ISSUE_REASONS,
@@ -68,9 +71,66 @@ import {
 } from '../theme';
 import { shouldPollActiveDelivery } from '../utils/activeDeliverySync';
 
-/** Fixed preview under the order selector — same height as original panel default. */
-/** Midway between original 240dp and compact 140dp — still fixed under orders. */
-const MAP_PREVIEW_HEIGHT = 190;
+/**
+ * Embedded preview inside the details ScrollView (does not pin under the header).
+ * Clamped ~220–260 dp and scaled with window height so small phones stay compact.
+ */
+function mapPreviewHeightDp(): number {
+  const h = Dimensions.get('window').height;
+  return Math.round(Math.min(260, Math.max(220, h * 0.28)));
+}
+
+type StageStatus = 'done' | 'current' | 'upcoming';
+
+/** High-level Collect → Deliver → Done strip (return/waiting kept explicit). */
+function stageStrip(state: DeliveryState): {
+  mode: 'flow' | 'return' | 'waiting';
+  collect: StageStatus;
+  deliver: StageStatus;
+  done: StageStatus;
+  explicitLabel: string | null;
+} {
+  if (state === 'RETURNING_TO_STORE') {
+    return {
+      mode: 'return',
+      collect: 'done',
+      deliver: 'upcoming',
+      done: 'upcoming',
+      explicitLabel: 'Return to store',
+    };
+  }
+  if (state === 'AWAITING_STORE_RECEIPT') {
+    return {
+      mode: 'waiting',
+      collect: 'done',
+      deliver: 'upcoming',
+      done: 'upcoming',
+      explicitLabel: 'Waiting for store confirmation',
+    };
+  }
+
+  const beforePickup =
+    state === 'ACCEPTED' ||
+    state === 'NAVIGATE_TO_PICKUP' ||
+    state === 'ARRIVED_AT_PICKUP';
+  const delivering =
+    state === 'PICKUP_CONFIRMED' ||
+    state === 'ON_THE_WAY' ||
+    state === 'ARRIVED_AT_DESTINATION';
+  const finished = state === 'DELIVERED' || state === 'COMPLETED';
+
+  return {
+    mode: 'flow',
+    collect: beforePickup ? 'current' : 'done',
+    deliver: beforePickup ? 'upcoming' : delivering ? 'current' : 'done',
+    done: finished
+      ? state === 'COMPLETED'
+        ? 'done'
+        : 'current'
+      : 'upcoming',
+    explicitLabel: null,
+  };
+}
 
 /** Accurate payment line from real cash / COD / return state — never invent Collect. */
 function paymentSummary(
@@ -81,28 +141,73 @@ function paymentSummary(
     job.cashCollected === true ||
     (job.cashCollectedAmount != null &&
       Number.isFinite(Number(job.cashCollectedAmount)));
-  const amount =
+  const collectedAmt =
     job.cashCollectedAmount != null &&
     Number.isFinite(Number(job.cashCollectedAmount))
-      ? formatMoney(Number(job.cashCollectedAmount))
-      : job.expectedCash != null && Number.isFinite(Number(job.expectedCash))
-        ? formatMoney(Number(job.expectedCash))
-        : null;
+      ? Number(job.cashCollectedAmount)
+      : null;
+  const expectedAmt =
+    job.expectedCash != null && Number.isFinite(Number(job.expectedCash))
+      ? Number(job.expectedCash)
+      : null;
 
   if (inReturnFlow) {
-    if (collected && amount) return `Cash collected ${amount} · hand to store`;
+    if (collected && collectedAmt != null) {
+      return `Cash collected Rs. ${collectedAmt.toFixed(2)} · hand to store`;
+    }
     if (collected) return 'Cash collected · hand to store';
-    if (!job.isCod) return 'Already paid · return to store';
-    return 'Cash order · return to store';
+    if (job.isCod) return 'Cash order · return to store';
+    if (job.paymentMethod === 'card' || job.paymentMethod === 'wallet') {
+      return 'Already paid · return to store';
+    }
+    return 'Payment unknown · return to store';
   }
 
   if (collected) {
-    return amount ? `Cash collected ${amount}` : 'Cash collected';
+    return collectedAmt != null
+      ? `Cash collected Rs. ${collectedAmt.toFixed(2)}`
+      : 'Cash collected';
   }
   if (job.isCod) {
-    return amount ? `Collect ${amount}` : 'Collect cash';
+    return expectedAmt != null
+      ? `Collect Rs. ${expectedAmt.toFixed(2)}`
+      : 'Collect cash · amount unknown';
   }
-  return 'Already paid';
+  if (job.paymentMethod === 'card' || job.paymentMethod === 'wallet') {
+    return 'Already paid';
+  }
+  return 'Payment unknown';
+}
+
+function StageChip({
+  label,
+  status,
+}: {
+  label: string;
+  status: StageStatus;
+}) {
+  return (
+    <View
+      style={[
+        styles.stageChip,
+        status === 'done' && styles.stageChipDone,
+        status === 'current' && styles.stageChipCurrent,
+        status === 'upcoming' && styles.stageChipUpcoming,
+      ]}>
+      {status === 'done' ? (
+        <Icon name="check" size={14} color={colors.textOnPrimary} />
+      ) : null}
+      <Text
+        style={[
+          styles.stageChipText,
+          status === 'done' && styles.stageChipTextOnDark,
+          status === 'current' && styles.stageChipTextCurrent,
+          status === 'upcoming' && styles.stageChipTextMuted,
+        ]}>
+        {label}
+      </Text>
+    </View>
+  );
 }
 
 /**
@@ -165,28 +270,18 @@ export default function ActiveDeliveryScreen() {
 
   const [successVisible, setSuccessVisible] = useState(false);
   const [successEarned, setSuccessEarned] = useState(0);
-  const progressAnim = useRef(new Animated.Value(0)).current;
+  const [progressExpanded, setProgressExpanded] = useState(false);
   const successOpacity = useRef(new Animated.Value(0)).current;
 
   const config = activeJob ? getStateConfig(activeJob.state) : null;
-  const progress = activeJob ? jobProgress(activeJob) : 0;
   const timeline = useMemo(
     () => (activeJob ? buildDeliveryTimeline(activeJob) : []),
     [activeJob],
   );
-
-  useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: progress,
-      duration: 350,
-      useNativeDriver: false,
-    }).start();
-  }, [progress, progressAnim]);
-
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 100],
-    outputRange: ['0%', '100%'],
-  });
+  const stages = useMemo(
+    () => (activeJob ? stageStrip(activeJob.state) : null),
+    [activeJob],
+  );
 
   const goDashboard = useCallback(() => {
     navigation.goBack();
@@ -255,6 +350,7 @@ export default function ActiveDeliveryScreen() {
     reportRequestIdRef.current = null;
     reportFingerprintRef.current = null;
 
+    setProgressExpanded(false);
     scrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [activeJob?.backendId]);
 
@@ -674,6 +770,13 @@ export default function ActiveDeliveryScreen() {
   const postPickup = isPostPickupState(activeJob.state);
   const payLine = paymentSummary(activeJob, inReturnFlow);
   const focusStore = inReturnFlow || !postPickup;
+  const destinationLabel = focusStore ? 'Store' : 'Customer';
+  const destinationName = focusStore
+    ? activeJob.restaurant
+    : activeJob.customerName;
+  const destinationAddress = focusStore
+    ? activeJob.pickupAddress
+    : activeJob.dropoffAddress;
   const footerPad =
     (config.primaryAction ? 76 : spacing.md) +
     Math.max(insets.bottom, spacing.sm);
@@ -692,94 +795,77 @@ export default function ActiveDeliveryScreen() {
         onSelect={selectActiveJob}
       />
 
-      {/* Compact map always visible under active orders */}
-      <View style={styles.mapHeader}>
-        <DeliveryMapPanel
-          job={activeJob}
-          riderLocation={riderLocation}
-          locationLoading={locationLoading}
-          locationError={locationError}
-          height={MAP_PREVIEW_HEIGHT}
-        />
-        <View style={styles.mapsActionRow}>
-          <AppButton
-            label="View map"
-            icon="map"
-            variant="outline"
-            style={styles.mapsActionBtn}
-            onPress={openDeliveryMap}
-            accessibilityLabel="Open full map with voice guidance"
-          />
-          <AppButton
-            label="Google Maps"
-            icon="google-maps"
-            variant="outline"
-            style={styles.mapsActionBtn}
-            onPress={() => void openGoogleMaps()}
-            accessibilityLabel="Open Google Maps"
-          />
-        </View>
-      </View>
-
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: footerPad }]}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled>
         <NoConnectionBanner detail="Connect to update status or cash. Changes are not queued offline." />
 
+        {/* Current step */}
         <View style={styles.statusBlock}>
           <View style={styles.statusHeader}>
             <StatusPill label={config.pillLabel} tone={config.pillTone} />
-            <Text style={styles.progressPct}>{progress}%</Text>
           </View>
           <Text style={styles.title}>{config.title}</Text>
           <Text style={styles.description}>{config.description}</Text>
-          <View style={styles.progressTrack}>
-            <Animated.View
-              style={[styles.progressFill, { width: progressWidth }]}
-            />
+
+          {stages?.mode === 'flow' ? (
+            <View
+              style={styles.stageRow}
+              accessibilityRole="summary"
+              accessibilityLabel={`Collect ${stages.collect}, Deliver ${stages.deliver}, Done ${stages.done}`}>
+              <StageChip label="Collect" status={stages.collect} />
+              <View style={styles.stageConnector} />
+              <StageChip label="Deliver" status={stages.deliver} />
+              <View style={styles.stageConnector} />
+              <StageChip label="Done" status={stages.done} />
+            </View>
+          ) : stages?.explicitLabel ? (
+            <View
+              style={[
+                styles.explicitStage,
+                stages.mode === 'waiting' && styles.explicitStageWaiting,
+              ]}>
+              <Icon
+                name={
+                  stages.mode === 'waiting' ? 'store-clock' : 'store-marker'
+                }
+                size={18}
+                color={colors.warning}
+              />
+              <Text style={styles.explicitStageText}>
+                {stages.explicitLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Destination — Call customer only with customer details (never beside store). */}
+        <View style={styles.card}>
+          <View style={styles.destHeader}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.destEyebrow}>{destinationLabel}</Text>
+              <Text style={styles.destName} numberOfLines={1}>
+                {destinationName}
+              </Text>
+              <Text style={styles.destAddress} numberOfLines={2}>
+                {destinationAddress}
+              </Text>
+            </View>
+            {!focusStore ? (
+              <AppButton
+                label="Call customer"
+                icon="phone"
+                variant="outline"
+                size="sm"
+                onPress={callCustomer}
+                accessibilityLabel="Call customer"
+              />
+            ) : null}
           </View>
-        </View>
-
-        <View style={styles.card}>
-          {focusStore ? (
-            <>
-              <InfoRow
-                icon="storefront-outline"
-                label="Store"
-                value={activeJob.restaurant}
-              />
-              <InfoRow
-                icon="map-marker"
-                label="Pickup address"
-                value={activeJob.pickupAddress}
-              />
-            </>
-          ) : (
-            <>
-              <InfoRow
-                icon="account"
-                label="Customer"
-                value={activeJob.customerName}
-              />
-              <InfoRow
-                icon="map-marker-radius"
-                label="Drop-off address"
-                value={activeJob.dropoffAddress}
-              />
-            </>
-          )}
-          <InfoRow icon="cash" label="Payment" value={payLine} />
-          <InfoRow
-            icon="package-variant"
-            label="Package"
-            value={`${activeJob.items} items · ${activeJob.packageInfo}`}
-          />
-        </View>
-
-        <View style={styles.card}>
           {!focusStore ? (
             <InfoRow
               icon="storefront-outline"
@@ -787,59 +873,49 @@ export default function ActiveDeliveryScreen() {
               value={activeJob.restaurant}
             />
           ) : (
-            <>
-              <InfoRow
-                icon="account"
-                label="Customer"
-                value={activeJob.customerName}
+            <View style={styles.customerCallRow}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <InfoRow
+                  icon="account"
+                  label="Customer"
+                  value={activeJob.customerName}
+                />
+              </View>
+              <AppButton
+                label="Call customer"
+                icon="phone"
+                variant="outline"
+                size="sm"
+                onPress={callCustomer}
+                accessibilityLabel="Call customer"
               />
-              <InfoRow
-                icon="map-marker-radius"
-                label="Drop-off"
-                value={activeJob.dropoffAddress}
-              />
-            </>
+            </View>
           )}
-          <InfoRow
-            icon="phone"
-            label="Customer phone"
-            value={activeJob.customerPhone}
-          />
-          {activeJob.deliveryFee != null && activeJob.deliveryFee > 0 ? (
-            <InfoRow
-              icon="bike-fast"
-              label="Delivery fee"
-              value={formatMoney(activeJob.deliveryFee)}
-            />
-          ) : null}
-          <InfoRow
-            icon="cash"
-            label="Order total"
-            value={formatMoney(activeJob.orderAmount)}
-          />
-          {activeJob.specialInstructions ? (
-            <InfoRow
-              icon="note-text-outline"
-              label="Instructions"
-              value={activeJob.specialInstructions}
-            />
-          ) : null}
+        </View>
+
+        {/* Payment message */}
+        <View
+          style={styles.paymentBanner}
+          accessibilityRole="summary"
+          accessibilityLabel={payLine}>
+          <Icon name="cash" size={20} color={colors.primaryDark} />
+          <Text style={styles.paymentText}>{payLine}</Text>
         </View>
 
         {failure ? (
           <View style={styles.failureBanner}>
             <Text style={styles.failureBannerTitle}>
               {failure.requestStatus === 'Pending'
-                ? 'Failure request pending review'
+                ? 'Cannot deliver — waiting for manager'
                 : failure.requestStatus === 'Rejected'
-                  ? 'Failure request rejected — continue delivery'
+                  ? 'Request rejected — continue delivery'
                   : failure.requestStatus === 'ReturnApproved' ||
                       activeJob.state === 'RETURNING_TO_STORE'
                     ? 'Return to store approved'
                     : failure.requestStatus === 'RiderReturned' ||
                         activeJob.state === 'AWAITING_STORE_RECEIPT'
-                      ? 'Awaiting store receipt'
-                      : `Failure · ${failure.requestStatus}`}
+                      ? 'Waiting for store confirmation'
+                      : `Cannot deliver · ${failure.requestStatus}`}
             </Text>
             <Text style={styles.failureBannerBody}>
               {failure.reasonLabel || failure.reasonCode}
@@ -854,55 +930,128 @@ export default function ActiveDeliveryScreen() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionHeading}>Order progress</Text>
-        <View style={styles.card}>
-          {timeline.map((step, index) => (
-            <View key={step.state} style={styles.timelineRow}>
-              <View style={styles.timelineRail}>
-                <View
-                  style={[
-                    styles.dot,
-                    step.status === 'done' && styles.dotDone,
-                    step.status === 'current' && styles.dotCurrent,
-                    step.status === 'upcoming' && styles.dotUpcoming,
-                  ]}
-                />
-                {index < timeline.length - 1 ? (
-                  <View
-                    style={[
-                      styles.line,
-                      step.status === 'done' && styles.lineDone,
-                    ]}
-                  />
-                ) : null}
-              </View>
-              <View style={styles.timelineBody}>
-                <Text
-                  style={[
-                    styles.stepLabel,
-                    step.status === 'upcoming' && styles.stepMuted,
-                    step.status === 'current' && styles.stepCurrent,
-                  ]}>
-                  {step.label}
-                </Text>
-                <Text style={styles.stepTime}>
-                  {step.at ? formatTime(step.at) : '—'}
-                </Text>
-              </View>
-            </View>
-          ))}
+        {/* Map inside scroll — non-interactive so vertical scroll wins */}
+        <View style={styles.mapBlock}>
+          <DeliveryMapPanel
+            job={activeJob}
+            riderLocation={riderLocation}
+            locationLoading={locationLoading}
+            locationError={locationError}
+            height={mapPreviewHeightDp()}
+            interactive={false}
+          />
+          <View style={styles.mapsActionRow}>
+            <AppButton
+              label="View map"
+              icon="map"
+              variant="outline"
+              style={styles.mapsActionBtn}
+              onPress={openDeliveryMap}
+              accessibilityLabel="Open full map with voice guidance"
+            />
+            <AppButton
+              label="Google Maps"
+              icon="google-maps"
+              variant="outline"
+              style={styles.mapsActionBtn}
+              onPress={() => void openGoogleMaps()}
+              accessibilityLabel="Open Google Maps"
+            />
+          </View>
         </View>
 
+        {/* Package + instructions */}
+        <View style={styles.card}>
+          <InfoRow
+            icon="package-variant"
+            label="Package"
+            value={`${activeJob.items} items · ${activeJob.packageInfo}`}
+          />
+          <InfoRow
+            icon="cash"
+            label="Order total"
+            value={
+              activeJob.orderAmount != null &&
+              Number.isFinite(activeJob.orderAmount)
+                ? formatMoney(activeJob.orderAmount)
+                : 'Unknown'
+            }
+          />
+          {activeJob.deliveryFee != null && activeJob.deliveryFee > 0 ? (
+            <InfoRow
+              icon="cash-multiple"
+              label="Delivery fee"
+              value={formatMoney(activeJob.deliveryFee)}
+            />
+          ) : null}
+          {activeJob.specialInstructions ? (
+            <InfoRow
+              icon="note-text-outline"
+              label="Instructions"
+              value={activeJob.specialInstructions}
+            />
+          ) : null}
+        </View>
+
+        {/* Expandable order progress */}
+        <Pressable
+          style={styles.progressToggle}
+          onPress={() => setProgressExpanded(v => !v)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: progressExpanded }}
+          accessibilityLabel={
+            progressExpanded ? 'Collapse order progress' : 'Expand order progress'
+          }>
+          <Text style={styles.sectionHeadingInline}>Order progress</Text>
+          <Icon
+            name={progressExpanded ? 'chevron-up' : 'chevron-down'}
+            size={22}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {progressExpanded ? (
+          <View style={styles.card}>
+            {timeline.map((step, index) => (
+              <View key={step.state} style={styles.timelineRow}>
+                <View style={styles.timelineRail}>
+                  <View
+                    style={[
+                      styles.dot,
+                      step.status === 'done' && styles.dotDone,
+                      step.status === 'current' && styles.dotCurrent,
+                      step.status === 'upcoming' && styles.dotUpcoming,
+                    ]}
+                  />
+                  {index < timeline.length - 1 ? (
+                    <View
+                      style={[
+                        styles.line,
+                        step.status === 'done' && styles.lineDone,
+                      ]}
+                    />
+                  ) : null}
+                </View>
+                <View style={styles.timelineBody}>
+                  <Text
+                    style={[
+                      styles.stepLabel,
+                      step.status === 'upcoming' && styles.stepMuted,
+                      step.status === 'current' && styles.stepCurrent,
+                    ]}>
+                    {step.label}
+                  </Text>
+                  <Text style={styles.stepTime}>
+                    {step.at ? formatTime(step.at) : '—'}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Need help */}
         <Text style={styles.sectionHeading}>Need help?</Text>
         <View style={styles.dummyRow}>
-          <AppButton
-            label="Call customer"
-            icon="phone"
-            variant="ghost"
-            style={styles.dummyBtn}
-            onPress={callCustomer}
-            accessibilityLabel="Call customer"
-          />
           <AppButton
             label="Report issue"
             icon="flag-outline"
@@ -911,7 +1060,7 @@ export default function ActiveDeliveryScreen() {
             onPress={openReportIssueSheet}
           />
           <AppButton
-            label="Failed delivery"
+            label="Cannot deliver"
             icon="alert-circle-outline"
             variant="ghost"
             style={styles.dummyBtn}
@@ -1001,7 +1150,7 @@ export default function ActiveDeliveryScreen() {
 
       <BottomSheet
         visible={issueSheetOpen}
-        title="Request failed delivery"
+        title="Cannot deliver"
         onClose={() => {
           if (!issuePending) setIssueSheetOpen(false);
         }}
@@ -1232,16 +1381,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
   content: { padding: spacing.md },
-  statusBlock: { marginBottom: spacing.sm },
+  statusBlock: { marginBottom: spacing.md },
   statusHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.xs,
-  },
-  progressPct: {
-    ...typography.bodyStrong,
-    color: colors.primaryDark,
   },
   title: {
     ...typography.heading,
@@ -1251,27 +1396,114 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.xxs,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
-  progressTrack: {
-    height: 10,
+  stageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  stageConnector: {
+    flex: 1,
+    height: 2,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.xxs,
+  },
+  stageChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
     borderRadius: radius.full,
-    backgroundColor: colors.disabled,
-    overflow: 'hidden',
-    marginBottom: spacing.md,
+    borderWidth: 1,
   },
-  progressFill: {
-    height: 10,
+  stageChipDone: {
     backgroundColor: colors.success,
-    borderRadius: radius.full,
+    borderColor: colors.success,
   },
-  mapHeader: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+  stageChipCurrent: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primaryDark,
+  },
+  stageChipUpcoming: {
     backgroundColor: colors.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderColor: colors.border,
+  },
+  stageChipText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  stageChipTextOnDark: { color: colors.textOnPrimary },
+  stageChipTextCurrent: { color: colors.primaryDark },
+  stageChipTextMuted: { color: colors.textMuted },
+  explicitStage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: colors.warning,
+  },
+  explicitStageWaiting: {
+    borderColor: colors.warning,
+  },
+  explicitStageText: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+  },
+  destHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  customerCallRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  destEyebrow: {
+    ...typography.label,
+    color: colors.textMuted,
+  },
+  destName: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    marginTop: 2,
+  },
+  destAddress: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  paymentBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+  },
+  paymentText: {
+    ...typography.bodyStrong,
+    color: colors.primaryDark,
+    flex: 1,
+  },
+  mapBlock: {
+    marginBottom: spacing.lg,
   },
   mapsActionRow: {
     flexDirection: 'row',
@@ -1289,6 +1521,17 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginBottom: spacing.sm,
   },
+  sectionHeadingInline: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+  },
+  progressToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+    minHeight: 44,
+  },
   stickyFooter: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
@@ -1302,7 +1545,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
     ...elevation.small,
   },
   timelineRow: {

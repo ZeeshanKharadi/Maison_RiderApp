@@ -145,7 +145,7 @@ export const DELIVERY_STATE_CONFIG: Record<DeliveryState, DeliveryStateConfig> =
     },
     AWAITING_STORE_RECEIPT: {
       state: 'AWAITING_STORE_RECEIPT',
-      title: 'Awaiting store receipt',
+      title: 'Waiting for store confirmation',
       description:
         'You confirmed return. Waiting for the manager to confirm receipt at the store.',
       primaryAction: null,
@@ -153,7 +153,7 @@ export const DELIVERY_STATE_CONFIG: Record<DeliveryState, DeliveryStateConfig> =
       progress: 85,
       pillLabel: 'At store',
       pillTone: 'warning',
-      timelineLabel: 'Awaiting store receipt',
+      timelineLabel: 'Waiting for store confirmation',
     },
   };
 

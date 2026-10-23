@@ -26,6 +26,16 @@ export function formatDistanceKm(km: number): string {
   return `${km.toFixed(1)} km`;
 }
 
+/** Statute miles → kilometres (exact international mile). */
+export function milesToKm(miles: number): number {
+  return miles * 1.609344;
+}
+
+/** Format a miles value as km for rider UI. */
+export function formatMilesAsKm(miles: number): string {
+  return formatDistanceKm(milesToKm(miles));
+}
+
 export function isValidCoord(lat?: number | null, lng?: number | null): boolean {
   if (lat == null || lng == null) return false;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;

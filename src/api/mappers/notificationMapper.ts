@@ -39,15 +39,24 @@ export function mapApiNotification(dto: ApiRiderNotification): AppNotification {
       ? dto.priority
       : 'normal';
 
+  const orderId = (dto.orderId ?? '').trim() || null;
+  const assignedRaw = dto.assignedOrderId;
+  const assignedOrderId =
+    assignedRaw != null && Number.isFinite(Number(assignedRaw)) && Number(assignedRaw) > 0
+      ? Number(assignedRaw)
+      : null;
+
   return {
     id: String(dto.id),
     category,
     title: dto.title,
     description: dto.description,
-    // Normalize UTC (incl. legacy bare ISO without Z) so "ago" is not +timezone skewed.
-    timestamp: toApiIso(dto.createdAt),
+    // Normalize UTC (incl. legacy bare ISO without Z). Never invent "now" for display.
+    timestamp: toApiIso(dto.createdAt, false),
     read: dto.read,
     priority,
     icon: category === 'orders' ? 'package-variant' : 'bell-outline',
+    orderId,
+    assignedOrderId,
   };
 }

@@ -1,6 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
-import { colors, radius, spacing } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  radius,
+  spacing,
+  typography,
+} from '../../theme';
 
 export type StatusTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
@@ -25,7 +31,11 @@ export default function StatusPill({ label, tone = 'neutral', style }: Props) {
       style={[styles.pill, { backgroundColor: t.bg }, style]}
       accessibilityRole="text"
       accessibilityLabel={`Status: ${label}`}>
-      <Text style={[styles.text, { color: t.text }]}>{label}</Text>
+      <Text
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}
+        style={[styles.text, { color: t.text }]}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -33,12 +43,14 @@ export default function StatusPill({ label, tone = 'neutral', style }: Props) {
 const styles = StyleSheet.create({
   pill: {
     borderRadius: radius.full,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
     alignSelf: 'flex-start',
   },
   text: {
-    fontSize: 11,
+    ...typography.label,
+    letterSpacing: 0.2,
+    textTransform: 'none',
     fontWeight: '700',
   },
 });

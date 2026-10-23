@@ -8,6 +8,7 @@ import {
   actionNeededQueryParams,
   groupOrdersByBoardStatus,
   isActionNeededStatus,
+  isOpsBoardStatus,
   OPS_BOARD_STATUSES,
   statusLabel,
   toActionNeededSnapshot,
@@ -268,6 +269,32 @@ export default function OperationsPage() {
   ]);
 
   useEffect(() => {
+    // Deep links from Overview: ?status=AwaitingStoreReceipt · ?issues=Open
+    const sp = new URLSearchParams(window.location.search);
+    const statusParam = (sp.get('status') || '').trim();
+    const issuesParam = (sp.get('issues') || '').trim();
+
+    if (statusParam && isOpsBoardStatus(statusParam)) {
+      setStatus(statusParam);
+      filtersRef.current = { ...filtersRef.current, status: statusParam };
+      // Match store-scoped action totals — no date narrowing for return flow.
+      if (isActionNeededStatus(statusParam)) {
+        setFrom('');
+        setTo('');
+        filtersRef.current = { ...filtersRef.current, from: '', to: '' };
+      }
+    }
+
+    if (
+      issuesParam === 'Open' ||
+      issuesParam === 'New' ||
+      issuesParam === 'Acknowledged' ||
+      issuesParam === 'Closed'
+    ) {
+      setIssueStatus(issuesParam);
+      filtersRef.current = { ...filtersRef.current, issueStatus: issuesParam };
+    }
+
     void load({ resetIssues: true }).catch((e: Error) => setError(e.message));
     // Mount only — live refresh uses resetIssues:false; Apply handlers reset explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -334,7 +361,10 @@ export default function OperationsPage() {
       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
           <h1 className="page-title">Live operations</h1>
-          <p className="page-sub">Assigned orders from KDS. Cancel or requeue Available / Cancelled jobs only — this is not a kitchen bump.</p>
+          <p className="page-sub">
+            Live delivery board for your store. Cancel or requeue only when an order is still available
+            or already cancelled.
+          </p>
         </div>
         <div className="btn-group">
           <button className={`btn btn-sm ${view === 'board' ? 'btn-maison' : 'btn-outline-secondary'}`} type="button" onClick={() => setView('board')}>Board</button>
@@ -486,12 +516,11 @@ export default function OperationsPage() {
           </button>
           {!needsAction.isComplete ? (
             <span className="small mb-0 text-muted">
-              Counts are from the current board filters — a full store-scoped total was unavailable.
+              Counts follow your current board filters.
             </span>
           ) : (
             <span className="small mb-0">
-              Store-scoped live totals (ignore board status / date / rider filters). Open a card to
-              confirm store receipt or handle a Failed order.
+              Open a card to confirm a return or handle a failed delivery.
             </span>
           )}
         </div>

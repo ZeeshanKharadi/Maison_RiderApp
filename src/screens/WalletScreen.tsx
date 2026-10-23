@@ -253,7 +253,7 @@ export default function WalletScreen() {
                   </Text>
                 ) : null}
 
-                <SectionHeader title="Calculated compensation" />
+                <SectionHeader title="Your pay" />
                 <View style={styles.card}>
                   {summary.compensationAvailable &&
                   summary.calculatedCompensation != null ? (
@@ -269,7 +269,7 @@ export default function WalletScreen() {
                   ) : (
                     <Text style={styles.cardHint}>
                       {summary.compensationNote ||
-                        'Compensation unavailable — payout settings unresolved.'}
+                        'Your pay is unavailable until payout settings are set.'}
                     </Text>
                   )}
                 </View>
@@ -320,9 +320,11 @@ const styles = StyleSheet.create({
   headerBlock: { marginBottom: spacing.md },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
+    borderRadius: radius.md,
+    padding: spacing.md,
     marginBottom: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   cardLabel: { ...typography.caption, color: colors.textSecondary },
   cardAmount: {
@@ -343,6 +345,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   metricLabel: { ...typography.caption, color: colors.textSecondary },
   metricValue: {

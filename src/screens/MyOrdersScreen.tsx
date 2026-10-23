@@ -102,7 +102,13 @@ export default function MyOrdersScreen() {
               {formatPostedAgo(item.acceptedAt || item.stateTimestamps.ACCEPTED || '')}
             </Text>
             <Text style={styles.progress}>{progress}%</Text>
-            <Text style={styles.fee}>{formatMoney(item.deliveryFee || item.orderAmount)}</Text>
+            <Text style={styles.fee}>
+              {item.deliveryFee != null && item.deliveryFee > 0
+                ? formatMoney(item.deliveryFee)
+                : item.orderAmount != null && Number.isFinite(item.orderAmount)
+                  ? formatMoney(item.orderAmount)
+                  : '—'}
+            </Text>
             <Icon name="chevron-right" size={22} color={colors.textMuted} />
           </View>
         </TouchableOpacity>

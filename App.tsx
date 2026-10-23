@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/services/AuthContext';
 import { navigationRef } from './src/navigation/RootNavigation';
+import { notifyNavigationReady } from './src/navigation/notificationOrderNavigation';
 import { NotificationProvider } from './src/context/NotificationContext';
 import {
   NotificationPermissionHandler,
@@ -63,7 +64,15 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor={BRAND_RED} />
         <NotificationProvider>
           <AuthProvider>
-            <NavigationContainer ref={navigationRef}>
+            <NavigationContainer
+              ref={navigationRef}
+              onReady={() => {
+                notifyNavigationReady();
+              }}
+              onStateChange={() => {
+                // Readiness-driven flush for taps queued before auth/nav settled.
+                notifyNavigationReady();
+              }}>
               <NotificationPermissionHandler />
               <MainNavigator />
             </NavigationContainer>

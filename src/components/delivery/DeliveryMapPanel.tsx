@@ -16,13 +16,21 @@ type Props = {
   riderLocation: LatLng | null;
   locationLoading?: boolean;
   locationError?: string | null;
-  /** Panel height in dp. Default 240; use ~160–180 inside a scrolling Active Delivery. */
+  /** Panel height in dp. Default 240; Active Delivery uses ~220–260. */
   height?: number;
   /**
    * When false, map does not capture gestures so a parent ScrollView can scroll
    * over the preview. Attribution remains visible.
    */
   interactive?: boolean;
+};
+
+/** Tighter fit for embedded panels so markers/route stay visible in ~220–260 dp. */
+const PANEL_FIT_PADDING = {
+  top: 40,
+  right: 36,
+  bottom: 72,
+  left: 36,
 };
 
 export default function DeliveryMapPanel({
@@ -56,6 +64,7 @@ export default function DeliveryMapPanel({
         destinationLabel={target.label}
         destinationKind={destKind}
         showStraightLineFallback
+        fitPadding={PANEL_FIT_PADDING}
         interactive={interactive}
       />
 

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect } from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import { Alert, Linking } from 'react-native';
 import { useAuth } from '../services/AuthContext';
 import { useAccount } from '../context/AccountContext';
@@ -8,6 +8,12 @@ import {
   NotificationContext,
 } from '../context/NotificationContext';
 import * as accountRepository from '../repositories/accountRepository';
+import {
+  bindNotificationOrderNavigation,
+  clearNotificationOrderNavigation,
+  flushPendingNotificationNavigation,
+} from '../navigation/notificationOrderNavigation';
+import { navigationRef } from '../navigation/RootNavigation';
 import notificationService from '../services/NotificationService';
 import { shouldRegisterPushToken } from '../utils/pushRegistration';
 
@@ -53,8 +59,47 @@ export function NotificationHandler() {
   const { user } = useAuth();
   const { incrementUnreadCount, setUnreadCount } = useContext(NotificationContext);
   const { refreshOrders } = useAvailableOrders();
-  const { settings, ready, refreshNotifications } = useAccount();
-  const { restoreActiveDeliveries } = useRiderSession();
+  const { settings, ready, refreshNotifications, markNotificationRead } =
+    useAccount();
+  const { restoreActiveDeliveries, selectActiveJob, activeJobs } =
+    useRiderSession();
+
+  const sessionUserIdRef = useRef<string | null>(user?.id ?? null);
+  const activeJobsRef = useRef(activeJobs);
+  const markReadRef = useRef(markNotificationRead);
+  const selectJobRef = useRef(selectActiveJob);
+  const restoreRef = useRef(restoreActiveDeliveries);
+
+  sessionUserIdRef.current = user?.id ?? null;
+  activeJobsRef.current = activeJobs;
+  markReadRef.current = markNotificationRead;
+  selectJobRef.current = selectActiveJob;
+  restoreRef.current = restoreActiveDeliveries;
+
+  // Bind once per authenticated session. Keep callbacks fresh via refs so ordinary
+  // inbox updates (markNotificationRead identity changes) do NOT clear pending work.
+  useEffect(() => {
+    if (!user?.id || !ready) {
+      clearNotificationOrderNavigation();
+      return;
+    }
+
+    bindNotificationOrderNavigation({
+      getSessionUserId: () => sessionUserIdRef.current,
+      markNotificationRead: id => markReadRef.current(id),
+      selectActiveJob: jobId => selectJobRef.current(jobId),
+      getActiveJobs: () => activeJobsRef.current,
+      restoreActiveDeliveries: opts => restoreRef.current(opts),
+    });
+
+    if (navigationRef.isReady()) {
+      void flushPendingNotificationNavigation();
+    }
+
+    return () => {
+      clearNotificationOrderNavigation();
+    };
+  }, [user?.id, ready]);
 
   useEffect(() => {
     if (!user?.id || !ready) return;
@@ -91,12 +136,15 @@ export function NotificationHandler() {
               'An active delivery was cancelled. Refreshing your jobs.',
             );
             // Restore refreshes jobs and records durable ack without a second Alert.
-            void restoreActiveDeliveries({ suppressCancelAlert: true });
+            void restoreRef.current({ suppressCancelAlert: true });
           }
         },
       });
 
       setUnreadCount(0);
+      if (navigationRef.isReady()) {
+        void flushPendingNotificationNavigation();
+      }
     };
 
     void setup();
@@ -115,7 +163,6 @@ export function NotificationHandler() {
     setUnreadCount,
     refreshNotifications,
     refreshOrders,
-    restoreActiveDeliveries,
   ]);
 
   return null;

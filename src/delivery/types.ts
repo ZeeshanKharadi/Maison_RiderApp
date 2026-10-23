@@ -31,7 +31,7 @@ export type ActiveDeliveryJob = {
   customerLng?: number | null;
   distanceMiles: number | null;
   etaMinutes: number | null;
-  orderAmount: number;
+  orderAmount: number | null;
   deliveryFee: number;
   tip: number;
   paymentMethod: PaymentMethod;

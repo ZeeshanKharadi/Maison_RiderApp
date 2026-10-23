@@ -1,7 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { colors, spacing, typography } from '../../theme';
+import {
+  colors,
+  MAX_FONT_SIZE_MULTIPLIER,
+  spacing,
+  typography,
+} from '../../theme';
 import AppButton from './AppButton';
 
 export type EmptyStateVariant = 'empty' | 'search' | 'error' | 'offline' | 'loading';
@@ -40,9 +45,19 @@ export default function EmptyState({
       style={[styles.wrap, style]}
       accessibilityRole="summary"
       accessibilityLabel={`${title}${message ? `. ${message}` : ''}`}>
-      <Icon name={resolvedIcon} size={48} color={colors.border} />
-      <Text style={styles.title}>{title}</Text>
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      <Icon name={resolvedIcon} size={48} color={colors.textMuted} />
+      <Text
+        style={styles.title}
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {title}
+      </Text>
+      {message ? (
+        <Text
+          style={styles.message}
+          maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          {message}
+        </Text>
+      ) : null}
       {actionLabel && onAction ? (
         <AppButton
           label={actionLabel}
@@ -63,8 +78,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   title: {
-    ...typography.title,
-    fontSize: 16,
+    ...typography.section,
     marginTop: spacing.sm,
     textAlign: 'center',
   },
@@ -72,7 +86,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
-    marginTop: spacing.xxs,
+    marginTop: spacing.xs,
   },
   btn: {
     marginTop: spacing.md,

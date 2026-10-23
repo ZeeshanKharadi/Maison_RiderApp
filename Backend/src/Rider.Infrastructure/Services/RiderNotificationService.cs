@@ -219,6 +219,7 @@ namespace Rider.Infrastructure.Services
             {
                 ["category"] = category,
                 ["orderId"] = orderId ?? "",
+                ["assignedOrderId"] = assignedOrderId?.ToString() ?? "",
                 ["notificationId"] = row.Id.ToString()
             };
             if (extraData != null)

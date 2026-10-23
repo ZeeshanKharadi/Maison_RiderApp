@@ -10,37 +10,11 @@ import {
   StoreDto,
   todayInput,
 } from '../api/types';
-
-function isCodLike(o: OrderListDto): boolean {
-  const pay = (o.paymentMethod || '').toLowerCase();
-  return (
-    pay.includes('cash') ||
-    pay.includes('cod') ||
-    o.expectedCash != null ||
-    o.cashCollected != null ||
-    o.cash != null
-  );
-}
-
-function cashOutstanding(o: OrderListDto): number {
-  const collected = Number(o.cashCollected ?? 0);
-  const handed = Number(o.cashHandedOverAmount ?? 0);
-  return Math.max(0, collected - handed);
-}
-
-function isHandoverPending(o: OrderListDto): boolean {
-  return isCodLike(o) && Number(o.cashCollected ?? 0) > 0 && cashOutstanding(o) > 0.0001;
-}
-
-function isHandoverComplete(o: OrderListDto): boolean {
-  const collected = Number(o.cashCollected ?? 0);
-  return (
-    isCodLike(o) &&
-    collected > 0 &&
-    cashOutstanding(o) <= 0.0001 &&
-    (!!o.cashHandedOverAt || Number(o.cashHandedOverAmount ?? 0) >= collected)
-  );
-}
+import {
+  cashOutstanding,
+  isHandoverComplete,
+  isHandoverPending,
+} from '../operations/cashHandover';
 
 export default function PaymentsPage() {
   const [data, setData] = useState<PaymentsDashboard | null>(null);

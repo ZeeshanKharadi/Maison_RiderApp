@@ -111,9 +111,9 @@ export function filterAndSortHistory(
         );
       case 'highest_amount':
         // Order total is supplied by the API; rider fee/tip often are not.
-        return b.orderAmount - a.orderAmount;
+        return (b.orderAmount ?? 0) - (a.orderAmount ?? 0);
       case 'lowest_amount':
-        return a.orderAmount - b.orderAmount;
+        return (a.orderAmount ?? 0) - (b.orderAmount ?? 0);
       case 'longest_distance':
         return (b.distanceMiles ?? -1) - (a.distanceMiles ?? -1);
       case 'shortest_distance':

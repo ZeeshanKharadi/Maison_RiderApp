@@ -30,14 +30,20 @@ export function parseApiDate(value?: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** ISO string for UI storage; falls back to now when unparseable. */
+/**
+ * ISO string for UI storage.
+ * For display ages, pass `fallbackNow: false` — never invent "now" for invalid stamps.
+ */
 export function toApiIso(value?: string | null, fallbackNow = true): string {
   const d = parseApiDate(value);
   if (d) return d.toISOString();
   return fallbackNow ? new Date().toISOString() : '';
 }
 
-/** Prefer the freshest API instant (e.g. updatedAt over createdAt for "posted"). */
+/**
+ * Prefer primary when parseable, else fallback.
+ * For display, use `fallbackNow: false` so missing API times stay empty.
+ */
 export function toApiIsoPrefer(
   primary?: string | null,
   fallback?: string | null,

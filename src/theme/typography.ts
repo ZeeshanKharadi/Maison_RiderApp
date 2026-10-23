@@ -2,6 +2,12 @@ import { TextStyle } from 'react-native';
 import { colors } from './colors';
 
 /**
+ * Cap system font scaling so layouts stay usable on large accessibility sizes.
+ * Apply via `maxFontSizeMultiplier` on Text / TextInput.
+ */
+export const MAX_FONT_SIZE_MULTIPLIER = 1.35;
+
+/**
  * Typography scale — system fonts for performance & platform feel.
  * Use these styles via StyleSheet or spread into Text style arrays.
  */
@@ -25,6 +31,14 @@ export const typography = {
     fontSize: 18,
     fontWeight: '700',
     lineHeight: 24,
+    color: colors.textPrimary,
+  } satisfies TextStyle,
+
+  /** Section headings on main screens (Dashboard, lists, etc.). */
+  section: {
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 22,
     color: colors.textPrimary,
   } satisfies TextStyle,
 
@@ -53,14 +67,14 @@ export const typography = {
     fontSize: 12,
     fontWeight: '400',
     lineHeight: 16,
-    color: colors.textMuted,
+    color: colors.textSecondary,
   } satisfies TextStyle,
 
   label: {
     fontSize: 11,
     fontWeight: '700',
     lineHeight: 14,
-    color: colors.textMuted,
+    color: colors.textSecondary,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
   } satisfies TextStyle,

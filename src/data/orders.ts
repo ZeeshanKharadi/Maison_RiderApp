@@ -4,7 +4,8 @@
 
 import { parseApiDate } from '../utils/apiDate';
 
-export type PaymentMethod = 'card' | 'cash' | 'wallet';
+/** Rider payment method — `unknown` when the API did not confirm cash/card/wallet. */
+export type PaymentMethod = 'card' | 'cash' | 'wallet' | 'unknown';
 export type OrderPriority = 'normal' | 'high' | 'urgent';
 
 export type TimelineEvent = {
@@ -20,6 +21,11 @@ export type AvailableOrder = {
   backendId?: number;
   /** External POS/order id from AssignOrder */
   externalOrderId?: string;
+  /**
+   * Short POS order number when the API provides one (orderNo / displayOrderNo).
+   * Prefer for list cards; never invent a value.
+   */
+  orderNo?: string;
   /** AssignOrder storeId */
   storeId?: string;
   storeLat?: number | null;
@@ -35,7 +41,8 @@ export type AvailableOrder = {
   distanceMiles: number | null;
   /** Minutes when known from routing; null when unavailable */
   etaMinutes: number | null;
-  orderAmount: number;
+  /** Order total when known from the API — never invent 0 for missing values. */
+  orderAmount: number | null;
   deliveryFee: number;
   paymentMethod: PaymentMethod;
   isCod: boolean;
@@ -84,8 +91,21 @@ export type AvailableOrder = {
   specialInstructions?: string;
   items: number;
   packageInfo: string;
-  /** When the offer was posted */
-  postedAt: string; // ISO
+  /**
+   * Order CreatedAt from the API (sticky insert). Never derived from updatedAt.
+   * Null when the API stamp is missing/invalid — do not invent "now".
+   */
+  createdAt?: string | null;
+  /**
+   * When this offer became / was last refreshed Available (UpdatedAt, else CreatedAt).
+   * Used for list "ago" — not the same as order creation.
+   */
+  availableSince?: string | null;
+  /**
+   * @deprecated Prefer availableSince for offer age; kept as alias for sort/compat.
+   * Must not be treated as creation time.
+   */
+  postedAt: string; // ISO or '' when unknown
   imageColor: string;
   timeline: TimelineEvent[];
 };
@@ -354,23 +374,41 @@ export function filterAndSortOrders(
           (b.etaMinutes ?? Number.POSITIVE_INFINITY);
       case 'latest':
       default:
-        return new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime();
+        return offerAgeMs(b) - offerAgeMs(a);
     }
   });
 
   return list;
 }
 
-export function formatPostedAgo(iso: string, now = Date.now()): string {
+/** Epoch ms for offer age; invalid/empty sorts as oldest (never NaN). */
+export function offerAgeMs(order: {
+  postedAt?: string | null;
+  availableSince?: string | null;
+}): number {
+  const raw = order.availableSince || order.postedAt || '';
+  if (!String(raw).trim()) return Number.NEGATIVE_INFINITY;
+  const t = parseApiDate(raw)?.getTime();
+  return t != null && Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+}
+
+/** Relative age for Available-since / offer freshness. Never invents "now" for bad input. */
+export function formatPostedAgo(
+  iso: string | null | undefined,
+  now = Date.now(),
+): string {
+  if (iso == null || !String(iso).trim()) return 'Unknown time';
   const parsed = parseApiDate(iso);
-  const t = parsed?.getTime() ?? new Date(iso).getTime();
-  if (!Number.isFinite(t)) return 'Just now';
+  const t = parsed?.getTime();
+  if (t == null || !Number.isFinite(t)) return 'Unknown time';
   const mins = Math.max(0, Math.floor((now - t) / 60000));
   if (mins < 1) return 'Just now';
   if (mins === 1) return '1 min ago';
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.floor(mins / 60);
-  return hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
+  if (hrs < 24) return hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? '1 day ago' : `${days} days ago`;
 }
 
 export function paymentLabel(method: PaymentMethod): string {
@@ -379,7 +417,70 @@ export function paymentLabel(method: PaymentMethod): string {
       return 'Cash';
     case 'wallet':
       return 'Wallet';
+    case 'unknown':
+      return 'Unknown';
     default:
       return 'Card';
   }
+}
+
+export type RiderOfferPaymentKind = 'collect' | 'paid' | 'unknown';
+
+export type RiderOfferPaymentDisplay = {
+  kind: RiderOfferPaymentKind;
+  /** Single chip line — includes the one clear amount when known. */
+  label: string;
+};
+
+function formatOfferAmount(amount: number): string {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '';
+  return `Rs. ${n.toFixed(2)}`;
+}
+
+/**
+ * Rider-facing payment chip for available offers.
+ * - Cash/COD: Collect Rs. X from authoritative expectedCash (never OrderTotal).
+ * - Confirmed card/wallet: Already paid (+ order total once when known).
+ * - Unknown method/amount: clear unknown — never invent zero or assume paid.
+ */
+export function riderOfferPaymentDisplay(order: {
+  isCod: boolean;
+  paymentMethod: PaymentMethod;
+  expectedCash?: number | null;
+  orderAmount?: number | null;
+}): RiderOfferPaymentDisplay {
+  if (order.isCod) {
+    const expected = order.expectedCash;
+    if (expected != null && Number.isFinite(Number(expected))) {
+      return {
+        kind: 'collect',
+        label: `Collect ${formatOfferAmount(Number(expected))}`,
+      };
+    }
+    return { kind: 'unknown', label: 'Collect cash · amount unknown' };
+  }
+
+  if (order.paymentMethod === 'card' || order.paymentMethod === 'wallet') {
+    const total = order.orderAmount;
+    if (total != null && Number.isFinite(Number(total))) {
+      return {
+        kind: 'paid',
+        label: `Already paid · ${formatOfferAmount(Number(total))}`,
+      };
+    }
+    return { kind: 'paid', label: 'Already paid' };
+  }
+
+  return { kind: 'unknown', label: 'Payment unknown' };
+}
+
+/** @deprecated Prefer {@link riderOfferPaymentDisplay} */
+export function riderOfferPaymentLabel(order: {
+  isCod: boolean;
+  paymentMethod: PaymentMethod;
+  expectedCash?: number | null;
+  orderAmount?: number | null;
+}): string {
+  return riderOfferPaymentDisplay(order).label;
 }

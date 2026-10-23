@@ -25,6 +25,7 @@ import {
   NotificationCategory,
   formatNotificationTime,
 } from '../data/account';
+import { openNotificationFromInbox } from '../navigation/notificationOrderNavigation';
 import { colors, elevation, radius, spacing, typography } from '../theme';
 import { TOUCH_TARGET } from '../theme/spacing';
 
@@ -41,11 +42,11 @@ const CATEGORIES: Array<NotificationCategory | 'all'> = [
 
 const NotificationRow = React.memo(function NotificationRow({
   item,
-  onRead,
+  onOpen,
   onDelete,
 }: {
   item: AppNotification;
-  onRead: (id: string) => void;
+  onOpen: (item: AppNotification) => void;
   onDelete: (id: string) => void;
 }) {
   const priorityTone =
@@ -58,7 +59,7 @@ const NotificationRow = React.memo(function NotificationRow({
   return (
     <TouchableOpacity
       style={[styles.card, !item.read && styles.cardUnread]}
-      onPress={() => onRead(item.id)}
+      onPress={() => onOpen(item)}
       accessibilityRole="button"
       accessibilityLabel={`${item.title}. ${item.read ? 'Read' : 'Unread'}`}
       activeOpacity={0.85}>
@@ -109,7 +110,6 @@ export default function NotificationsScreen() {
   const {
     unreadCount,
     filterNotifications,
-    markNotificationRead,
     markAllNotificationsRead,
     deleteNotification,
     clearAllNotifications,
@@ -135,10 +135,10 @@ export default function NotificationsScreen() {
     }
   }, [refreshNotifications]);
 
-  const onRead = useCallback(
-    (id: string) => markNotificationRead(id),
-    [markNotificationRead],
-  );
+  const onOpen = useCallback((item: AppNotification) => {
+    // Shared resolver: mark read, fetch authorised order, open the right screen.
+    openNotificationFromInbox(item);
+  }, []);
 
   const onDelete = useCallback(
     (id: string) => {
@@ -169,9 +169,9 @@ export default function NotificationsScreen() {
 
   const renderItem: ListRenderItem<AppNotification> = useCallback(
     ({ item }) => (
-      <NotificationRow item={item} onRead={onRead} onDelete={onDelete} />
+      <NotificationRow item={item} onOpen={onOpen} onDelete={onDelete} />
     ),
-    [onRead, onDelete],
+    [onOpen, onDelete],
   );
 
   const keyExtractor = useCallback((item: AppNotification) => item.id, []);

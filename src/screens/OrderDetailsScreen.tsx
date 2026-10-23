@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -27,10 +27,11 @@ import { useNetworkConnectivity } from '../connectivity/NetworkConnectivityConte
 import { navigate } from '../navigation/RootNavigation';
 import {
   formatPostedAgo,
-  paymentLabel,
+  riderOfferPaymentDisplay,
   RejectReason,
 } from '../data/orders';
 import { formatMoney, formatTime } from '../utils/format';
+import { formatMilesAsKm } from '../utils/geo';
 import { MainStackParamList } from '../navigation/MainNavigator';
 import {
   navigationInputForKind,
@@ -206,13 +207,6 @@ export default function OrderDetailsScreen() {
     );
   }, [order, activeJobs, navigation]);
 
-  const priorityTone = useMemo(() => {
-    if (!order) return 'neutral' as const;
-    if (order.priority === 'urgent') return 'error' as const;
-    if (order.priority === 'high') return 'warning' as const;
-    return 'neutral' as const;
-  }, [order]);
-
   if (resolving) {
     return (
       <View style={styles.container}>
@@ -249,10 +243,27 @@ export default function OrderDetailsScreen() {
     );
   }
 
+  const shortNo = (order.orderNo ?? '').trim();
+  const headerTitle = shortNo || order.id;
+  const fullId =
+    (order.externalOrderId ?? '').trim() ||
+    (order.id !== headerTitle ? order.id : '');
+  const offerPay = riderOfferPaymentDisplay(order);
+  const hasDistance =
+    order.distanceMiles != null &&
+    Number.isFinite(order.distanceMiles) &&
+    order.distanceMiles > 0;
+  const hasEta =
+    order.etaMinutes != null &&
+    Number.isFinite(order.etaMinutes) &&
+    order.etaMinutes > 0;
+  const hasOrderTotal =
+    order.orderAmount != null && Number.isFinite(order.orderAmount);
+
   return (
     <View style={styles.container}>
       <AppHeader
-        title={order.id}
+        title={headerTitle}
         showBack
         onBackPress={() => navigation.goBack()}
       />
@@ -263,27 +274,45 @@ export default function OrderDetailsScreen() {
         <NoConnectionBanner detail="Connect to the internet to accept or reject. Actions are not queued offline." />
         <View style={styles.statusRow}>
           <StatusPill label="Available" tone="info" />
-          <Text style={styles.posted}>{formatPostedAgo(order.postedAt)}</Text>
+          <View style={styles.timeCol}>
+            <Text style={styles.posted}>
+              Available {formatPostedAgo(order.availableSince || order.postedAt)}
+            </Text>
+            {order.createdAt ? (
+              <Text style={styles.createdAt}>
+                Created {formatPostedAgo(order.createdAt)}
+              </Text>
+            ) : null}
+          </View>
         </View>
+
+        {fullId ? (
+          <Text style={styles.fullId} accessibilityLabel={`Full order id ${fullId}`}>
+            Full id · {fullId}
+          </Text>
+        ) : null}
 
         <Text style={styles.restaurant}>{order.restaurant}</Text>
         <Text style={styles.customer}>{order.customerName}</Text>
 
         <View style={styles.badges}>
-          {order.isCod ? <Badge label="COD" tone="warning" icon="cash" /> : null}
-          {order.priority !== 'normal' ? (
-            <Badge
-              label={order.priority === 'urgent' ? 'Urgent' : 'Priority'}
-              tone={priorityTone === 'error' ? 'error' : 'warning'}
-              icon="flag"
-            />
-          ) : null}
-          {order.express ? (
-            <Badge label="Express" tone="info" icon="lightning-bolt" />
-          ) : null}
-          {order.fragile ? (
-            <Badge label="Fragile" tone="star" icon="glass-fragile" />
-          ) : null}
+          <Badge
+            label={offerPay.label}
+            tone={
+              offerPay.kind === 'collect'
+                ? 'warning'
+                : offerPay.kind === 'paid'
+                  ? 'success'
+                  : 'neutral'
+            }
+            icon={
+              offerPay.kind === 'collect'
+                ? 'cash'
+                : offerPay.kind === 'paid'
+                  ? 'credit-card-check-outline'
+                  : 'help-circle-outline'
+            }
+          />
         </View>
 
         <View style={styles.summary}>
@@ -294,19 +323,21 @@ export default function OrderDetailsScreen() {
               highlight
             />
           ) : null}
-          <SummaryCell label="Order" value={formatMoney(order.orderAmount)} />
-          <SummaryCell
-            label="Distance"
-            value={
-              order.distanceMiles != null
-                ? `${order.distanceMiles} mi`
-                : '—'
-            }
-          />
-          <SummaryCell
-            label="ETA"
-            value={order.etaMinutes != null ? `${order.etaMinutes} min` : '—'}
-          />
+          {hasOrderTotal && offerPay.kind !== 'paid' ? (
+            <SummaryCell label="Order" value={formatMoney(order.orderAmount!)} />
+          ) : null}
+          {hasDistance ? (
+            <SummaryCell
+              label="Distance"
+              value={formatMilesAsKm(order.distanceMiles!)}
+            />
+          ) : null}
+          {hasEta ? (
+            <SummaryCell
+              label="ETA"
+              value={`${Math.round(order.etaMinutes!)} min`}
+            />
+          ) : null}
         </View>
 
         <SectionHeader title="Timeline" />
@@ -363,14 +394,9 @@ export default function OrderDetailsScreen() {
         <SectionHeader title="Payment & package" />
         <View style={styles.card}>
           <InfoRow
-            icon="credit-card-outline"
-            label="Payment"
-            value={paymentLabel(order.paymentMethod)}
-          />
-          <InfoRow
             icon="cash"
-            label="COD status"
-            value={order.isCod ? 'Collect on delivery' : 'Prepaid'}
+            label="Payment"
+            value={offerPay.label}
           />
           <InfoRow
             icon="package-variant"
@@ -389,7 +415,7 @@ export default function OrderDetailsScreen() {
         <SectionHeader title="Quick actions" />
         <View style={styles.dummyRow}>
           <AppButton
-            label="Call"
+            label="Call customer"
             icon="phone"
             variant="ghost"
             style={styles.dummyBtn}
@@ -480,8 +506,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
   },
+  timeCol: {
+    alignItems: 'flex-end',
+    flexShrink: 1,
+    marginLeft: spacing.sm,
+  },
   posted: {
     ...typography.caption,
+  },
+  createdAt: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  fullId: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
   },
   restaurant: {
     ...typography.heading,

@@ -14,7 +14,7 @@ import {
 import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import * as deviceTokenRepository from '../repositories/deviceTokenRepository';
 import * as notificationsRepository from '../repositories/notificationsRepository';
-import { navigationRef, navigate } from '../navigation/RootNavigation';
+import { handleNotificationNavigation } from '../navigation/notificationOrderNavigation';
 import {
   applyPushSyncIntent,
   resolvePushSyncIntent,
@@ -261,6 +261,9 @@ class NotificationService {
     }
     this.listenersSetup = true;
 
+    // Ensure Android channel exists before any foreground/background display.
+    void this.initializeChannels();
+
     const queue = new Set<string>();
 
     const unsubscribeForeground = onMessage(messaging, async remoteMessage => {
@@ -306,6 +309,13 @@ class NotificationService {
       }
     });
 
+    // Cold start from a Notifee-displayed notification (foreground → killed/background).
+    void notifee.getInitialNotification().then(initial => {
+      if (initial?.notification?.data) {
+        this.handleNotificationNavigation(initial.notification.data);
+      }
+    });
+
     const notifeeUnsubscribe = notifee.onForegroundEvent(({ type, detail }) => {
       if (type === EventType.PRESS) {
         this.handleNotificationNavigation(detail.notification?.data);
@@ -326,15 +336,9 @@ class NotificationService {
     };
   }
 
+  /** Shared with inbox — queues until auth/navigation ready. */
   handleNotificationNavigation(data?: Record<string, unknown> | null): void {
-    if (!data || !navigationRef.isReady()) return;
-    if (
-      data.category === 'orders' ||
-      data.screen === 'notifications' ||
-      data.screen === 'Notifications'
-    ) {
-      navigate('MainDrawer', { screen: 'Notifications' });
-    }
+    handleNotificationNavigation(data ?? null);
   }
 
   fetchNotifications = notificationsRepository.fetchNotifications;

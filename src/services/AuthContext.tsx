@@ -11,6 +11,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as accountRepository from '../repositories/accountRepository';
 import * as authRepository from '../repositories/authRepository';
 import { clearTokens, getAccessToken } from '../api/tokenStorage';
+import { clearNotificationOrderNavigation } from '../navigation/notificationOrderNavigation';
+import {
+  beginAuthLogout,
+  captureAuthSession,
+  endAuthLogout,
+  establishAuthSession,
+  getAuthSessionGeneration,
+  isAuthSessionCurrent,
+} from '../utils/authSession';
 import notificationService from './NotificationService';
 import { stopNativeLocationTracking } from './locationTrackingNative';
 import { loginUser } from './UserService';
@@ -33,6 +42,8 @@ interface AuthContextType {
   isLoading: boolean;
   splashDone: boolean;
   setSplashDone: (done: boolean) => void;
+  /** Monotonic auth-session generation — bumps on logout start and account replace. */
+  authSessionGeneration: number;
   login: (
     employeeId: string,
     password: string,
@@ -65,22 +76,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [splashDone, setSplashDone] = useState(false);
+  const [authSessionGeneration, setAuthSessionGeneration] = useState(0);
 
-  const persistUser = useCallback(async (next: User) => {
-    setUser(next);
-    await AsyncStorage.setItem('user', serializeUser(next));
+  const syncGenerationState = useCallback(() => {
+    setAuthSessionGeneration(getAuthSessionGeneration());
   }, []);
 
+  const persistUser = useCallback(
+    async (next: User) => {
+      establishAuthSession(next.id);
+      syncGenerationState();
+      setUser(next);
+      await AsyncStorage.setItem('user', serializeUser(next));
+    },
+    [syncGenerationState],
+  );
+
   const refreshUser = useCallback(async () => {
+    // Capture before any await — logout/account switch must discard this response.
+    const session = captureAuthSession();
+    if (!session) return;
+
     const token = await getAccessToken();
-    if (!token) return;
+    if (!token || !isAuthSessionCurrent(session)) return;
 
     const result = await authRepository.fetchCurrentUser();
+    if (!isAuthSessionCurrent(session)) return;
+
     if (result.ok) {
-      await persistUser(result.data);
+      // Profile refresh must not establish a new session or undo logout suspension.
+      if (result.data.id !== session.userId) return;
+      setUser(result.data);
+      await AsyncStorage.setItem('user', serializeUser(result.data));
+      if (!isAuthSessionCurrent(session)) return;
       void syncPushRegistrationFromStoredPreference();
     }
-  }, [persistUser]);
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -90,11 +121,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           getAccessToken(),
         ]);
         if (stored && token) {
-          setUser(JSON.parse(stored));
+          const parsed = JSON.parse(stored) as User;
+          establishAuthSession(parsed.id);
+          syncGenerationState();
+          setUser(parsed);
           await refreshUser();
         } else {
           await AsyncStorage.removeItem('user');
           await clearTokens();
+          endAuthLogout();
+          syncGenerationState();
         }
       } catch {
         // Keep session empty on corrupt storage
@@ -103,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
     init();
-  }, [refreshUser]);
+  }, [refreshUser, syncGenerationState]);
 
   const login = useCallback(
     async (employeeId: string, password: string) => {
@@ -120,43 +156,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    // Invalidate rider actions immediately — before any await — while JWT still exists
+    // for authenticated location/push/server cleanup.
+    beginAuthLogout();
+    syncGenerationState();
+    clearNotificationOrderNavigation();
+
     try {
-      await stopNativeLocationTracking();
-    } catch {
-      /* ignore */
+      try {
+        await stopNativeLocationTracking();
+      } catch {
+        /* ignore */
+      }
+
+      // Revoke this device's FCM registration while the JWT is still valid.
+      const deviceToken = await notificationService.peekFcmToken();
+      let tokenRemoved = deviceToken == null;
+
+      if (deviceToken) {
+        tokenRemoved = await notificationService.removeTokenFromBackend();
+      }
+
+      // Same authenticated logout can also revoke the token if DELETE failed.
+      const serverLogout = await authRepository.logout(
+        !tokenRemoved && deviceToken
+          ? { deviceToken }
+          : undefined,
+      );
+      if (serverLogout.ok && deviceToken && !tokenRemoved) {
+        tokenRemoved = true;
+      }
+
+      // Local sign-out always proceeds.
+      setUser(null);
+      await AsyncStorage.removeItem('user');
+      await clearTokens();
+
+      const cleanup = resolveLogoutPushCleanupStatus({
+        hadDeviceToken: deviceToken != null,
+        removed: tokenRemoved,
+      });
+      if (cleanup.kind === 'failed') {
+        Alert.alert('Signed out', cleanup.message);
+      }
+    } finally {
+      endAuthLogout();
+      syncGenerationState();
     }
-
-    // Revoke this device's FCM registration while the JWT is still valid.
-    const deviceToken = await notificationService.peekFcmToken();
-    let tokenRemoved = deviceToken == null;
-
-    if (deviceToken) {
-      tokenRemoved = await notificationService.removeTokenFromBackend();
-    }
-
-    // Same authenticated logout can also revoke the token if DELETE failed.
-    const serverLogout = await authRepository.logout(
-      !tokenRemoved && deviceToken
-        ? { deviceToken }
-        : undefined,
-    );
-    if (serverLogout.ok && deviceToken && !tokenRemoved) {
-      tokenRemoved = true;
-    }
-
-    // Local sign-out always proceeds.
-    setUser(null);
-    await AsyncStorage.removeItem('user');
-    await clearTokens();
-
-    const cleanup = resolveLogoutPushCleanupStatus({
-      hadDeviceToken: deviceToken != null,
-      removed: tokenRemoved,
-    });
-    if (cleanup.kind === 'failed') {
-      Alert.alert('Signed out', cleanup.message);
-    }
-  }, []);
+  }, [syncGenerationState]);
 
   const value = useMemo(
     () => ({
@@ -164,11 +211,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       splashDone,
       setSplashDone,
+      authSessionGeneration,
       login,
       logout,
       refreshUser,
     }),
-    [user, isLoading, splashDone, login, logout, refreshUser],
+    [
+      user,
+      isLoading,
+      splashDone,
+      authSessionGeneration,
+      login,
+      logout,
+      refreshUser,
+    ],
   );
 
   return (

@@ -23,12 +23,12 @@ export const colors = {
   borderStrong: '#D0D0D0',
   borderInput: '#F0D0D0',
 
-  // Text
+  // Text — secondary/muted tuned for readable contrast on white/light grey
   textPrimary: '#1A1A1A',
-  textSecondary: '#666666',
-  textMuted: '#999999',
+  textSecondary: '#4A4A4A',
+  textMuted: '#5C5C5C',
   textOnPrimary: '#FFFFFF',
-  textDisabled: '#BDBDBD',
+  textDisabled: '#9E9E9E',
 
   // Semantic
   success: '#2E7D32',

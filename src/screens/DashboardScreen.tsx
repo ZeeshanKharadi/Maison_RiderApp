@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppState,
@@ -18,11 +18,12 @@ import { useRiderSession } from '../context/RiderSessionContext';
 import { useAccount } from '../context/AccountContext';
 import { navigate } from '../navigation/RootNavigation';
 import OrderCard from '../components/OrderCard';
+import AcceptSelectedBar from '../components/AcceptSelectedBar';
+import ActiveOrderSelector from '../components/delivery/ActiveOrderSelector';
 import {
   AppButton,
   EmptyState,
   SectionHeader,
-  StatCard,
   StatusPill,
   confirmDialog,
   RejectReasonSheet,
@@ -44,8 +45,13 @@ import * as ordersRepository from '../repositories/ordersRepository';
 import type { RiderPerformance } from '../repositories/ordersRepository';
 import type { AvailableOrder, RejectReason } from '../data/orders';
 import {
+  captureAuthSession,
+  isAuthSessionCurrent,
+} from '../utils/authSession';
+import {
   colors,
   elevation,
+  MAX_FONT_SIZE_MULTIPLIER,
   radius,
   spacing,
   TOUCH_TARGET,
@@ -56,9 +62,48 @@ function goStack(screen: string) {
   navigate('MainDrawer', { screen });
 }
 
+type SummaryMetricProps = {
+  icon: string;
+  label: string;
+  value: string;
+  valueColor?: string;
+  iconColor?: string;
+};
+
+function SummaryMetricCard({
+  icon,
+  label,
+  value,
+  valueColor = colors.primaryDark,
+  iconColor = colors.primaryDark,
+}: SummaryMetricProps) {
+  return (
+    <View
+      style={styles.metricCard}
+      accessibilityRole="summary"
+      accessibilityLabel={`${label}: ${value}`}>
+      <Icon name={icon} size={18} color={iconColor} />
+      <Text
+        style={styles.metricLabel}
+        numberOfLines={2}
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {label}
+      </Text>
+      <Text
+        style={[styles.metricValue, { color: valueColor }]}
+        numberOfLines={2}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 /**
- * Rider command center — answers: online? active job? what's next?
- * Summary metrics come from GET /api/Order/Performance (not session-local estimates).
+ * Rider command center — online status, active job, available offers, then today.
+ * Detailed performance stays in the side menu (Performance / History / Wallet).
  */
 export default function DashboardScreen() {
   const navigation = useNavigation();
@@ -71,6 +116,8 @@ export default function DashboardScreen() {
     shiftStartedAt,
     activeJob,
     activeJobs,
+    selectedJobId,
+    selectActiveJob,
     restoreActiveDeliveries,
   } = useRiderSession();
   const { profile, unreadCount } = useAccount();
@@ -79,16 +126,21 @@ export default function DashboardScreen() {
     accepting,
     acceptingOrderKey,
     acceptOrder,
+    acceptSelectedOrders,
     rejectOrder,
     refreshOrders,
+    selectedKeys,
+    remainingSlots,
+    isOrderSelected,
+    toggleOrderSelected,
   } = useAvailableOrders();
   const { isConnected } = useNetworkConnectivity();
 
   const [now, setNow] = useState(() => new Date());
   const [todayPerf, setTodayPerf] = useState<RiderPerformance | null>(null);
   const [rejectTarget, setRejectTarget] = useState<AvailableOrder | null>(null);
+  const perfRequestIdRef = useRef(0);
 
-  // Tick working-hours clock while online (stops when offline).
   useEffect(() => {
     if (!isOnline || !shiftStartedAt) {
       setNow(new Date());
@@ -100,13 +152,24 @@ export default function DashboardScreen() {
   }, [isOnline, shiftStartedAt]);
 
   const loadPerformance = useCallback(async () => {
+    const session = captureAuthSession();
+    if (!session) return;
+
+    const requestId = ++perfRequestIdRef.current;
     const end = new Date();
     const todayWin = performanceTodayWindow(end);
     const today = await ordersRepository.fetchPerformance({
       from: todayWin.from,
       to: todayWin.to,
     });
-    // Clear on failure so we never show another rider's (or stale) values.
+
+    // Drop overlapping / post-logout responses.
+    if (
+      requestId !== perfRequestIdRef.current ||
+      !isAuthSessionCurrent(session)
+    ) {
+      return;
+    }
     setTodayPerf(today.ok ? today.data : null);
   }, []);
 
@@ -118,7 +181,6 @@ export default function DashboardScreen() {
   useEffect(() => {
     const unsub = navigation.addListener?.('focus', () => {
       void loadPerformance();
-      // Show cancel alerts when FCM was missed; session/durable markers dedupe.
       void restoreActiveDeliveries();
       void refreshOrders();
     });
@@ -127,12 +189,13 @@ export default function DashboardScreen() {
     };
   }, [navigation, loadPerformance, restoreActiveDeliveries, refreshOrders]);
 
-  // Foreground-only sync. Never suppress cancel alerts on this path.
+  // Single dashboard refresh tick — orders, active jobs, and financial summary.
   useEffect(() => {
     const tick = () => {
       if (AppState.currentState !== 'active') return;
       void restoreActiveDeliveries();
       void refreshOrders();
+      void loadPerformance();
     };
     const id = setInterval(tick, 15_000);
     const sub = AppState.addEventListener('change', state => {
@@ -142,7 +205,7 @@ export default function DashboardScreen() {
       clearInterval(id);
       sub.remove();
     };
-  }, [restoreActiveDeliveries, refreshOrders]);
+  }, [restoreActiveDeliveries, refreshOrders, loadPerformance]);
 
   const greeting = useMemo(() => getGreeting(now), [now]);
   const dateLabel = useMemo(() => formatDashboardDate(now), [now]);
@@ -151,6 +214,7 @@ export default function DashboardScreen() {
     [shiftStartedAt, now],
   );
 
+  const activeCount = activeJobs.length;
   const activeConfig = activeJob ? getStateConfig(activeJob.state) : null;
   const activeProgress = activeJob ? jobProgress(activeJob) : 0;
 
@@ -213,9 +277,20 @@ export default function DashboardScreen() {
     [accepting, activeJobs, acceptOrder, isOnline, isConnected],
   );
 
+  const handleAcceptSelected = useCallback(async () => {
+    if (accepting || selectedKeys.length === 0) return;
+    const result = await acceptSelectedOrders();
+    if (result.ok) {
+      goStack('ActiveDelivery');
+    }
+  }, [accepting, selectedKeys.length, acceptSelectedOrders]);
+
   const handleRejectPress = useCallback((order: AvailableOrder) => {
     setRejectTarget(order);
   }, []);
+
+  const selectionAtCap =
+    remainingSlots <= 0 || selectedKeys.length >= remainingSlots;
 
   const handleRejectConfirm = useCallback(
     async (reason: RejectReason) => {
@@ -258,11 +333,36 @@ export default function DashboardScreen() {
     goStack('ActiveDelivery');
   }, []);
 
+  const statusSub = !isConnected
+    ? 'Reconnect to sync'
+    : isOnline
+      ? `Shift duration ${workingHours}${
+          shiftStartedAt ? ` · since ${formatShiftClock(shiftStartedAt)}` : ''
+        }`
+      : 'Go online to receive orders';
+
+  const payValue =
+    todayPerf?.deliveryPayAvailable && todayPerf.estimatedDeliveryPay != null
+      ? formatMoney(todayPerf.estimatedDeliveryPay)
+      : '—';
+  const deliveredValue = todayPerf ? String(todayPerf.completedCount) : '—';
+  const cashCollectedValue = todayPerf
+    ? formatMoney(todayPerf.codCollected)
+    : '—';
+  const cashHandValue = todayPerf
+    ? formatMoney(todayPerf.codOutstanding)
+    : '—';
+  const onlineHoursValue = todayPerf
+    ? `${Number(todayPerf.onlineHours).toFixed(1)}h`
+    : '—';
+
   return (
     <View style={styles.container}>
-      {/* 1. Greeting */}
       <View
-        style={[styles.greetingHeader, { paddingTop: Math.max(insets.top, spacing.sm) }]}>
+        style={[
+          styles.greetingHeader,
+          { paddingTop: Math.max(insets.top, spacing.sm) },
+        ]}>
         <TouchableOpacity
           onPress={openMenu}
           style={styles.iconHit}
@@ -305,212 +405,217 @@ export default function DashboardScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          selectedKeys.length > 0 && { paddingBottom: spacing.xxxl + 72 },
+        ]}
         showsVerticalScrollIndicator={false}>
         <NoConnectionBanner detail="Phone has no internet. Dashboard numbers may show — until you reconnect. Status and COD changes are not queued offline." />
 
-        {/* 2. Online / Offline (shift status — not the same as Wi‑Fi) */}
+        {/* Compact online / offline */}
         <View
-          style={[styles.statusCard, !isOnline && styles.statusCardOffline]}
+          style={[styles.statusBar, !isOnline && styles.statusBarOffline]}
           accessibilityRole="summary"
           accessibilityLabel={
             isOnline
-              ? `Online. Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : ''}. Working ${workingHours}`
+              ? `Online. Shift duration ${workingHours}${
+                  shiftStartedAt
+                    ? `. Started ${formatShiftClock(shiftStartedAt)}`
+                    : ''
+                }`
               : 'Offline'
           }>
-          <View style={styles.statusTop}>
-            <View style={styles.statusLeft}>
-              <View
-                style={[
-                  styles.statusDot,
-                  { backgroundColor: isOnline ? colors.success : colors.textMuted },
-                ]}
-              />
-              <View>
-                <Text style={styles.statusTitle}>
-                  {isOnline ? 'You are online' : 'You are offline'}
-                </Text>
-                <Text style={styles.statusSub}>
-                  {!isConnected
-                    ? 'Shift status is separate from Wi‑Fi — reconnect to sync with the server'
-                    : isOnline
-                      ? `Shift started ${shiftStartedAt ? formatShiftClock(shiftStartedAt) : '—'}`
-                      : 'Go online to receive orders'}
-                </Text>
-              </View>
+          <View style={styles.statusLeft}>
+            <View
+              style={[
+                styles.statusDot,
+                {
+                  backgroundColor: isOnline
+                    ? colors.success
+                    : colors.textMuted,
+                },
+              ]}
+            />
+            <View style={styles.statusTextCol}>
+              <Text style={styles.statusTitle}>
+                {isOnline ? 'Online' : 'Offline'}
+              </Text>
+              <Text style={styles.statusSub} numberOfLines={2}>
+                {statusSub}
+              </Text>
             </View>
-            <Switch
-              value={isOnline}
-              onValueChange={handleOnlineChange}
-              disabled={!isConnected}
-              trackColor={{ false: colors.disabled, true: colors.successSoft }}
-              thumbColor={isOnline ? colors.success : colors.textMuted}
-              accessibilityLabel="Online status"
-              accessibilityState={{ checked: isOnline, disabled: !isConnected }}
+          </View>
+          <Switch
+            value={isOnline}
+            onValueChange={handleOnlineChange}
+            disabled={!isConnected}
+            trackColor={{ false: colors.disabled, true: colors.successSoft }}
+            thumbColor={isOnline ? colors.success : colors.textMuted}
+            accessibilityLabel="Online status"
+            accessibilityState={{ checked: isOnline, disabled: !isConnected }}
+          />
+        </View>
+
+        {/* Compact today summary — before active deliveries */}
+        <View
+          style={styles.summaryBlock}
+          accessibilityRole="summary"
+          accessibilityLabel={`Your pay today ${payValue}. Delivered today ${deliveredValue}. Cash collected today ${cashCollectedValue}. Cash to hand in ${cashHandValue}. Online hours today ${onlineHoursValue}.`}>
+          <View style={styles.summaryGrid}>
+            <SummaryMetricCard
+              icon="cash-plus"
+              label="Your pay today"
+              value={payValue}
+              iconColor={colors.success}
+              valueColor={colors.success}
+            />
+            <SummaryMetricCard
+              icon="package-variant-closed"
+              label="Delivered today"
+              value={deliveredValue}
+              iconColor={colors.primaryDark}
+              valueColor={colors.primaryDark}
+            />
+            <SummaryMetricCard
+              icon="cash"
+              label="Cash collected today"
+              value={cashCollectedValue}
+              iconColor={colors.primaryDark}
+              valueColor={colors.primaryDark}
+            />
+            <SummaryMetricCard
+              icon="cash-clock"
+              label="Cash to hand in"
+              value={cashHandValue}
+              iconColor={colors.warning}
+              valueColor={colors.warning}
             />
           </View>
-          {isOnline ? (
-            <View style={styles.statusMeta}>
-              <Icon name="clock-outline" size={16} color={colors.textSecondary} />
-              <Text style={styles.statusMetaText}>Working {workingHours}</Text>
-            </View>
+          <View style={styles.onlineHoursRow}>
+            <Icon name="clock-outline" size={16} color={colors.textSecondary} />
+            <Text
+              style={styles.onlineHoursLabel}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+              Online hours today
+            </Text>
+            <Text
+              style={styles.onlineHoursValue}
+              numberOfLines={1}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+              {onlineHoursValue}
+            </Text>
+          </View>
+          {todayPerf && !todayPerf.deliveryPayAvailable ? (
+            <Text
+              style={styles.payUnavailable}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+              {todayPerf.deliveryPayNote ||
+                'Your pay shows when the rate is set'}
+            </Text>
           ) : null}
         </View>
 
-        {/* 3. Today's Summary — keep Your pay + cash still to hand in */}
-        <SectionHeader title="Today" />
-        <View style={styles.statsRow}>
-          <StatCard
-            icon="package-variant"
-            label="Deliveries"
-            value={todayPerf ? String(todayPerf.completedCount) : '—'}
-          />
-          <StatCard
-            icon="cash"
-            label="Cash collected"
-            value={
-              todayPerf ? formatMoney(todayPerf.codCollected) : '—'
-            }
-          />
-        </View>
-        <View style={styles.statsRow}>
-          <StatCard
-            icon="timer-outline"
-            label="Online hours"
-            value={
-              todayPerf ? `${todayPerf.onlineHours.toFixed(1)}h` : '—'
-            }
-            iconColor={colors.info}
-          />
-          <StatCard
-            icon="cash-multiple"
-            label="Your pay"
-            value={
-              todayPerf?.deliveryPayAvailable &&
-              todayPerf.estimatedDeliveryPay != null
-                ? formatMoney(todayPerf.estimatedDeliveryPay)
-                : '—'
-            }
-            iconColor={colors.success}
-          />
-        </View>
-        <View style={styles.statsRow}>
-          <StatCard
-            icon="wallet-outline"
-            label="Cash to hand in"
-            value={
-              todayPerf ? formatMoney(todayPerf.codOutstanding) : '—'
-            }
-            iconColor={colors.warning}
-          />
-          <View style={{ flex: 1 }} />
-        </View>
-        {todayPerf && !todayPerf.deliveryPayAvailable ? (
-          <Text style={styles.summaryHint}>
-            {todayPerf.deliveryPayNote || 'Your pay shows when the rate is set'}
-          </Text>
-        ) : (
-          <Text style={styles.summaryHint}>
-            Your pay is what you earn · Cash to hand in is customer money
-          </Text>
-        )}
-
-        {/* 4. Active Delivery */}
-        <SectionHeader title="Active delivery" />
+        {/* Active delivery */}
         {activeJob && activeConfig ? (
-          <View
-            style={styles.activeCard}
-            accessibilityLabel={`Active order ${activeJob.id}, ${activeConfig.pillLabel}`}>
-            <View style={styles.activeTop}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.activeId}>{activeJob.id}</Text>
-                <Text style={styles.activeCustomer}>
-                  {activeJob.customerName} · {activeJob.restaurant}
-                </Text>
-              </View>
-              <StatusPill
-                label={activeConfig.pillLabel}
-                tone={activeConfig.pillTone}
+          <View style={styles.sectionBlock}>
+            <SectionHeader
+              title={
+                activeCount > 1
+                  ? `Active delivery · ${activeCount}`
+                  : 'Active delivery'
+              }
+            />
+            {activeCount > 1 ? (
+              <ActiveOrderSelector
+                jobs={activeJobs}
+                selectedJobId={selectedJobId}
+                onSelect={selectActiveJob}
+                embedded
               />
-            </View>
-
-            <View style={styles.routeMini}>
-              <View style={styles.routeDots}>
-                <View style={styles.dotPickup} />
-                <View style={styles.routeLine} />
-                <View style={styles.dotDrop} />
-              </View>
-              <View style={styles.routeText}>
-                <Text style={styles.routeLabel}>Pickup</Text>
-                <Text style={styles.routeValue} numberOfLines={1}>
-                  {activeJob.pickupAddress}
-                </Text>
-                <Text style={[styles.routeLabel, { marginTop: spacing.sm }]}>
-                  Drop-off
-                </Text>
-                <Text style={styles.routeValue} numberOfLines={1}>
-                  {activeJob.dropoffAddress}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.progressBlock}>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${activeProgress}%` },
-                  ]}
+            ) : null}
+            <View
+              style={styles.activeCard}
+              accessibilityLabel={`Active order ${activeJob.id}, ${activeConfig.pillLabel}`}>
+              <View style={styles.activeTop}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.activeId}>{activeJob.id}</Text>
+                  <Text style={styles.activeCustomer}>
+                    {activeJob.customerName} · {activeJob.restaurant}
+                  </Text>
+                </View>
+                <StatusPill
+                  label={activeConfig.pillLabel}
+                  tone={activeConfig.pillTone}
                 />
               </View>
-              <Text style={styles.progressLabel}>
-                {activeProgress}% · {activeConfig.title}
-              </Text>
+
+              <View style={styles.routeMini}>
+                <View style={styles.routeDots}>
+                  <View style={styles.dotPickup} />
+                  <View style={styles.routeLine} />
+                  <View style={styles.dotDrop} />
+                </View>
+                <View style={styles.routeText}>
+                  <Text style={styles.routeLabel}>Pickup</Text>
+                  <Text style={styles.routeValue} numberOfLines={1}>
+                    {activeJob.pickupAddress}
+                  </Text>
+                  <Text style={[styles.routeLabel, { marginTop: spacing.sm }]}>
+                    Drop-off
+                  </Text>
+                  <Text style={styles.routeValue} numberOfLines={1}>
+                    {activeJob.dropoffAddress}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.progressBlock}>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${activeProgress}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressLabel}>
+                  {activeProgress}% · {activeConfig.title}
+                </Text>
+              </View>
+
+              <AppButton
+                label={
+                  activeJob.state === 'RETURNING_TO_STORE'
+                    ? 'Return to store'
+                    : activeJob.state === 'AWAITING_STORE_RECEIPT'
+                      ? 'Waiting for store confirmation'
+                      : 'Continue delivery'
+                }
+                icon={
+                  activeJob.state === 'RETURNING_TO_STORE' ||
+                  activeJob.state === 'AWAITING_STORE_RECEIPT'
+                    ? 'store-marker'
+                    : 'navigation-variant'
+                }
+                fullWidth
+                onPress={handleContinueDelivery}
+                accessibilityLabel="Continue active delivery"
+              />
             </View>
-
-            <AppButton
-              label={
-                activeJob.state === 'RETURNING_TO_STORE'
-                  ? 'Return to store'
-                  : activeJob.state === 'AWAITING_STORE_RECEIPT'
-                    ? 'Awaiting store receipt'
-                    : 'Continue delivery'
-              }
-              icon={
-                activeJob.state === 'RETURNING_TO_STORE' ||
-                activeJob.state === 'AWAITING_STORE_RECEIPT'
-                  ? 'store-marker'
-                  : 'navigation-variant'
-              }
-              fullWidth
-              onPress={handleContinueDelivery}
-              accessibilityLabel="Continue active delivery"
-            />
           </View>
-        ) : (
-          <EmptyState
-            icon="motorbike"
-            title="No active delivery"
-            message={
-              isOnline
-                ? 'Accept an order below to start your next run.'
-                : 'Go online, then accept an order.'
-            }
-            actionLabel={isOnline ? undefined : 'Go online'}
-            onAction={
-              isOnline ? undefined : () => handleOnlineChange(true)
-            }
-          />
-        )}
+        ) : null}
 
-        {/* 5. Full available orders (same cards as Orders tab) */}
-        <SectionHeader title="Available orders" />
-        <Text style={styles.availableCount} accessibilityLiveRegion="polite">
-          {isOnline && isConnected ? `${orders.length} available` : ''}
-        </Text>
+        {/* Available orders — no View all */}
+        <SectionHeader
+          title={
+            isOnline && isConnected && orders.length > 0
+              ? `Available · ${orders.length}`
+              : 'Available orders'
+          }
+        />
         {!isOnline ? (
           <View style={styles.offlineBanner}>
-            <Icon name="bike-off" size={22} color={colors.textMuted} />
+            <Icon name="pause-circle-outline" size={22} color={colors.textMuted} />
             <View style={{ flex: 1 }}>
               <Text style={styles.offlineTitle}>Shift is offline</Text>
               <Text style={styles.offlineBody}>
@@ -539,20 +644,32 @@ export default function DashboardScreen() {
             onAction={() => void refreshOrders()}
           />
         ) : (
-          orders.map(order => {
-            const key = ordersRepository.orderListKey(order);
-            return (
-              <OrderCard
-                key={key}
-                order={order}
-                onPress={goOrderDetails}
-                onAccept={handleAccept}
-                onReject={handleRejectPress}
-                actionsDisabled={accepting || !isConnected}
-                isAccepting={acceptingOrderKey === key}
-              />
-            );
-          })
+          <>
+            {remainingSlots <= 0 ? (
+              <Text style={styles.limitHint}>
+                Active order limit reached (5). Finish a delivery before
+                accepting more.
+              </Text>
+            ) : null}
+            {orders.map(order => {
+              const key = ordersRepository.orderListKey(order);
+              const selected = isOrderSelected(order);
+              return (
+                <OrderCard
+                  key={key}
+                  order={order}
+                  onPress={goOrderDetails}
+                  onAccept={handleAccept}
+                  onReject={handleRejectPress}
+                  actionsDisabled={accepting || !isConnected}
+                  isAccepting={acceptingOrderKey === key}
+                  selected={selected}
+                  onToggleSelect={toggleOrderSelected}
+                  selectionDisabled={selectionAtCap && !selected}
+                />
+              );
+            })}
+          </>
         )}
       </ScrollView>
 
@@ -560,6 +677,14 @@ export default function DashboardScreen() {
         visible={!!rejectTarget}
         onClose={() => setRejectTarget(null)}
         onConfirm={reason => void handleRejectConfirm(reason)}
+      />
+
+      <AcceptSelectedBar
+        selectedCount={selectedKeys.length}
+        remainingSlots={remainingSlots}
+        onAcceptSelected={() => void handleAcceptSelected()}
+        disabled={!isConnected || !isOnline}
+        loading={accepting}
       />
     </View>
   );
@@ -628,22 +753,21 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: spacing.xxxl,
   },
-  statusCard: {
+  statusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.successSoft,
     ...elevation.small,
   },
-  statusCardOffline: {
+  statusBarOffline: {
     borderColor: colors.border,
-  },
-  statusTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
   statusLeft: {
     flexDirection: 'row',
@@ -651,50 +775,35 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     flex: 1,
     paddingRight: spacing.sm,
+    minWidth: 0,
   },
   statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  statusTextCol: {
+    flex: 1,
+    minWidth: 0,
   },
   statusTitle: {
     ...typography.bodyStrong,
-    fontSize: 16,
+    fontSize: 15,
   },
   statusSub: {
     ...typography.caption,
-    marginTop: 2,
+    marginTop: 1,
   },
-  statusMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  statusMetaText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  summaryHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-    marginTop: -spacing.xs,
+  sectionBlock: {
+    marginBottom: spacing.xs,
   },
   activeCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.md,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
     ...elevation.medium,
   },
   activeTop: {
@@ -773,7 +882,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -784,9 +893,70 @@ const styles = StyleSheet.create({
     ...typography.caption,
     marginTop: 2,
   },
-  availableCount: {
+  limitHint: {
     ...typography.caption,
-    marginTop: -spacing.sm,
+    color: colors.warning,
+    fontWeight: '600',
     marginBottom: spacing.sm,
+  },
+  summaryBlock: {
+    marginBottom: spacing.md,
+  },
+  summaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  metricCard: {
+    width: '48%',
+    flexGrow: 1,
+    flexBasis: '47%',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...elevation.small,
+    minHeight: 76,
+  },
+  metricLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    marginTop: spacing.xxs,
+  },
+  metricValue: {
+    ...typography.title,
+    fontSize: 18,
+    marginTop: 2,
+  },
+  onlineHoursRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...elevation.small,
+  },
+  onlineHoursLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    flex: 1,
+  },
+  onlineHoursValue: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+  },
+  payUnavailable: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
   },
 });

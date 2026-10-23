@@ -21,13 +21,21 @@ export function profileSeedForUser(
 }
 
 /**
- * Whether an async inbox response may update UI for the active rider session.
+ * Whether an async response may update UI / local state for the active rider session.
  * Late responses from a previous rider (or after logout) must be ignored.
  */
-export function shouldApplyInboxForRider(
+export function isActiveRiderSession(
   responseForUserId: string | null | undefined,
   activeUserId: string | null | undefined,
 ): boolean {
   if (!responseForUserId || !activeUserId) return false;
   return responseForUserId === activeUserId;
+}
+
+/** Inbox-specific alias — same semantics as {@link isActiveRiderSession}. */
+export function shouldApplyInboxForRider(
+  responseForUserId: string | null | undefined,
+  activeUserId: string | null | undefined,
+): boolean {
+  return isActiveRiderSession(responseForUserId, activeUserId);
 }

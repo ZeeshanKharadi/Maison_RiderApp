@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -9,13 +9,14 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
   AvailableOrder,
   formatPostedAgo,
-  paymentLabel,
+  riderOfferPaymentDisplay,
 } from '../data/orders';
-import { Badge, AppButton } from './ui';
-import { formatMoney } from '../utils/format';
+import { AppButton } from './ui';
+import { formatMilesAsKm } from '../utils/geo';
 import {
   colors,
   elevation,
+  MAX_FONT_SIZE_MULTIPLIER,
   radius,
   spacing,
   typography,
@@ -29,6 +30,10 @@ type Props = {
   actionsDisabled?: boolean;
   /** True only for the card whose Accept is in flight. */
   isAccepting?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (order: AvailableOrder) => void;
+  /** When true, checkbox cannot select (still allows deselect). */
+  selectionDisabled?: boolean;
 };
 
 function OrderCardComponent({
@@ -38,6 +43,9 @@ function OrderCardComponent({
   onReject,
   actionsDisabled,
   isAccepting,
+  selected,
+  onToggleSelect,
+  selectionDisabled,
 }: Props) {
   const handleAccept = useCallback(() => {
     if (actionsDisabled || isAccepting) return;
@@ -49,93 +57,150 @@ function OrderCardComponent({
     onReject(order);
   }, [actionsDisabled, onReject, order]);
 
+  const handleToggleSelect = useCallback(() => {
+    if (!onToggleSelect) return;
+    if (selectionDisabled && !selected) return;
+    if (actionsDisabled) return;
+    onToggleSelect(order);
+  }, [actionsDisabled, onToggleSelect, order, selected, selectionDisabled]);
+
+  const shortNo = (order.orderNo ?? '').trim();
+  const titleId = shortNo || order.id;
+  const payment = riderOfferPaymentDisplay(order);
+
+  const distanceLabel = useMemo(() => {
+    if (
+      order.distanceMiles == null ||
+      !Number.isFinite(order.distanceMiles) ||
+      order.distanceMiles <= 0
+    ) {
+      return null;
+    }
+    return formatMilesAsKm(order.distanceMiles);
+  }, [order.distanceMiles]);
+
+  const etaLabel =
+    order.etaMinutes != null &&
+    Number.isFinite(order.etaMinutes) &&
+    order.etaMinutes > 0
+      ? `${Math.round(order.etaMinutes)} min`
+      : null;
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
       onPress={() => onPress(order)}
       accessibilityRole="button"
-      accessibilityLabel={`Order ${order.id} for ${order.customerName}. Order ${formatMoney(order.orderAmount)}. Double tap for details.`}>
+      accessibilityLabel={`Order ${titleId} to ${order.dropoffAddress}. ${payment.label}. Double tap for details.`}>
       <View style={styles.accent} />
       <View style={styles.body}>
         <View style={styles.topRow}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.orderId}>{order.id}</Text>
-            <Text style={styles.customer} numberOfLines={1}>
-              {order.customerName} · {order.restaurant}
-            </Text>
-          </View>
-          <View style={styles.feeCol}>
-            <Text style={styles.fee}>{formatMoney(order.orderAmount)}</Text>
-            <Text style={styles.feeLabel}>
-              {order.deliveryFee != null && order.deliveryFee > 0
-                ? `Fee ${formatMoney(order.deliveryFee)}`
-                : 'Order total'}
-            </Text>
-          </View>
+          {onToggleSelect ? (
+            <Pressable
+              onPress={handleToggleSelect}
+              hitSlop={8}
+              accessibilityRole="checkbox"
+              accessibilityState={{
+                checked: !!selected,
+                disabled: !!selectionDisabled && !selected,
+              }}
+              accessibilityLabel={`Select order ${titleId}`}
+              style={styles.checkboxHit}>
+              <Icon
+                name={selected ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={24}
+                color={
+                  selected
+                    ? colors.primaryDark
+                    : selectionDisabled
+                      ? colors.textDisabled
+                      : colors.textMuted
+                }
+              />
+            </Pressable>
+          ) : null}
+          <Text
+            style={styles.orderId}
+            numberOfLines={1}
+            maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+            #{titleId}
+          </Text>
+          <Text
+            style={styles.posted}
+            maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}
+            accessibilityLabel={`Available ${formatPostedAgo(order.availableSince || order.postedAt)}`}>
+            {formatPostedAgo(order.availableSince || order.postedAt)}
+          </Text>
         </View>
 
-        <View style={styles.route}>
-          <View style={styles.routeRail}>
-            <View style={styles.dotPickup} />
-            <View style={styles.rail} />
-            <View style={styles.dotDrop} />
-          </View>
-          <View style={styles.routeText}>
-            <Text style={styles.addr} numberOfLines={1}>
-              {order.pickupAddress}
-            </Text>
-            <Text style={[styles.addr, styles.addrDrop]} numberOfLines={1}>
-              {order.dropoffAddress}
-            </Text>
-          </View>
-        </View>
+        <Text
+          style={styles.destination}
+          numberOfLines={2}
+          maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          {order.dropoffAddress}
+        </Text>
+        <Text
+          style={styles.pickup}
+          numberOfLines={1}
+          maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+          From {order.pickupAddress}
+          {order.customerName ? ` · ${order.customerName}` : ''}
+        </Text>
 
         <View style={styles.metaRow}>
-          <Meta
-            icon="map-marker-distance"
-            text={
-              order.distanceMiles != null
-                ? `${order.distanceMiles} mi`
-                : 'Distance —'
-            }
-          />
-          <Meta
-            icon="clock-outline"
-            text={
-              order.etaMinutes != null ? `${order.etaMinutes} min` : 'ETA —'
-            }
-          />
-          <Meta icon="cash" text={formatMoney(order.orderAmount)} />
-          <Meta
-            icon="credit-card-outline"
-            text={paymentLabel(order.paymentMethod)}
-          />
-        </View>
-
-        <View style={styles.badges}>
-          {order.isCod ? <Badge label="COD" tone="warning" icon="cash" /> : null}
-          {order.priority !== 'normal' ? (
-            <Badge
-              label={order.priority === 'urgent' ? 'Urgent' : 'Priority'}
-              tone="error"
-              icon="flag"
+          <View
+            style={[
+              styles.chip,
+              payment.kind === 'collect'
+                ? styles.chipCash
+                : payment.kind === 'paid'
+                  ? styles.chipPaid
+                  : styles.chipUnknown,
+            ]}>
+            <Icon
+              name={
+                payment.kind === 'collect'
+                  ? 'cash'
+                  : payment.kind === 'paid'
+                    ? 'credit-card-check-outline'
+                    : 'help-circle-outline'
+              }
+              size={14}
+              color={
+                payment.kind === 'collect'
+                  ? colors.warning
+                  : payment.kind === 'paid'
+                    ? colors.success
+                    : colors.textSecondary
+              }
             />
+            <Text
+              style={[
+                styles.chipText,
+                payment.kind === 'collect'
+                  ? styles.chipTextCash
+                  : payment.kind === 'paid'
+                    ? styles.chipTextPaid
+                    : styles.chipTextUnknown,
+              ]}
+              maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+              {payment.label}
+            </Text>
+          </View>
+          {distanceLabel ? (
+            <Meta icon="map-marker-distance" text={distanceLabel} />
           ) : null}
-          {order.express ? (
-            <Badge label="Express" tone="info" icon="lightning-bolt" />
-          ) : null}
-          {order.fragile ? (
-            <Badge label="Fragile" tone="star" icon="glass-fragile" />
-          ) : null}
+          {etaLabel ? <Meta icon="clock-outline" text={etaLabel} /> : null}
         </View>
 
         {order.specialInstructions ? (
-          <Text style={styles.instructions} numberOfLines={1}>
-            Note: {order.specialInstructions}
-          </Text>
+          <View style={styles.noteBox}>
+            <Icon name="note-text-outline" size={14} color={colors.primaryDark} />
+            <Text style={styles.instructions} numberOfLines={2}>
+              {order.specialInstructions}
+            </Text>
+          </View>
         ) : null}
-
-        <Text style={styles.posted}>{formatPostedAgo(order.postedAt)}</Text>
 
         <View style={styles.actions}>
           <AppButton
@@ -146,7 +211,7 @@ function OrderCardComponent({
             disabled={actionsDisabled}
             loading={!!isAccepting}
             style={styles.acceptBtn}
-            accessibilityLabel={`Accept order ${order.id}`}
+            accessibilityLabel={`Accept order ${titleId}`}
           />
           <AppButton
             label="Reject"
@@ -154,7 +219,7 @@ function OrderCardComponent({
             onPress={handleReject}
             disabled={actionsDisabled}
             style={styles.rejectBtn}
-            accessibilityLabel={`Reject order ${order.id}`}
+            accessibilityLabel={`Reject order ${titleId}`}
           />
         </View>
       </View>
@@ -166,7 +231,11 @@ function Meta({ icon, text }: { icon: string; text: string }) {
   return (
     <View style={styles.meta}>
       <Icon name={icon} size={13} color={colors.textMuted} />
-      <Text style={styles.metaText}>{text}</Text>
+      <Text
+        style={styles.metaText}
+        maxFontSizeMultiplier={MAX_FONT_SIZE_MULTIPLIER}>
+        {text}
+      </Text>
     </View>
   );
 }
@@ -196,77 +265,74 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  checkboxHit: {
+    paddingRight: 2,
   },
   orderId: {
     ...typography.caption,
     fontWeight: '700',
     color: colors.primaryDark,
+    flex: 1,
+    flexShrink: 1,
   },
-  customer: {
+  posted: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  destination: {
     ...typography.bodyStrong,
-    marginTop: 2,
-  },
-  feeCol: {
-    alignItems: 'flex-end',
-  },
-  fee: {
-    ...typography.title,
-    color: colors.success,
-    fontSize: 18,
-  },
-  feeLabel: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.success,
-  },
-  route: {
-    flexDirection: 'row',
-    marginBottom: spacing.sm,
-  },
-  routeRail: {
-    width: 12,
-    alignItems: 'center',
-    marginRight: spacing.xs,
-    paddingTop: 4,
-  },
-  dotPickup: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.primaryDark,
-  },
-  rail: {
-    width: 2,
-    flex: 1,
-    minHeight: 16,
-    backgroundColor: colors.border,
-    marginVertical: 3,
-  },
-  dotDrop: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.success,
-  },
-  routeText: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  addr: {
-    ...typography.caption,
+    fontSize: 16,
     color: colors.textPrimary,
-    fontWeight: '500',
+    marginBottom: 2,
   },
-  addrDrop: {
+  pickup: {
+    ...typography.caption,
     color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
   metaRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderWidth: 1,
+  },
+  chipCash: {
+    backgroundColor: colors.warningSoft,
+    borderColor: colors.warning,
+  },
+  chipPaid: {
+    backgroundColor: colors.successSoft,
+    borderColor: colors.success,
+  },
+  chipUnknown: {
+    backgroundColor: colors.background,
+    borderColor: colors.borderStrong,
+  },
+  chipText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  chipTextCash: {
+    color: colors.warning,
+  },
+  chipTextPaid: {
+    color: colors.success,
+  },
+  chipTextUnknown: {
+    color: colors.textSecondary,
   },
   meta: {
     flexDirection: 'row',
@@ -281,30 +347,33 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '600',
   },
-  badges: {
+  noteBox: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xxs,
-    marginBottom: spacing.xs,
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderInput,
   },
   instructions: {
     ...typography.caption,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    marginBottom: spacing.xxs,
-  },
-  posted: {
-    ...typography.caption,
-    marginBottom: spacing.sm,
+    color: colors.primaryDark,
+    fontWeight: '600',
+    flex: 1,
   },
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
   },
   acceptBtn: {
-    flex: 1,
+    flex: 2,
   },
   rejectBtn: {
-    minWidth: 96,
+    flex: 1,
+    minWidth: 88,
   },
 });

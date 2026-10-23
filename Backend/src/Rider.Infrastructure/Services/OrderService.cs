@@ -130,7 +130,7 @@ namespace Rider.Infrastructure.Services
                     existing.Cash = dto.cash;
                     existing.ExpectedCash = ResolveExpectedCash(dto.paymentMethod, dto.cash, existing.ExpectedCash);
                     existing.OrderTime = dto.orderTime;
-                    // Refresh posted time so rider "X ago" reflects this re-push, not the first insert.
+                    // Available-since freshness for the rider offer list (not CreatedAt).
                     existing.UpdatedAt = DateTime.UtcNow;
                     if (assignToUserId.HasValue)
                     {
@@ -1854,12 +1854,24 @@ namespace Rider.Infrastructure.Services
             }
 
             var codCollected = completed.Sum(o => o.CashCollected ?? 0);
-            var codOutstanding = completed.Sum(o =>
-            {
-                var collected = o.CashCollected ?? 0;
-                var handed = o.CashHandedOverAmount ?? 0;
-                return Math.Max(0, collected - handed);
-            });
+            // Cash to hand in — align with Admin CashOutstandingToStore settlement:
+            // collected − handed over, exclude legacy-ambiguous, any status with collected
+            // cash (Completed / Failed / return flow / Cancelled). Not scoped to the
+            // performance window. Float and earnings stay separate (period Completed only).
+            var outstandingRows = await _unitOfWork.Context.Set<AssignedOrder>()
+                .AsNoTracking()
+                .Where(o => o.AcceptedByUserId == riderUserId
+                    && o.CashCollected != null
+                    && o.CashCollected > 0)
+                .Select(o => new { o.CashCollected, o.CashHandedOverAmount, o.CashSemanticsNote })
+                .ToListAsync();
+            var codOutstanding = outstandingRows
+                .Where(o => !string.Equals(
+                    o.CashSemanticsNote,
+                    CashSemantics.LegacyAmbiguous,
+                    StringComparison.OrdinalIgnoreCase))
+                .Sum(o =>
+                    CashSemantics.UnreconciledCollectedCash(o.CashCollected, o.CashHandedOverAmount));
 
             var mode = await _unitOfWork.AppSettingRepository.GetValueAsync("PayoutMode", "");
             var feeRaw = await _unitOfWork.AppSettingRepository.GetValueAsync("PayoutFixedFee", "");
@@ -2171,7 +2183,8 @@ namespace Rider.Infrastructure.Services
 
         /// <summary>
         /// Take an exclusive lock on the rider Users row so concurrent accepts serialize
-        /// the active-job count check. No-ops gracefully on providers without UPDLOCK.
+        /// the active-job count check. Failures must abort the accept transaction — never
+        /// continue unlocked (that would race the MaxActiveDeliveries check).
         /// </summary>
         private async Task LockRiderRowAsync(Guid riderUserId)
         {
@@ -2182,7 +2195,11 @@ namespace Rider.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Rider row lock unavailable; continuing without UPDLOCK");
+                _logger.LogError(
+                    ex,
+                    "Rider row lock failed for {RiderUserId}; aborting accept so MaxActive is not checked unlocked",
+                    riderUserId);
+                throw;
             }
         }
     }

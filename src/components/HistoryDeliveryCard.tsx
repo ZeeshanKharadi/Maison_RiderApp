@@ -97,10 +97,14 @@ function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
             {item.status === 'delivered'
               ? earnings != null
                 ? `+${formatMoney(earnings)}`
-                : formatMoney(item.orderAmount)
+                : item.orderAmount != null && Number.isFinite(item.orderAmount)
+                  ? formatMoney(item.orderAmount)
+                  : '—'
               : '—'}
           </Text>
-          {item.status === 'delivered' && earnings == null ? (
+          {item.status === 'delivered' &&
+          earnings == null &&
+          item.orderAmount != null ? (
             <Text style={styles.orderAmtHint}>order</Text>
           ) : null}
           <Icon
@@ -123,8 +127,14 @@ function HistoryDeliveryCardComponent({ item, expanded, onToggle }: Props) {
       <View style={styles.meta}>
         <Text style={styles.metaText}>
           {hasEarnings
-            ? `Fee ${formatMoney(fee!)} · Order ${formatMoney(item.orderAmount)}`
-            : `Order ${formatMoney(item.orderAmount)}`}
+            ? `Fee ${formatMoney(fee!)}${
+                item.orderAmount != null && Number.isFinite(item.orderAmount)
+                  ? ` · Order ${formatMoney(item.orderAmount)}`
+                  : ''
+              }`
+            : item.orderAmount != null && Number.isFinite(item.orderAmount)
+              ? `Order ${formatMoney(item.orderAmount)}`
+              : 'Order unknown'}
           {item.isCod && item.cashCollectedAmount != null
             ? ` · COD ${formatMoney(item.cashCollectedAmount)}`
             : ''}
